@@ -422,7 +422,7 @@ fn a_hook_under_a_second_agent_makes_no_call_at_all() {
         .find(|path| path.is_file())
         .unwrap();
     let names = tempfile::tempdir().unwrap();
-    for agent in ["claude", "codex", "shell"] {
+    for agent in ["claude", "codex", "omp", "shell"] {
         std::os::unix::fs::symlink(&bash, names.path().join(agent)).unwrap();
     }
     // the chain: <outer> chain.sh <adapter> <args>; chain.sh runs claude -c '<adapter>; :', then touches DONE
@@ -448,6 +448,7 @@ fn a_hook_under_a_second_agent_makes_no_call_at_all() {
     assert_eq!(alone.forwarded, "active --blink");
     assert!(alone.agent.is_some(), "and reports its agent record");
     assert!(under("codex").is_none(), "a worker under another agent is silent");
+    assert!(under("omp").is_none(), "a Claude worker must not reset the OMP pane");
 }
 
 /// The walk ends at the pane's origin, whichever process that is: the app (`ngterm`), a headless origin
@@ -876,7 +877,7 @@ fn a_hook_under_a_second_agent_is_a_workers_and_stays_silent() {
 
     let dir = tempfile::tempdir().unwrap();
     let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
-    for agent in ["claude", "codex", "ngterm", "ngterm-headless", "ngterm-session"] {
+    for agent in ["claude", "codex", "omp", "ngterm", "ngterm-headless", "ngterm-session"] {
         let copy = dir.path().join(format!("{agent}.exe"));
         fs::copy(Path::new(&system).join(r"System32\cmd.exe"), copy).unwrap();
     }
@@ -947,4 +948,9 @@ fn a_hook_under_a_second_agent_is_a_workers_and_stays_silent() {
             "{origin}: a worker under another agent in the pane"
         );
     }
+    assert_eq!(
+        under(&["omp", "claude"]),
+        None,
+        "a Claude worker must not reset the OMP pane"
+    );
 }
