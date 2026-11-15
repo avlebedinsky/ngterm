@@ -645,7 +645,9 @@ fn codex_under(chain: &str, action: &str, payload: &str, setup: &CodexSetup) -> 
 /// holds, and returns what it printed. The chain is bash copies named as each word of `chain`, each the child of the
 /// one before, under an orphaned launcher, so an ancestor walk ends above the chain's first process and never meets
 /// the agent that may be running these tests. `codex` stands for an interactive Codex and `codex-exec` for a `codex
-/// exec` run (argv `codex exec ...`); `codex-resume` and `codex-exec-resume` put `resume` after those, and
+/// exec` run (argv `codex exec ...`); `codex-resume` and `codex-exec-resume` put `resume` after those (the second
+/// with a session id), `codex-exec-resume-prompt` is `codex exec resume` with no session id,
+/// `codex-dashed` has an option and `--` before its first positional (`codex --norc -- ...`), and
 /// `codex-spaced-exec` is a `codex exec` run behind an option whose value has a space (`codex -C "<dir>/My Project"
 /// exec ...`).
 #[cfg(unix)]
@@ -673,14 +675,17 @@ fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args
     // nest.sh <name>... -- <script> <args>: each name runs the rest of the chain as its child, the last the script.
     // The copies named `exec`, `resume` and `My Project` are the script a Codex stand-in runs, from the names'
     // directory: bash takes the stand-in's first word that is no option as its script, and that script drops the
-    // subcommand words after it. The stand-in's `-C` is bash's noclobber, which the script turns off again.
+    // subcommand words and the session id after it. The stand-in's `-C` is bash's noclobber, which the script turns
+    // off again.
     let nest = names.join("nest.sh");
-    let nest_script = "set +C\nwhile :; do case \"$1\" in exec | resume) shift ;; *) break ;; esac; done\n\
+    let nest_script = "set +C\nID=0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b\nwhile :; do case \"$1\" in exec | resume | $ID) shift ;; *) break ;; esac; done\n\
         name=$1\nshift\ncase \"$name\" in\n\
         --) bash \"$@\" <\"$PAYLOAD\" >\"$STDOUT\" 2>/dev/null; echo $? >\"$EXIT\" ;;\n\
         codex-exec) cd \"$NAMES\" && \"$NAMES/codex\" exec \"$@\" ;;\n\
         codex-resume) cd \"$NAMES\" && \"$NAMES/codex\" resume \"$@\" ;;\n\
-        codex-exec-resume) cd \"$NAMES\" && \"$NAMES/codex\" exec resume \"$@\" ;;\n\
+        codex-exec-resume) cd \"$NAMES\" && \"$NAMES/codex\" exec resume $ID \"$@\" ;;\n\
+        codex-exec-resume-prompt) cd \"$NAMES\" && \"$NAMES/codex\" exec resume \"$@\" ;;\n\
+        codex-dashed) \"$NAMES/codex\" --norc -- \"$NEST\" \"$@\" ;;\n\
         codex-spaced-exec) \"$NAMES/codex\" -C \"$NAMES/My Project\" exec \"$@\" ;;\n\
         *) \"$NAMES/$name\" \"$NEST\" \"$@\" ;;\nesac\n:\n";
     fs::write(&nest, nest_script).unwrap();
@@ -996,7 +1001,10 @@ fn a_codex_exec_run_reports_nothing() {
         ..CodexSetup::default()
     };
     assert_codex_silent("ngterm shell codex-exec", &setup);
-    assert_codex_silent("ngterm shell codex-spaced-exec", &setup);
+    // the exact argv tells it: by the words `ps` joined its `-C` value splits, and with no rollout they stand
+    if Path::new("/proc/self/cmdline").exists() {
+        assert_codex_silent("ngterm shell codex-spaced-exec", &setup);
+    }
     assert_codex_silent("ngterm shell codex-exec-resume", &setup);
 }
 
@@ -1026,10 +1034,12 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_codex() {
 /// value with a space splits in them. They decide alone only where a split cannot mislead, whatever the rollout's
 /// `session_meta` says, since a session keeps its `source` through a resume: no option before the first positional,
 /// or `resume` as that positional, is the TUI and reports (an interactive `codex resume` of a session that `codex
-/// exec` created keeps `source: exec`); `exec resume` is silent (it keeps a TUI session's `cli`). Other words ask the
-/// rollout: `exec` reads the same as a prompt split into words (`codex "exec this"`), and a `codex exec` behind an
-/// option value with a space reads as the TUI. There `exec` is silent, `cli` (the TUI) reports, and with no rollout
-/// the words stand. Still wrong, as the hook's comment says: a resume in either direction behind such an option value.
+/// exec` created keeps `source: exec`); `exec resume` with a session id or `--last` is silent (it keeps a TUI
+/// session's `cli`). Other words ask the rollout: `exec` reads the same as a prompt split into words (`codex "exec
+/// this"`, `codex "exec resume is failing"`), and a `codex exec` behind an option value with a space reads as the
+/// TUI. There `exec` is silent, `cli` (the TUI) reports, and with no rollout the words stand. Still wrong, as the
+/// hook's comment says: behind such an option value a resume in either direction and a split that leaves `resume` or
+/// `fork` first, and a `codex exec resume` of a TUI session by a thread name.
 #[cfg(unix)]
 #[test]
 fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_source() {
@@ -1072,15 +1082,16 @@ fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_sourc
         "words that read as the TUI stand"
     );
     assert_eq!(
-        statuses("ngterm shell codex-resume", &exec),
-        ["blocked"],
-        "an exec session resumed in the TUI by `codex resume`"
+        statuses("ngterm shell codex-dashed", &exec),
+        none,
+        "an exec run behind an option value that holds `--`"
     );
     assert_eq!(
-        statuses("ngterm shell codex-exec-resume", &cli),
-        none,
-        "a TUI session resumed by `codex exec resume`"
+        statuses("ngterm shell codex-dashed", &cli),
+        ["blocked"],
+        "a TUI session with options and `--` before its prompt"
     );
+    assert_eq!(statuses("ngterm shell codex-dashed", missing), ["blocked"]);
     // pre-tool-use reads no payload for anything else
     let run = codex_under(
         "ngterm shell codex-exec",
@@ -1091,6 +1102,45 @@ fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_sourc
     assert_eq!(run.statuses, none, "pre-tool-use of an exec run");
     let run = codex_under("ngterm shell codex-exec", "pre-tool-use", &codex_question(&cli), &setup);
     assert_eq!(run.statuses, ["active --blink"], "pre-tool-use of a TUI session");
+}
+
+/// The same words read a resume: `codex resume` is the TUI whatever the rollout says, `codex exec resume` is silent
+/// only with a session id (or `--last`) behind it, and without one asks the rollout, since a TUI prompt can start with
+/// the same two words.
+#[cfg(unix)]
+#[test]
+fn without_proc_the_joined_argv_tells_a_resumed_codex_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = CodexSetup {
+        vars: vec![("NGTERM_CODEX_PROC", "/nonexistent".to_owned())],
+        ..CodexSetup::default()
+    };
+    let statuses = |chain: &str, rollout: &Path| codex_under(chain, "stop", &codex_question(rollout), &setup).statuses;
+    let none = Vec::<String>::new();
+    let (exec, cli) = (codex_rollout(dir.path(), "exec"), codex_rollout(dir.path(), "cli"));
+    let missing = Path::new("/nonexistent/rollout.jsonl");
+    assert_eq!(
+        statuses("ngterm shell codex-resume", &exec),
+        ["blocked"],
+        "an exec session resumed in the TUI by `codex resume`"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume", &cli),
+        none,
+        "a TUI session resumed by `codex exec resume <id>`"
+    );
+    assert_eq!(statuses("ngterm shell codex-exec-resume", missing), none);
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume-prompt", &cli),
+        ["blocked"],
+        "a TUI session whose prompt starts with `exec resume`"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume-prompt", &exec),
+        none,
+        "an exec session resumed by `codex exec resume` with no id in the words"
+    );
+    assert_eq!(statuses("ngterm shell codex-exec-resume-prompt", missing), none);
 }
 
 /// Where there is no process table at all (Git Bash on Windows: here a `ps` that fails), the rollout's `source` alone
