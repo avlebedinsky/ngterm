@@ -69,6 +69,17 @@ internal class QaKeyboards(
         )
     }
 
+    /**
+     * The soft keyboard up after a tap on the terminal, and the app's own connection open to it. [pump] lets the app
+     * run what the tap started: the Compose test rule holds the app's coroutines until the test asks, and the terminal
+     * opens its input method session in one, so without it the keys go to the framework's stand-in connection, which
+     * drops a committed word and passes only single keys.
+     */
+    fun awaitShown(pump: () -> Unit) {
+        awaitKey(QaKeyboard.keyDescription("e"))
+        pump()
+    }
+
     private fun current() = shell("settings get secure default_input_method").trim()
 
     private fun shell(command: String): String =

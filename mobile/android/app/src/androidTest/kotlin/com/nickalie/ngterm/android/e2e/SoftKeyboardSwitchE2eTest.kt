@@ -202,7 +202,7 @@ class SoftKeyboardSwitchE2eTest {
         compose.waitForIdle()
         val bounds = compose.onNode(terminal()).fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
-        keyboards.awaitKey(QaKeyboard.keyDescription("e"))
+        keyboards.awaitShown(compose::waitForIdle)
     }
 
     /** The mic key to the voice-typing stand-in, and its key back to the keyboard. */

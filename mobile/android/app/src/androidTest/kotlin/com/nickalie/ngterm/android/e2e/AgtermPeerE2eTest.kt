@@ -193,7 +193,7 @@ class AgtermPeerE2eTest {
         compose.waitForIdle()
         val bounds = compose.onNode(terminal()).fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
-        keyboards.awaitKey(QaKeyboard.keyDescription("e"))
+        keyboards.awaitShown(compose::waitForIdle)
         listOf("expr", "7000", "+", "1").forEachIndexed { index, word ->
             if (index > 0) keyboards.tapKey(QaKeyboard.keyDescription(QaKeyboard.SPACE))
             keyboards.tapKeys(word)

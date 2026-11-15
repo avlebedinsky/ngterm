@@ -673,6 +673,8 @@ class ExtraKeysTouchE2eTest {
         val bounds = compose.onNode(terminal()).fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
         softKey("e")
+        // the tap opens the terminal's input method session in a coroutine, which the test rule runs only when asked
+        compose.waitForIdle()
     }
 
     /** Types [word] on the soft keyboard, key by key, and ends it with [end]: the space bar, or Enter. */
