@@ -513,13 +513,10 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_agent() {
     }
 }
 
-/// The bash the Codex adapter runs under: `bash` on Unix, Git for Windows' where its installer puts it on Windows;
-/// `None` on a Windows machine without it.
+/// The bash the Codex adapter runs under on Windows: Git for Windows' where its installer puts it; `None` on a machine
+/// without it.
 #[cfg(windows)]
 fn codex_bash() -> Option<PathBuf> {
-    if cfg!(unix) {
-        return Some(PathBuf::from("bash"));
-    }
     ["ProgramFiles", "ProgramW6432"]
         .iter()
         .filter_map(std::env::var_os)
@@ -1013,49 +1010,95 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_codex() {
     }
 }
 
-/// Where the Codex's argv cannot be read whole (no `/proc`: macOS, Git Bash on Windows), the rollout's `session_meta`
-/// says how the session was created: `exec` is silent, `cli` (the TUI) reports. With no rollout the words `ps` joined
-/// decide.
+/// Where the Codex's argv cannot be read whole (no `/proc`: macOS), the words `ps` joined say what this run is.
+/// Interactive by them reports, whatever the rollout's `session_meta` says: an interactive `codex resume` of a session
+/// that `codex exec` created keeps `source: exec`. Headless by them asks the rollout, since a prompt split into words
+/// reads the same (`codex "exec this"`): `exec` is silent, `cli` (the TUI) reports, and with no rollout the words
+/// stand.
 #[cfg(unix)]
 #[test]
-fn without_proc_the_rollouts_source_tells_a_codex_exec_run() {
+fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_source() {
     let dir = tempfile::tempdir().unwrap();
-    let rollout = |source: &str| {
-        let path = dir.path().join(format!("rollout-{source}.jsonl"));
-        let meta = format!(
-            r#"{{"timestamp":"t","type":"session_meta","payload":{{"id":"s","base_instructions":"a \"source\":\"cli\" inside","source":"{source}","model_provider":"openai"}}}}"#
-        );
-        fs::write(&path, format!("{meta}\n{{\"type\":\"event_msg\"}}\n")).unwrap();
-        path
-    };
     let setup = CodexSetup {
         vars: vec![("NGTERM_CODEX_PROC", "/nonexistent".to_owned())],
         ..CodexSetup::default()
     };
     let statuses = |chain: &str, rollout: &Path| codex_under(chain, "stop", &codex_question(rollout), &setup).statuses;
     let none = Vec::<String>::new();
-    assert_eq!(
-        statuses("ngterm shell codex", &rollout("exec")),
-        none,
-        "an exec session"
-    );
-    assert_eq!(
-        statuses("ngterm shell codex", &rollout("cli")),
-        ["blocked"],
-        "a TUI session"
-    );
-    assert_eq!(statuses("ngterm shell codex-exec", &rollout("cli")), ["blocked"]);
+    let (exec, cli) = (codex_rollout(dir.path(), "exec"), codex_rollout(dir.path(), "cli"));
     let missing = Path::new("/nonexistent/rollout.jsonl");
-    assert_eq!(statuses("ngterm shell codex-exec", missing), none, "the joined argv");
+    assert_eq!(
+        statuses("ngterm shell codex", &exec),
+        ["blocked"],
+        "an exec session resumed in the TUI"
+    );
+    assert_eq!(statuses("ngterm shell codex", &cli), ["blocked"], "a TUI session");
     assert_eq!(statuses("ngterm shell codex", missing), ["blocked"]);
+    assert_eq!(statuses("ngterm shell codex-exec", &exec), none, "an exec run");
+    assert_eq!(
+        statuses("ngterm shell codex-exec", &cli),
+        ["blocked"],
+        "a TUI session whose prompt starts with `exec`"
+    );
+    assert_eq!(statuses("ngterm shell codex-exec", missing), none, "the joined argv");
     // pre-tool-use reads no payload for anything else
     let run = codex_under(
-        "ngterm shell codex",
+        "ngterm shell codex-exec",
         "pre-tool-use",
-        &codex_question(&rollout("exec")),
+        &codex_question(&exec),
+        &setup,
+    );
+    assert_eq!(run.statuses, none, "pre-tool-use of an exec run");
+    let run = codex_under("ngterm shell codex-exec", "pre-tool-use", &codex_question(&cli), &setup);
+    assert_eq!(run.statuses, ["active --blink"], "pre-tool-use of a TUI session");
+}
+
+/// Where there is no process table at all (Git Bash on Windows: here a `ps` that fails), the rollout's `source` alone
+/// tells a `codex exec` run, and with no rollout the run reports.
+#[cfg(unix)]
+#[test]
+fn without_a_process_table_the_rollouts_source_tells_a_codex_exec_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    ngterm_host::fakes::write_executable(&bin.join("ps"), "#!/bin/sh\nexit 1\n").unwrap();
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
+            .unwrap();
+    let setup = CodexSetup {
+        vars: vec![("PATH", path.into_string().unwrap())],
+        ..CodexSetup::default()
+    };
+    let statuses = |chain: &str, rollout: &Path| codex_under(chain, "stop", &codex_question(rollout), &setup).statuses;
+    let none = Vec::<String>::new();
+    let (exec, cli) = (codex_rollout(dir.path(), "exec"), codex_rollout(dir.path(), "cli"));
+    assert_eq!(statuses("ngterm shell codex-exec", &exec), none, "an exec session");
+    assert_eq!(statuses("ngterm shell codex", &cli), ["blocked"], "a TUI session");
+    let missing = Path::new("/nonexistent/rollout.jsonl");
+    assert_eq!(
+        statuses("ngterm shell codex-exec", missing),
+        ["blocked"],
+        "unreadable reports"
+    );
+    let run = codex_under(
+        "ngterm shell codex-exec",
+        "pre-tool-use",
+        &codex_question(&exec),
         &setup,
     );
     assert_eq!(run.statuses, none, "pre-tool-use of an exec session");
+}
+
+/// A rollout in `dir` whose `session_meta` says the session was created by `source`, after a string value that quotes
+/// the key.
+#[cfg(unix)]
+fn codex_rollout(dir: &Path, source: &str) -> PathBuf {
+    let path = dir.join(format!("rollout-{source}.jsonl"));
+    let meta = format!(
+        r#"{{"timestamp":"t","type":"session_meta","payload":{{"id":"s","base_instructions":"a \"source\":\"cli\" inside","source":"{source}","model_provider":"openai"}}}}"#
+    );
+    fs::write(&path, format!("{meta}\n{{\"type\":\"event_msg\"}}\n")).unwrap();
+    path
 }
 
 /// The `session status` call the shared wrapper makes for `active --blink` at the bottom of `chain`, as the Pi

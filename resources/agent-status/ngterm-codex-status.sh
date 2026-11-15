@@ -48,7 +48,8 @@ case "$action" in
     exec <<<"$payload"
     ;;
   post-tool-use|stop)
-    # read only where mail can go: a PostToolUse payload holds the whole tool output
+    # read only where mail can go: a PostToolUse payload holds the whole tool output (the spawner guard below reads
+    # it too, on any event, where only the rollout can tell a `codex exec` run)
     if [ -n "${NGTERM_PANE_ID:-}" ]; then
       payload=$(cat)
       exec <<<"$payload"
@@ -63,10 +64,12 @@ esac
 #   adapter's walk (ngterm-claude-status.sh explains it), with the same agent names and the same pane boundary: keep
 #   the two in step;
 # - a Codex that runs without its TUI (`codex exec`, `codex review`) has no user at its end, whoever started it. Its
-#   argv is read whole where /proc gives it (Linux). Elsewhere the rollout's session_meta says how the session was
-#   created (`source`: `exec`, or `cli` for the TUI), which is all Git Bash on Windows can read, and with no rollout
-#   the words `ps` joined decide. `ngtermctl agent mail` also refuses the servers (app-server, mcp-server): they
-#   report here, since a TUI on Codex's shared daemon fires its hooks from one.
+#   argv is read whole where /proc gives it (Linux). Elsewhere the words `ps` joined say what this run is: interactive
+#   by them reports (a resumed session keeps the `source` it was created with, so the rollout cannot overrule them).
+#   Headless by them, or no process table at all (Git Bash on Windows), asks the rollout's session_meta how the
+#   session was created (`source`: `exec`, or `cli` for the TUI); with no rollout the words stand. `ngtermctl agent
+#   mail` also refuses the servers (app-server, mcp-server): they report here, since a TUI on Codex's shared daemon
+#   fires its hooks from one.
 # Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
 is_agent() {
   case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
@@ -173,6 +176,14 @@ spawned_run() {
       return
     fi
   fi
+  # the words `ps` joined: a prompt or an option's value with a space splits, so they can read a TUI as headless
+  # (`codex "review this"`) but hardly a headless run as a TUI. Interactive by them is this run's answer, whatever
+  # the rollout says: a session keeps the `source` it was created with through a resume.
+  if [ -n "$codex_cmd" ]; then
+    read -r -a argv <<<"$codex_cmd"
+    [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
+    codex_argv_headless "${argv[@]}" || return 1
+  fi
   if [ -z "$payload" ] && [ ! -t 0 ]; then
     payload=$(cat)
     exec <<<"$payload"
@@ -181,10 +192,7 @@ spawned_run() {
     exec) return 0 ;;
     cli) return 1 ;;
   esac
-  [ -n "$codex_cmd" ] || return 1
-  read -r -a argv <<<"$codex_cmd"
-  [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
-  codex_argv_headless "${argv[@]}"
+  [ -n "$codex_cmd" ] # no rollout: the words said headless
 }
 
 if [ "$action" != __watch-blocked ] && spawned_run; then

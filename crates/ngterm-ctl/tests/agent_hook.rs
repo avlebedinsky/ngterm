@@ -350,8 +350,21 @@ fn a_call_auto_review_approved_never_yields_a_live_approval() -> TestResult {
     let _server = serve_core(&socket)?;
     let session = session_id(&socket)?;
     let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../resources/agent-status/ngterm-codex-status.sh");
-    let codex = |action: &str, path: &str| -> TestResult {
-        let mut child = isolated(&bash, dir.path())
+    // the adapter's spawner guard walks its ancestors, and those are whoever runs this test: a `codex exec`, or a
+    // Codex under another agent, would silence it. A `ps` that fails ends the walk at once, as with no process table.
+    #[cfg(unix)]
+    let path = {
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin)?;
+        ngterm_host::fakes::write_executable(&bin.join("ps"), "#!/bin/sh\nexit 1\n")?;
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited)))?
+    };
+    let codex = |action: &str, path_fixture: &str| -> TestResult {
+        let mut command = isolated(&bash, dir.path());
+        #[cfg(unix)]
+        command.env("PATH", &path);
+        let mut child = command
             .arg(bash_path(&adapter))
             .arg(action)
             .env("NGTERMCTL", bash_path(Path::new(NGTERMCTL)))
@@ -366,7 +379,7 @@ fn a_call_auto_review_approved_never_yields_a_live_approval() -> TestResult {
             .stderr(Stdio::null())
             .spawn()?;
         if let Some(mut input) = child.stdin.take() {
-            let _ = input.write_all(fixture(path)?.as_bytes());
+            let _ = input.write_all(fixture(path_fixture)?.as_bytes());
         }
         assert!(child.wait()?.success(), "{action}");
         Ok(())
