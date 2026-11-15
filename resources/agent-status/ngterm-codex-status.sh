@@ -67,14 +67,17 @@ esac
 #   argv is read whole where /proc gives it (Linux). Elsewhere (macOS) only the words `ps` joined are there, and a
 #   value with a space splits in them, so they decide alone only where a split cannot mislead: no option before the
 #   first positional, or `resume`/`fork` as that positional, is the TUI and reports (a resumed session keeps the
-#   `source` it was created with, so the rollout cannot say so); `exec resume` with a session id or `--last` behind
-#   it is headless and silent (it keeps a TUI session's `cli`). Any other words, or no process table at all (Git
-#   Bash on Windows), ask the rollout's session_meta how the session was created (`source`: `exec`, or `cli` for the
-#   TUI); with no rollout the words stand. What the words still get wrong, all behind an option whose value has a
+#   `source` it was created with, so the rollout cannot say so); `exec resume` with `--last` among its options or a
+#   session id as its first positional is headless and silent (it keeps a TUI session's `cli`), and no later word is
+#   looked at, since those are the prompt's. Any other words, or no process table at all (Git Bash on Windows), ask
+#   the rollout's session_meta how the session was created (`source`: `exec`, or `cli` for the TUI); with no rollout
+#   the words stand. What the words still get wrong, all behind an option whose value has a
 #   space: a resume in either direction (`codex -C "/my dir" exec resume <TUI session>` reports, `codex -C "/my dir"
 #   resume <exec session>` is silent), and a `codex exec` whose split value leaves `resume` or `fork` as the first
 #   positional (`codex -C "/my resume" exec`), which reports. So does a `codex exec resume` of a TUI session by a
-#   thread name, not an id: a TUI prompt can start with the same words (`codex "exec resume is failing"`).
+#   thread name, not an id, or with `--last` behind its prompt: a TUI prompt can start with the same words (`codex
+#   "exec resume is failing"`). And the other way round, a TUI session whose prompt starts with `exec resume --last`
+#   or `exec resume <session id>` is silent: its words are those of the headless run.
 #   `ngtermctl agent mail` also refuses the servers (app-server, mcp-server): they report here, since a TUI on
 #   Codex's shared daemon fires its hooks from one.
 # Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
@@ -89,21 +92,30 @@ is_agent() {
 # Reads the Codex argv "$@" into $codex_run. `headless`: it names a subcommand that runs without the TUI, its first
 # word that is not an option or an option's value, read as `ngtermctl agent mail` reads it (codex_process.rs has the
 # value options every form takes; the ones `exec` alone takes are listed only here, since that reader stops at the
-# subcommand); `exec-resume`: that subcommand is `exec`, `resume` is its own first such word, and a session id or
-# `--last` follows, which no prompt split into words is likely to hold. Otherwise the TUI: `tui`, or `tui?` when
-# options stand before `--` or a first positional other than `resume` or `fork`, where one value with a space, split
-# into words, would hide the subcommand behind it.
+# subcommand); `exec-resume`: that subcommand is `exec`, `resume` is its own first such word, and behind it stands
+# `--last` among the options or a session id as the first positional (a later word is the prompt's and says nothing: a
+# TUI prompt that starts with `exec resume` may name an id or `--last` further on). Otherwise the TUI: `tui`, or
+# `tui?` when options stand before `--` or a first positional other than `resume` or `fork`, where one value with a
+# space, split into words, would hide the subcommand behind it.
 codex_run=
 codex_argv_run() {
-  local opts='' in_exec='' word
+  local opts='' in_exec=''
   local id_re='^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
   codex_run=tui
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      --) # the prompt follows
+      --) # the prompt follows, or behind `exec resume` the session id
         [ -z "$in_exec" ] && [ -n "$opts" ] && codex_run='tui?'
+        [ "$in_exec" = resume ] && [ $# -gt 1 ] && [[ $2 =~ $id_re ]] && codex_run=exec-resume
         return
+        ;;
+      --last)
+        opts=1
+        if [ "$in_exec" = resume ]; then
+          codex_run=exec-resume
+          return
+        fi
         ;;
       -c | --config | -m | --model | -p | --profile | -C | --cd | -s | --sandbox | -a | --ask-for-approval | \
         --add-dir | --enable | --disable | --local-provider)
@@ -129,27 +141,22 @@ codex_argv_run() {
         ;;
       -*) opts=1 ;;
       *)
-        if [ -n "$in_exec" ]; then
-          [ "$1" = resume ] || return
-          shift
-          for word in "$@"; do
-            if [ "$word" = --last ] || [[ $word =~ $id_re ]]; then
-              codex_run=exec-resume
-              return
-            fi
-          done
-          return
-        fi
-        case "$1" in
-          exec | e)
+        case "$in_exec:$1" in
+          resume:*) # exec resume's first positional: the session, by id or by thread name
+            [[ $1 =~ $id_re ]] && codex_run=exec-resume
+            return
+            ;;
+          1:resume) in_exec=resume ;;
+          1:*) return ;;
+          :exec | :e)
             codex_run=headless
             in_exec=1
             ;;
-          review)
+          :review)
             codex_run=headless
             return
             ;;
-          resume | fork) return ;;
+          :resume | :fork) return ;;
           *)
             [ -n "$opts" ] && codex_run='tui?'
             return

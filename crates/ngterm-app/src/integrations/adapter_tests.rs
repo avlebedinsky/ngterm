@@ -646,7 +646,9 @@ fn codex_under(chain: &str, action: &str, payload: &str, setup: &CodexSetup) -> 
 /// one before, under an orphaned launcher, so an ancestor walk ends above the chain's first process and never meets
 /// the agent that may be running these tests. `codex` stands for an interactive Codex and `codex-exec` for a `codex
 /// exec` run (argv `codex exec ...`); `codex-resume` and `codex-exec-resume` put `resume` after those (the second
-/// with a session id), `codex-exec-resume-prompt` is `codex exec resume` with no session id,
+/// with a session id), `codex-exec-resume-last` has `--last` in the id's place, `codex-exec-resume-prompt` is `codex
+/// exec resume` with no session id, `codex-exec-resume-words` has the id and `--last` behind a first positional that
+/// is neither (`codex exec resume of <id> --last`: the words of a TUI prompt, or of a thread name and its prompt),
 /// `codex-dashed` has an option and `--` before its first positional (`codex --norc -- ...`), and
 /// `codex-spaced-exec` is a `codex exec` run behind an option whose value has a space (`codex -C "<dir>/My Project"
 /// exec ...`).
@@ -675,15 +677,17 @@ fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args
     // nest.sh <name>... -- <script> <args>: each name runs the rest of the chain as its child, the last the script.
     // The copies named `exec`, `resume` and `My Project` are the script a Codex stand-in runs, from the names'
     // directory: bash takes the stand-in's first word that is no option as its script, and that script drops the
-    // subcommand words and the session id after it. The stand-in's `-C` is bash's noclobber, which the script turns
-    // off again.
+    // subcommand words and what stands after them (the session id, `--last`, `of`). The stand-in's `-C` is bash's
+    // noclobber, which the script turns off again.
     let nest = names.join("nest.sh");
-    let nest_script = "set +C\nID=0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b\nwhile :; do case \"$1\" in exec | resume | $ID) shift ;; *) break ;; esac; done\n\
+    let nest_script = "set +C\nID=0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b\nwhile :; do case \"$1\" in exec | resume | of | --last | $ID) shift ;; *) break ;; esac; done\n\
         name=$1\nshift\ncase \"$name\" in\n\
         --) bash \"$@\" <\"$PAYLOAD\" >\"$STDOUT\" 2>/dev/null; echo $? >\"$EXIT\" ;;\n\
         codex-exec) cd \"$NAMES\" && \"$NAMES/codex\" exec \"$@\" ;;\n\
         codex-resume) cd \"$NAMES\" && \"$NAMES/codex\" resume \"$@\" ;;\n\
         codex-exec-resume) cd \"$NAMES\" && \"$NAMES/codex\" exec resume $ID \"$@\" ;;\n\
+        codex-exec-resume-last) cd \"$NAMES\" && \"$NAMES/codex\" exec resume --last \"$@\" ;;\n\
+        codex-exec-resume-words) cd \"$NAMES\" && \"$NAMES/codex\" exec resume of $ID --last \"$@\" ;;\n\
         codex-exec-resume-prompt) cd \"$NAMES\" && \"$NAMES/codex\" exec resume \"$@\" ;;\n\
         codex-dashed) \"$NAMES/codex\" --norc -- \"$NEST\" \"$@\" ;;\n\
         codex-spaced-exec) \"$NAMES/codex\" -C \"$NAMES/My Project\" exec \"$@\" ;;\n\
@@ -1006,6 +1010,7 @@ fn a_codex_exec_run_reports_nothing() {
         assert_codex_silent("ngterm shell codex-spaced-exec", &setup);
     }
     assert_codex_silent("ngterm shell codex-exec-resume", &setup);
+    assert_codex_silent("ngterm shell codex-exec-resume-last", &setup);
 }
 
 /// The walk ends at the pane's origin, as the Claude adapter's does: an agent above the origin started it (a coding
@@ -1034,12 +1039,13 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_codex() {
 /// value with a space splits in them. They decide alone only where a split cannot mislead, whatever the rollout's
 /// `session_meta` says, since a session keeps its `source` through a resume: no option before the first positional,
 /// or `resume` as that positional, is the TUI and reports (an interactive `codex resume` of a session that `codex
-/// exec` created keeps `source: exec`); `exec resume` with a session id or `--last` is silent (it keeps a TUI
-/// session's `cli`). Other words ask the rollout: `exec` reads the same as a prompt split into words (`codex "exec
+/// exec` created keeps `source: exec`); `exec resume` with `--last` among its options or a session id as its first
+/// positional is silent (it keeps a TUI session's `cli`). Other words ask the rollout: `exec` reads the same as a prompt split into words (`codex "exec
 /// this"`, `codex "exec resume is failing"`), and a `codex exec` behind an option value with a space reads as the
 /// TUI. There `exec` is silent, `cli` (the TUI) reports, and with no rollout the words stand. Still wrong, as the
 /// hook's comment says: behind such an option value a resume in either direction and a split that leaves `resume` or
-/// `fork` first, and a `codex exec resume` of a TUI session by a thread name.
+/// `fork` first, a `codex exec resume` of a TUI session by a thread name or with `--last` behind its prompt, and a
+/// TUI session whose prompt starts with `exec resume --last` or `exec resume <session id>`.
 #[cfg(unix)]
 #[test]
 fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_source() {
@@ -1105,8 +1111,8 @@ fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_sourc
 }
 
 /// The same words read a resume: `codex resume` is the TUI whatever the rollout says, `codex exec resume` is silent
-/// only with a session id (or `--last`) behind it, and without one asks the rollout, since a TUI prompt can start with
-/// the same two words.
+/// only with `--last` among its options or a session id as its first positional. Any other words ask the rollout,
+/// an id or `--last` further on too: a TUI prompt can start with the same two words and name either later.
 #[cfg(unix)]
 #[test]
 fn without_proc_the_joined_argv_tells_a_resumed_codex_session() {
@@ -1130,6 +1136,22 @@ fn without_proc_the_joined_argv_tells_a_resumed_codex_session() {
         "a TUI session resumed by `codex exec resume <id>`"
     );
     assert_eq!(statuses("ngterm shell codex-exec-resume", missing), none);
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume-last", &cli),
+        none,
+        "a TUI session resumed by `codex exec resume --last`"
+    );
+    assert_eq!(statuses("ngterm shell codex-exec-resume-last", missing), none);
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume-words", &cli),
+        ["blocked"],
+        "a TUI session whose prompt starts with `exec resume` and names an id and `--last` further on"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume-words", &exec),
+        none,
+        "an exec session resumed by a thread name"
+    );
     assert_eq!(
         statuses("ngterm shell codex-exec-resume-prompt", &cli),
         ["blocked"],
