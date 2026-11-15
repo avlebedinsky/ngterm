@@ -96,22 +96,33 @@ fi
 # the extra-keys row show. The system image attaches a PC keyboard whatever the AVD's config says, so its driver lets
 # go of it (as root, which the emulator's image gives) until the emulator restarts. Any other device stays as it is.
 phone_shape() {
-  local avd config rooted i
+  local avd density config rooted i
   [[ "$ANDROID_SERIAL" == emulator-* ]] || return 0
   avd="$("$ADB" emu avd name 2>/dev/null | head -n 1 | tr -d '\r')"
   [[ "$avd" == "$ANDROID_AVD_PHONE" ]] || return 0
-  if [[ "$("$ADB" shell wm density)" == *Override* ]]; then
+  # a query that fails is not "no override": the run stops rather than test at a density nobody checked
+  density="$("$ADB" shell wm density)" || die "cannot read the display density of $avd"
+  if [[ "$density" == *Override* ]]; then
     "$ADB" shell wm density reset >/dev/null
     settle
   fi
   config="$("$ADB" shell am get-config)"
   if [[ "${config%%$'\n'*}" != *-nokeys-* ]]; then
     rooted="$("$ADB" shell id -u | tr -d '\r')"
+    # adbd found as the shell user goes back to it however this ends (a failure, an interrupt, root that came only
+    # after the wait gave up): a run that left it root would have the next one take root for the device's own state
+    # and never undo it. The script's own traps are set further down, after this is over.
+    if [[ "$rooted" != 0 ]]; then
+      trap 'timeout 20 "$ADB" unroot >/dev/null 2>&1 || true' EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+    fi
     as_root 0 || die "no root on $avd to detach its hardware keyboard"
     # shellcheck disable=SC2016 # the device's shell expands it
     "$ADB" shell 'for k in /sys/bus/serio/drivers/atkbd/serio*; do
       [ -e "$k" ] && echo -n "${k##*/}" >/sys/bus/serio/drivers/atkbd/unbind; done' || true
     [[ "$rooted" == 0 ]] || as_root 2000 || die "adb did not come back from root on $avd"
+    trap - EXIT INT TERM
     for ((i = 0; i < 50; i++)); do
       config="$("$ADB" shell am get-config)"
       [[ "${config%%$'\n'*}" == *-nokeys-* ]] && break
