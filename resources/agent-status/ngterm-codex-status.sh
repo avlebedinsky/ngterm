@@ -64,12 +64,16 @@ esac
 #   adapter's walk (ngterm-claude-status.sh explains it), with the same agent names and the same pane boundary: keep
 #   the two in step;
 # - a Codex that runs without its TUI (`codex exec`, `codex review`) has no user at its end, whoever started it. Its
-#   argv is read whole where /proc gives it (Linux). Elsewhere the words `ps` joined say what this run is: interactive
-#   by them reports (a resumed session keeps the `source` it was created with, so the rollout cannot overrule them).
-#   Headless by them, or no process table at all (Git Bash on Windows), asks the rollout's session_meta how the
-#   session was created (`source`: `exec`, or `cli` for the TUI); with no rollout the words stand. `ngtermctl agent
-#   mail` also refuses the servers (app-server, mcp-server): they report here, since a TUI on Codex's shared daemon
-#   fires its hooks from one.
+#   argv is read whole where /proc gives it (Linux). Elsewhere (macOS) only the words `ps` joined are there, and a
+#   value with a space splits in them, so they decide alone only where a split cannot mislead: no option before the
+#   first positional, or `resume`/`fork` as that positional, is the TUI and reports (a resumed session keeps the
+#   `source` it was created with, so the rollout cannot say so); `exec resume` is headless and silent (it keeps a TUI
+#   session's `cli`). Any other words, or no process table at all (Git Bash on Windows), ask the rollout's
+#   session_meta how the session was created (`source`: `exec`, or `cli` for the TUI); with no rollout the words
+#   stand. What the words still get wrong: a resume in either direction behind an option whose value has a space
+#   (`codex -C "/my dir" exec resume <TUI session>` reports, `codex -C "/my dir" resume <exec session>` is silent).
+#   `ngtermctl agent mail` also refuses the servers (app-server, mcp-server): they report here, since a TUI on
+#   Codex's shared daemon fires its hooks from one.
 # Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
 is_agent() {
   case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
@@ -79,30 +83,66 @@ is_agent() {
   return 1
 }
 
-# Whether the Codex argv "$@" names a subcommand that runs without the TUI: its first word that is not an option or an
-# option's value, read as `ngtermctl agent mail` reads it (codex_process.rs has the option lists).
-codex_argv_headless() {
+# Reads the Codex argv "$@" into $codex_run. `headless`: it names a subcommand that runs without the TUI, its first
+# word that is not an option or an option's value, read as `ngtermctl agent mail` reads it (codex_process.rs has the
+# option lists); `exec-resume`: that subcommand is `exec` and `resume` is its own first such word. Otherwise the TUI:
+# `tui`, or `tui?` when options stand before a first positional other than `resume` or `fork`, where one value with
+# a space, split into words, would hide the subcommand behind it.
+codex_run=
+codex_argv_run() {
+  local opts='' in_exec=''
+  codex_run=tui
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      --) return 1 ;; # the prompt follows
+      --) return ;; # the prompt follows
       -c | --config | -m | --model | -p | --profile | -C | --cd | -s | --sandbox | -a | --ask-for-approval | \
         --add-dir | --enable | --disable | --local-provider)
+        opts=1
         [ $# -gt 1 ] && shift
         ;;
+      -o | --output-last-message | --output-schema | --color) # of `exec` alone
+        opts=1
+        [ -n "$in_exec" ] && [ $# -gt 1 ] && shift
+        ;;
       -i | --image)
+        opts=1
         while [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; do
-          case "$2" in exec | e | review) return 0 ;; esac
+          if [ -z "$in_exec" ]; then
+            case "$2" in exec | e | review)
+              codex_run=headless
+              return
+              ;;
+            esac
+          fi
           shift
         done
         ;;
-      -*) ;;
-      exec | e | review) return 0 ;;
-      *) return 1 ;;
+      -*) opts=1 ;;
+      *)
+        if [ -n "$in_exec" ]; then
+          [ "$1" = resume ] && codex_run=exec-resume
+          return
+        fi
+        case "$1" in
+          exec | e)
+            codex_run=headless
+            in_exec=1
+            ;;
+          review)
+            codex_run=headless
+            return
+            ;;
+          resume | fork) return ;;
+          *)
+            [ -n "$opts" ] && codex_run='tui?'
+            return
+            ;;
+        esac
+        ;;
     esac
     shift
   done
-  return 1
 }
 
 # Prints the `source` of the rollout the payload names, from its first line (the session_meta record); fails when the
@@ -172,17 +212,24 @@ spawned_run() {
     while IFS= read -r -d '' word; do argv+=("$word"); done <"$proc/$codex_pid/cmdline"
     [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
     if [ "${#argv[@]}" -gt 0 ]; then
-      codex_argv_headless "${argv[@]}"
+      codex_argv_run "${argv[@]}"
+      [ "$codex_run" = headless ] || [ "$codex_run" = exec-resume ]
       return
     fi
   fi
   # the words `ps` joined: a prompt or an option's value with a space splits, so they can read a TUI as headless
-  # (`codex "review this"`) but hardly a headless run as a TUI. Interactive by them is this run's answer, whatever
-  # the rollout says: a session keeps the `source` it was created with through a resume.
+  # (`codex "review this"`) and a headless run as the TUI (`codex -C "/my dir" exec`, whose first positional reads
+  # `dir`). They are this run's answer only where no split can mislead (`tui`, `exec-resume`), and there they
+  # overrule the rollout: a session keeps the `source` it was created with through a resume.
+  codex_run=
   if [ -n "$codex_cmd" ]; then
     read -r -a argv <<<"$codex_cmd"
     [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
-    codex_argv_headless "${argv[@]}" || return 1
+    codex_argv_run "${argv[@]}"
+    case "$codex_run" in
+      tui) return 1 ;;
+      exec-resume) return 0 ;;
+    esac
   fi
   if [ -z "$payload" ] && [ ! -t 0 ]; then
     payload=$(cat)
@@ -192,7 +239,7 @@ spawned_run() {
     exec) return 0 ;;
     cli) return 1 ;;
   esac
-  [ -n "$codex_cmd" ] # no rollout: the words said headless
+  [ "$codex_run" = headless ] # no rollout: the words stand
 }
 
 if [ "$action" != __watch-blocked ] && spawned_run; then

@@ -645,7 +645,9 @@ fn codex_under(chain: &str, action: &str, payload: &str, setup: &CodexSetup) -> 
 /// holds, and returns what it printed. The chain is bash copies named as each word of `chain`, each the child of the
 /// one before, under an orphaned launcher, so an ancestor walk ends above the chain's first process and never meets
 /// the agent that may be running these tests. `codex` stands for an interactive Codex and `codex-exec` for a `codex
-/// exec` run (argv `codex exec ...`).
+/// exec` run (argv `codex exec ...`); `codex-resume` and `codex-exec-resume` put `resume` after those, and
+/// `codex-spaced-exec` is a `codex exec` run behind an option whose value has a space (`codex -C "<dir>/My Project"
+/// exec ...`).
 #[cfg(unix)]
 fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args: &[&str], payload: &str) -> String {
     use std::time::{Duration, Instant};
@@ -669,14 +671,22 @@ fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args
         std::os::unix::fs::symlink(&bash, names.join(name)).unwrap();
     }
     // nest.sh <name>... -- <script> <args>: each name runs the rest of the chain as its child, the last the script.
-    // The copy named `exec` is the script a `codex exec` stand-in runs, from the names' directory.
+    // The copies named `exec`, `resume` and `My Project` are the script a Codex stand-in runs, from the names'
+    // directory: bash takes the stand-in's first word that is no option as its script, and that script drops the
+    // subcommand words after it. The stand-in's `-C` is bash's noclobber, which the script turns off again.
     let nest = names.join("nest.sh");
-    let nest_script = "name=$1\nshift\ncase \"$name\" in\n\
+    let nest_script = "set +C\nwhile :; do case \"$1\" in exec | resume) shift ;; *) break ;; esac; done\n\
+        name=$1\nshift\ncase \"$name\" in\n\
         --) bash \"$@\" <\"$PAYLOAD\" >\"$STDOUT\" 2>/dev/null; echo $? >\"$EXIT\" ;;\n\
         codex-exec) cd \"$NAMES\" && \"$NAMES/codex\" exec \"$@\" ;;\n\
+        codex-resume) cd \"$NAMES\" && \"$NAMES/codex\" resume \"$@\" ;;\n\
+        codex-exec-resume) cd \"$NAMES\" && \"$NAMES/codex\" exec resume \"$@\" ;;\n\
+        codex-spaced-exec) \"$NAMES/codex\" -C \"$NAMES/My Project\" exec \"$@\" ;;\n\
         *) \"$NAMES/$name\" \"$NEST\" \"$@\" ;;\nesac\n:\n";
     fs::write(&nest, nest_script).unwrap();
-    fs::write(names.join("exec"), nest_script).unwrap();
+    for copy in ["exec", "resume", "My Project"] {
+        fs::write(names.join(copy), nest_script).unwrap();
+    }
     let launch = r#"(while kill -0 $$ 2>/dev/null; do :; done
         "$NAMES/shell" "$NEST" $CHAIN -- "$0" "$@" >/dev/null 2>&1; : > "$DONE") &"#;
     let (input, stdout, exit, done) = (
@@ -986,6 +996,8 @@ fn a_codex_exec_run_reports_nothing() {
         ..CodexSetup::default()
     };
     assert_codex_silent("ngterm shell codex-exec", &setup);
+    assert_codex_silent("ngterm shell codex-spaced-exec", &setup);
+    assert_codex_silent("ngterm shell codex-exec-resume", &setup);
 }
 
 /// The walk ends at the pane's origin, as the Claude adapter's does: an agent above the origin started it (a coding
@@ -1010,11 +1022,14 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_codex() {
     }
 }
 
-/// Where the Codex's argv cannot be read whole (no `/proc`: macOS), the words `ps` joined say what this run is.
-/// Interactive by them reports, whatever the rollout's `session_meta` says: an interactive `codex resume` of a session
-/// that `codex exec` created keeps `source: exec`. Headless by them asks the rollout, since a prompt split into words
-/// reads the same (`codex "exec this"`): `exec` is silent, `cli` (the TUI) reports, and with no rollout the words
-/// stand.
+/// Where the Codex's argv cannot be read whole (no `/proc`: macOS), the words `ps` joined say what this run is, but a
+/// value with a space splits in them. They decide alone only where a split cannot mislead, whatever the rollout's
+/// `session_meta` says, since a session keeps its `source` through a resume: no option before the first positional,
+/// or `resume` as that positional, is the TUI and reports (an interactive `codex resume` of a session that `codex
+/// exec` created keeps `source: exec`); `exec resume` is silent (it keeps a TUI session's `cli`). Other words ask the
+/// rollout: `exec` reads the same as a prompt split into words (`codex "exec this"`), and a `codex exec` behind an
+/// option value with a space reads as the TUI. There `exec` is silent, `cli` (the TUI) reports, and with no rollout
+/// the words stand. Still wrong, as the hook's comment says: a resume in either direction behind such an option value.
 #[cfg(unix)]
 #[test]
 fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_source() {
@@ -1041,6 +1056,31 @@ fn without_proc_the_joined_argv_tells_a_codex_exec_run_before_the_rollouts_sourc
         "a TUI session whose prompt starts with `exec`"
     );
     assert_eq!(statuses("ngterm shell codex-exec", missing), none, "the joined argv");
+    assert_eq!(
+        statuses("ngterm shell codex-spaced-exec", &exec),
+        none,
+        "an exec run behind an option value with a space"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-spaced-exec", &cli),
+        ["blocked"],
+        "a TUI session behind an option value with a space"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-spaced-exec", missing),
+        ["blocked"],
+        "words that read as the TUI stand"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-resume", &exec),
+        ["blocked"],
+        "an exec session resumed in the TUI by `codex resume`"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex-exec-resume", &cli),
+        none,
+        "a TUI session resumed by `codex exec resume`"
+    );
     // pre-tool-use reads no payload for anything else
     let run = codex_under(
         "ngterm shell codex-exec",
