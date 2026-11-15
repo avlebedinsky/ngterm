@@ -120,6 +120,8 @@ report_agent() {
   printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
 }
 
+export NGTERM_STATUS_WALKED=1 # the walk above stands: the status wrapper need not repeat it
+
 case "${1:-}" in
   active | blocked)
     if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then

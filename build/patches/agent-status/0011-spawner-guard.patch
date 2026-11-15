@@ -1,0 +1,228 @@
+Keep an agent that another agent started inside a pane from painting the spawner's row, an ngterm extension (upstream guards only the Claude adapter). The Codex hook stays silent with a second agent above its Codex inside the pane (the Claude adapter's ancestor walk, with its agent names and its pane boundary) and for a Codex that runs without its TUI (`codex exec`, `codex review`), told from its argv in /proc, else from the `source` of its rollout's session_meta, else from the words `ps` joined: a reviewer's `codex exec` under a Claude Code worker inherited the worker's NGTERM_* and its Stop painted that session `blocked`. The shared wrapper's POSIX form makes the same walk for what reports through it alone (the Pi extension, the OpenCode plugins), unless an adapter that has walked says so (NGTERM_STATUS_WALKED). Applied after 0010-origin-pane-boundary.patch.
+
+diff --git a/ngterm-agent-status.sh b/ngterm-agent-status.sh
+index 24092db1..3f038961 100755
+--- a/ngterm-agent-status.sh
++++ b/ngterm-agent-status.sh
+@@ -27,6 +27,61 @@ set -u
+ 
+ [ -n "${NGTERM_SESSION_ID:-}" ] || exit 0   # not inside ngterm: nothing to do
+ 
++# ngterm's spawner guard (an ngterm extension: upstream's wrapper has none). An agent that another agent started
++# inside a pane inherits that pane's NGTERM_*, so its reports would paint the spawner's row. The Claude and Codex
++# adapters decide that themselves and say so (NGTERM_STATUS_WALKED); everything else that reports through this wrapper
++# alone (the Pi extension, the OpenCode plugins: a `pi -p` or an `opencode run` under another agent) is decided here,
++# by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same agent names and the same
++# pane boundary: keep them in step. A second agent above the caller and below the pane's origin makes the call a
++# worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has no such walk yet: a
++# process-table read there is slow next to the one second the Pi extension gives a report.
++is_agent() {
++  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
++  if [ -n "${NGTERM_AGENT_RE:-}" ]; then
++    [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
++  fi
++  return 1
++}
++
++if [ -z "${NGTERM_STATUS_WALKED:-}" ]; then
++  agents=0
++  prev_agent=
++  p=$PPID
++  for _ in 1 2 3 4 5 6 7 8; do
++    [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || break
++    line=$(ps -o ppid=,command= -p "$p" 2>/dev/null) || break
++    [ -n "$line" ] || break
++    line=${line#"${line%%[![:space:]]*}"} # ltrim the ppid column's padding
++    ppid=${line%% *}
++    cmd=${line#* }
++
++    base=${cmd%% *}
++    base=${base##*/} # argv[0] basename
++    base=${base#-}   # login shells report -/bin/zsh
++    base=${base#\(}
++    base=${base%\)}  # macOS renders (name) when argv is unreadable
++    case "$base" in # node/bun-hosted CLIs present as `node .../cli.js`, so test argv[1] too
++      node | bun | deno | python3 | python)
++        rest=${cmd#* }
++        hosted=${rest%% *}
++        hosted=${hosted##*/}
++        is_agent "$hosted" && base=$hosted
++        ;;
++    esac
++
++    if is_agent "$base"; then
++      [ "$base" = "$prev_agent" ] || agents=$((agents + 1))
++      prev_agent=$base
++    else
++      prev_agent=
++    fi
++    [ "$agents" -gt 1 ] && exit 0 # a second agent above the caller's: a worker's report, not the pane's agent's
++    # the pane boundary: the app, a headless origin, or the session server that holds a live session's shell
++    case "$base" in login | ngterm | ngterm-headless | ngterm-session) break ;; esac
++    p=$ppid
++  done
++fi
++
+ # --socket is a SUBCOMMAND option, so it must come AFTER `session status`, not before
+ # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
+ state=$1
+diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
+index 123e297a..38bf7d87 100755
+--- a/ngterm-claude-status.sh
++++ b/ngterm-claude-status.sh
+@@ -118,6 +118,8 @@ report_agent() {
+   printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
+ }
+ 
++export NGTERM_STATUS_WALKED=1 # the walk above stands: the status wrapper need not repeat it
++
+ case "${1:-}" in
+   active | blocked)
+     if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then
+diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
+index 3f400dc2..9b4b2110 100755
+--- a/ngterm-codex-status.sh
++++ b/ngterm-codex-status.sh
+@@ -56,6 +56,142 @@ case "$action" in
+     ;;
+ esac
+ 
++# ngterm's spawner guard (an ngterm extension: upstream's hook has none). A Codex that another agent started inside a
++# pane inherits that pane's NGTERM_*, so its events would paint the spawner's row: the Stop of a reviewer's `codex
++# exec` under a Claude Code worker posted `blocked` there for a "?" in the review. Two rules keep such a run silent:
++# - a second agent above this hook's Codex and below the pane's origin makes it a worker's. This is the Claude
++#   adapter's walk (ngterm-claude-status.sh explains it), with the same agent names and the same pane boundary: keep
++#   the two in step;
++# - a Codex that runs without its TUI (`codex exec`, `codex review`) has no user at its end, whoever started it. Its
++#   argv is read whole where /proc gives it (Linux). Elsewhere the rollout's session_meta says how the session was
++#   created (`source`: `exec`, or `cli` for the TUI), which is all Git Bash on Windows can read, and with no rollout
++#   the words `ps` joined decide. `ngtermctl agent mail` also refuses the servers (app-server, mcp-server): they
++#   report here, since a TUI on Codex's shared daemon fires its hooks from one.
++# Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
++is_agent() {
++  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
++  if [ -n "${NGTERM_AGENT_RE:-}" ]; then
++    [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
++  fi
++  return 1
++}
++
++# Whether the Codex argv "$@" names a subcommand that runs without the TUI: its first word that is not an option or an
++# option's value, read as `ngtermctl agent mail` reads it (codex_process.rs has the option lists).
++codex_argv_headless() {
++  shift
++  while [ $# -gt 0 ]; do
++    case "$1" in
++      --) return 1 ;; # the prompt follows
++      -c | --config | -m | --model | -p | --profile | -C | --cd | -s | --sandbox | -a | --ask-for-approval | \
++        --add-dir | --enable | --disable | --local-provider)
++        [ $# -gt 1 ] && shift
++        ;;
++      -i | --image)
++        while [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; do
++          case "$2" in exec | e | review) return 0 ;; esac
++          shift
++        done
++        ;;
++      -*) ;;
++      exec | e | review) return 0 ;;
++      *) return 1 ;;
++    esac
++    shift
++  done
++  return 1
++}
++
++# Prints the `source` of the rollout the payload names, from its first line (the session_meta record); fails when the
++# payload names none or it cannot be read. A key quoted inside a string value is escaped, so neither match can hit one.
++rollout_source() {
++  local path line=''
++  local path_re='(^|[^\\])"transcript_path"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
++  local source_re='[^\\]"source"[[:space:]]*:[[:space:]]*"([a-z_-]+)"'
++  [[ $payload =~ $path_re ]] || return 1
++  path=${BASH_REMATCH[2]}
++  path=${path//\\\\/\\} # a Windows path's separators
++  { IFS= read -r line <"$path" || [ -n "$line" ]; } 2>/dev/null || return 1
++  [[ $line =~ $source_re ]] || return 1
++  printf '%s' "${BASH_REMATCH[1]}"
++}
++
++spawned_run() {
++  local agents=0 prev_agent='' p=$PPID line ppid cmd base rest hosted host word
++  local codex_pid='' codex_cmd='' codex_host=''
++  local proc=${NGTERM_CODEX_PROC:-/proc}
++  local -a argv=()
++  for _ in 1 2 3 4 5 6 7 8; do
++    [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || break
++    line=$(ps -o ppid=,command= -p "$p" 2>/dev/null) || break
++    [ -n "$line" ] || break
++    line=${line#"${line%%[![:space:]]*}"} # ltrim the ppid column's padding
++    ppid=${line%% *}
++    cmd=${line#* }
++
++    base=${cmd%% *}
++    base=${base##*/} # argv[0] basename
++    base=${base#-}   # login shells report -/bin/zsh
++    base=${base#\(}
++    base=${base%\)}  # macOS renders (name) when argv is unreadable
++    host=
++    case "$base" in # node/bun-hosted CLIs present as `node .../cli.js`, so test argv[1] too
++      node | bun | deno | python3 | python)
++        rest=${cmd#* }
++        hosted=${rest%% *}
++        hosted=${hosted##*/}
++        if is_agent "$hosted"; then
++          base=$hosted
++          host=1
++        fi
++        ;;
++    esac
++
++    if is_agent "$base"; then
++      [ "$base" = "$prev_agent" ] || agents=$((agents + 1))
++      prev_agent=$base
++      if [ -z "$codex_pid" ] && [ "$base" = codex ]; then # the nearest Codex: the one that fired this hook
++        codex_pid=$p
++        codex_cmd=$cmd
++        codex_host=$host
++      fi
++    else
++      prev_agent=
++    fi
++    [ "$agents" -gt 1 ] && return 0 # a second agent above mine: I am a worker, not the pane's agent
++    # the pane boundary: the app, a headless origin, or the session server that holds a live session's shell. Whatever
++    # is above started the origin (an agent's shell that ran ngterm-headless, say) and is not in the pane.
++    case "$base" in login | ngterm | ngterm-headless | ngterm-session) break ;; esac
++    p=$ppid
++  done
++
++  if [ -n "$codex_pid" ] && [ -r "$proc/$codex_pid/cmdline" ]; then
++    while IFS= read -r -d '' word; do argv+=("$word"); done <"$proc/$codex_pid/cmdline"
++    [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
++    if [ "${#argv[@]}" -gt 0 ]; then
++      codex_argv_headless "${argv[@]}"
++      return
++    fi
++  fi
++  if [ -z "$payload" ] && [ ! -t 0 ]; then
++    payload=$(cat)
++    exec <<<"$payload"
++  fi
++  case "$(rollout_source)" in
++    exec) return 0 ;;
++    cli) return 1 ;;
++  esac
++  [ -n "$codex_cmd" ] || return 1
++  read -r -a argv <<<"$codex_cmd"
++  [ -n "$codex_host" ] && [ "${#argv[@]}" -gt 1 ] && argv=("${argv[@]:1}")
++  codex_argv_headless "${argv[@]}"
++}
++
++if [ "$action" != __watch-blocked ] && spawned_run; then
++  exit 0
++fi
++export NGTERM_STATUS_WALKED=1 # the status wrapper need not walk again, nor the watcher's, whose chain is gone
++
+ # Pipes the payload to `ngtermctl agent hook codex <event>`; a subagent's event other than a permission prompt is left
+ # out, since its transcript is not the pane's conversation.
+ report_agent() {

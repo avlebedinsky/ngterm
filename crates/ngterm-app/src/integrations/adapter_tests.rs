@@ -515,6 +515,7 @@ fn an_agent_above_the_panes_origin_does_not_silence_the_panes_agent() {
 
 /// The bash the Codex adapter runs under: `bash` on Unix, Git for Windows' where its installer puts it on Windows;
 /// `None` on a Windows machine without it.
+#[cfg(windows)]
 fn codex_bash() -> Option<PathBuf> {
     if cfg!(unix) {
         return Some(PathBuf::from("bash"));
@@ -543,6 +544,8 @@ struct CodexSetup {
     mail_output: Option<&'static str>,
     /// Run without `NGTERM_PANE_ID`, as an app from before stable pane ids starts a pane.
     no_pane_id: bool,
+    /// Further variables of the run.
+    vars: Vec<(&'static str, String)>,
 }
 
 /// The Codex adapter run for `action` with `payload` on stdin, in a pane's environment from scratch, its watcher
@@ -551,6 +554,7 @@ fn codex(action: &str, payload: &str) -> Option<CodexRun> {
     codex_with(action, payload, &CodexSetup::default())
 }
 
+#[cfg(windows)]
 fn codex_with(action: &str, payload: &str, setup: &CodexSetup) -> Option<CodexRun> {
     use std::io::Write as _;
     use std::process::Stdio;
@@ -560,17 +564,45 @@ fn codex_with(action: &str, payload: &str, setup: &CodexSetup) -> Option<CodexRu
         return None;
     };
     let stub = Stub::new();
+    let mut command = Command::new(bash);
+    command
+        .arg(bash_path(&resources().join("ngterm-codex-status.sh")))
+        .arg(action);
+    codex_env(&mut command, &stub, setup);
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // the adapter may exit without reading it all
+    let _ = child.stdin.take().unwrap().write_all(payload.as_bytes());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{action}: {}", output.status);
+    Some(codex_run(&stub, String::from_utf8(output.stdout).unwrap()))
+}
+
+/// On Unix the adapter runs as the pane's own Codex: under a Codex in a shell of an origin ([`codex_under`]), so its
+/// ancestor walk ends there and never meets the agent that may be running these tests.
+#[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Windows form skips without Git for Windows' bash"
+)]
+fn codex_with(action: &str, payload: &str, setup: &CodexSetup) -> Option<CodexRun> {
+    Some(codex_under("ngterm shell codex", action, payload, setup))
+}
+
+/// The stubs and the pane's environment of a Codex adapter run, on `command`: a wrapper that records each status, the
+/// stub `ngtermctl`, a watcher that makes no check.
+fn codex_env(command: &mut Command, stub: &Stub, setup: &CodexSetup) {
     let (statuses, wrapper) = (stub.path("statuses"), stub.path("status-wrapper"));
     ngterm_host::fakes::write_executable(&wrapper, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$STATUSES\"\n").unwrap();
     if let Some(output) = setup.mail_output {
         fs::write(stub.path("mail-output"), output).unwrap();
     }
-    let adapter = bash_path(&resources().join("ngterm-codex-status.sh"));
-    let mut command = Command::new(bash);
-    scrub(&mut command);
+    scrub(command);
     command
-        .arg(&adapter)
-        .arg(action)
         .env("STATUSES", bash_path(&statuses))
         .env("NGTERMCTL", bash_path(&stub.path("ngtermctl")))
         .env("NGTERM_STATUS_WRAPPER", bash_path(&wrapper))
@@ -582,26 +614,106 @@ fn codex_with(action: &str, payload: &str, setup: &CodexSetup) -> Option<CodexRu
     if setup.no_pane_id {
         command.env_remove("NGTERM_PANE_ID");
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    // the adapter may exit without reading it all
-    let _ = child.stdin.take().unwrap().write_all(payload.as_bytes());
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{action}: {}", output.status);
-    Some(CodexRun {
-        statuses: fs::read_to_string(&statuses)
+    for (name, value) in &setup.vars {
+        command.env(name, value);
+    }
+}
+
+/// What a finished Codex adapter run left in `stub`, with what it printed.
+fn codex_run(stub: &Stub, stdout: String) -> CodexRun {
+    CodexRun {
+        statuses: fs::read_to_string(stub.path("statuses"))
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
             .collect(),
         agent: stub.agent_call(),
         mail: stub.mail_call(),
-        stdout: String::from_utf8(output.stdout).unwrap(),
-    })
+        stdout,
+    }
+}
+
+/// The Codex adapter run for `action` at the bottom of a process chain ([`run_under`]).
+#[cfg(unix)]
+fn codex_under(chain: &str, action: &str, payload: &str, setup: &CodexSetup) -> CodexRun {
+    let stub = Stub::new();
+    let mut command = Command::new("sh");
+    codex_env(&mut command, &stub, setup);
+    let script = resources().join("ngterm-codex-status.sh");
+    let stdout = run_under(&stub, command, chain, &script, &[action], payload);
+    codex_run(&stub, stdout)
+}
+
+/// Runs `script` with `args` and `payload` on stdin at the bottom of a process chain, in the environment `command`
+/// holds, and returns what it printed. The chain is bash copies named as each word of `chain`, each the child of the
+/// one before, under an orphaned launcher, so an ancestor walk ends above the chain's first process and never meets
+/// the agent that may be running these tests. `codex` stands for an interactive Codex and `codex-exec` for a `codex
+/// exec` run (argv `codex exec ...`).
+#[cfg(unix)]
+fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args: &[&str], payload: &str) -> String {
+    use std::time::{Duration, Instant};
+
+    let bash = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("bash"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let names = stub.path("names");
+    fs::create_dir(&names).unwrap();
+    for name in [
+        "claude",
+        "codex",
+        "pi",
+        "opencode",
+        "shell",
+        "ngterm",
+        "ngterm-headless",
+        "ngterm-session",
+    ] {
+        std::os::unix::fs::symlink(&bash, names.join(name)).unwrap();
+    }
+    // nest.sh <name>... -- <script> <args>: each name runs the rest of the chain as its child, the last the script.
+    // The copy named `exec` is the script a `codex exec` stand-in runs, from the names' directory.
+    let nest = names.join("nest.sh");
+    let nest_script = "name=$1\nshift\ncase \"$name\" in\n\
+        --) bash \"$@\" <\"$PAYLOAD\" >\"$STDOUT\" 2>/dev/null; echo $? >\"$EXIT\" ;;\n\
+        codex-exec) cd \"$NAMES\" && \"$NAMES/codex\" exec \"$@\" ;;\n\
+        *) \"$NAMES/$name\" \"$NEST\" \"$@\" ;;\nesac\n:\n";
+    fs::write(&nest, nest_script).unwrap();
+    fs::write(names.join("exec"), nest_script).unwrap();
+    let launch = r#"(while kill -0 $$ 2>/dev/null; do :; done
+        "$NAMES/shell" "$NEST" $CHAIN -- "$0" "$@" >/dev/null 2>&1; : > "$DONE") &"#;
+    let (input, stdout, exit, done) = (
+        stub.path("payload.json"),
+        stub.path("stdout"),
+        stub.path("exit"),
+        stub.path("done"),
+    );
+    fs::write(&input, payload).unwrap();
+    let status = command
+        .args(["-c", launch])
+        .arg(script)
+        .args(args)
+        .env("NAMES", &names)
+        .env("NEST", &nest)
+        .env("CHAIN", chain)
+        .env("PAYLOAD", &input)
+        .env("STDOUT", &stdout)
+        .env("EXIT", &exit)
+        .env("DONE", &done)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !done.exists() {
+        assert!(Instant::now() < deadline, "{chain}: {args:?}: the chain never finished");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        fs::read_to_string(&exit).unwrap().trim(),
+        "0",
+        "{chain}: {args:?}: the script's exit status"
+    );
+    fs::read_to_string(&stdout).unwrap()
 }
 
 /// The Codex adapter's address tail: `--socket`, then `--pane-id` and `--pane`, as it orders them for `session text`.
@@ -731,6 +843,7 @@ fn codex_takes_no_mail_without_a_pane_id() {
     let setup = CodexSetup {
         mail_output: Some(BLOCK),
         no_pane_id: true,
+        ..CodexSetup::default()
     };
     let Some(run) = codex_with("stop", &fixture("codex/hooks/main/03-Stop.json"), &setup) else {
         return;
@@ -815,6 +928,181 @@ fn a_codex_subagents_prompt_makes_no_agent_call() {
     };
     let call = run.agent.expect("a subagent's permission prompt");
     assert_eq!(call.argv, agent_hook("codex", "PermissionRequest", &CODEX_TAIL));
+}
+
+/// A Stop payload whose last message asks a question, which a pane's Codex reports as `blocked`; `rollout` is its
+/// `transcript_path`.
+#[cfg(unix)]
+fn codex_question(rollout: &Path) -> String {
+    format!(
+        r#"{{"session_id":"s","transcript_path":"{}","hook_event_name":"Stop","last_assistant_message":"Shall I go on?"}}"#,
+        rollout.display()
+    )
+}
+
+/// Every event of a Codex run that is silent: no status, no agent record, no mail taken.
+#[cfg(unix)]
+fn assert_codex_silent(chain: &str, setup: &CodexSetup) {
+    let question = codex_question(Path::new("/nonexistent/rollout.jsonl"));
+    for (action, payload) in [
+        ("session-start", fixture("codex/hooks/main/01-SessionStart.json")),
+        (
+            "user-prompt-submit",
+            fixture("codex/hooks/main/02-UserPromptSubmit.json"),
+        ),
+        ("pre-tool-use", fixture("codex/hooks/main/05-PreToolUse.json")),
+        ("post-tool-use", fixture("codex/hooks/main/06-PostToolUse.json")),
+        (
+            "permission-request",
+            fixture("codex/hooks/main/25-PermissionRequest.json"),
+        ),
+        ("stop", question),
+    ] {
+        let run = codex_under(chain, action, &payload, setup);
+        assert_eq!(run.statuses, Vec::<String>::new(), "{chain}: {action}: a status");
+        assert_eq!(run.agent, None, "{chain}: {action}: an agent record");
+        assert_eq!(run.mail, None, "{chain}: {action}: mail taken");
+        assert_eq!(run.stdout, "", "{chain}: {action}");
+    }
+}
+
+/// A `codex exec` run that a review tool started under a Claude Code worker inherits that worker's `NGTERM_*`: its
+/// Stop, with a "?" in the review, painted the worker's session `blocked`. A Codex with another agent above it inside
+/// the pane is a worker's and reports nothing, on any event.
+#[cfg(unix)]
+#[test]
+fn a_codex_under_another_agent_in_the_pane_reports_nothing() {
+    let setup = CodexSetup {
+        mail_output: Some("mail"),
+        ..CodexSetup::default()
+    };
+    assert_codex_silent("ngterm shell claude shell codex-exec", &setup);
+    assert_codex_silent("ngterm shell claude shell codex", &setup);
+}
+
+/// A `codex exec` run has no user at its end, whoever started it: it reports nothing even alone in a pane.
+#[cfg(unix)]
+#[test]
+fn a_codex_exec_run_reports_nothing() {
+    let setup = CodexSetup {
+        mail_output: Some("mail"),
+        ..CodexSetup::default()
+    };
+    assert_codex_silent("ngterm shell codex-exec", &setup);
+}
+
+/// The walk ends at the pane's origin, as the Claude adapter's does: an agent above the origin started it (a coding
+/// agent's shell that ran `ngterm-headless`) and is not in the pane, so the pane's interactive Codex still reports.
+#[cfg(unix)]
+#[test]
+fn an_agent_above_the_panes_origin_does_not_silence_the_panes_codex() {
+    let question = codex_question(Path::new("/nonexistent/rollout.jsonl"));
+    for origin in [
+        "ngterm",
+        "ngterm-headless",
+        "ngterm-session",
+        "ngterm-headless ngterm-session",
+        "ngterm ngterm-session",
+    ] {
+        let chain = format!("claude shell {origin} shell codex");
+        let run = codex_under(&chain, "stop", &question, &CodexSetup::default());
+        assert_eq!(run.statuses, ["blocked"], "{chain}");
+        let chain = format!("{origin} shell claude shell codex");
+        let run = codex_under(&chain, "stop", &question, &CodexSetup::default());
+        assert_eq!(run.statuses, Vec::<String>::new(), "{chain}");
+    }
+}
+
+/// Where the Codex's argv cannot be read whole (no `/proc`: macOS, Git Bash on Windows), the rollout's `session_meta`
+/// says how the session was created: `exec` is silent, `cli` (the TUI) reports. With no rollout the words `ps` joined
+/// decide.
+#[cfg(unix)]
+#[test]
+fn without_proc_the_rollouts_source_tells_a_codex_exec_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let rollout = |source: &str| {
+        let path = dir.path().join(format!("rollout-{source}.jsonl"));
+        let meta = format!(
+            r#"{{"timestamp":"t","type":"session_meta","payload":{{"id":"s","base_instructions":"a \"source\":\"cli\" inside","source":"{source}","model_provider":"openai"}}}}"#
+        );
+        fs::write(&path, format!("{meta}\n{{\"type\":\"event_msg\"}}\n")).unwrap();
+        path
+    };
+    let setup = CodexSetup {
+        vars: vec![("NGTERM_CODEX_PROC", "/nonexistent".to_owned())],
+        ..CodexSetup::default()
+    };
+    let statuses = |chain: &str, rollout: &Path| codex_under(chain, "stop", &codex_question(rollout), &setup).statuses;
+    let none = Vec::<String>::new();
+    assert_eq!(
+        statuses("ngterm shell codex", &rollout("exec")),
+        none,
+        "an exec session"
+    );
+    assert_eq!(
+        statuses("ngterm shell codex", &rollout("cli")),
+        ["blocked"],
+        "a TUI session"
+    );
+    assert_eq!(statuses("ngterm shell codex-exec", &rollout("cli")), ["blocked"]);
+    let missing = Path::new("/nonexistent/rollout.jsonl");
+    assert_eq!(statuses("ngterm shell codex-exec", missing), none, "the joined argv");
+    assert_eq!(statuses("ngterm shell codex", missing), ["blocked"]);
+    // pre-tool-use reads no payload for anything else
+    let run = codex_under(
+        "ngterm shell codex",
+        "pre-tool-use",
+        &codex_question(&rollout("exec")),
+        &setup,
+    );
+    assert_eq!(run.statuses, none, "pre-tool-use of an exec session");
+}
+
+/// The `session status` call the shared wrapper makes for `active --blink` at the bottom of `chain`, as the Pi
+/// extension and the `OpenCode` plugins run it; `None` when it makes none.
+#[cfg(unix)]
+fn wrapper_under(chain: &str, vars: &[(&str, &str)]) -> Option<String> {
+    let stub = Stub::new();
+    let (ngtermctl, call) = (stub.path("status-ctl"), stub.path("status-call"));
+    ngterm_host::fakes::write_executable(&ngtermctl, "#!/bin/sh\nprintf '%s' \"$*\" > \"$CALL\"\n").unwrap();
+    let mut command = Command::new("sh");
+    scrub(&mut command);
+    command
+        .env("CALL", &call)
+        .env("NGTERMCTL", &ngtermctl)
+        .env("NGTERM_SESSION_ID", "S")
+        .envs(vars.iter().copied());
+    let script = resources().join("ngterm-agent-status.sh");
+    run_under(&stub, command, chain, &script, &["active", "--blink"], "");
+    fs::read_to_string(&call).ok()
+}
+
+/// Pi and `OpenCode` report through the shared wrapper alone, and a headless run of either (`pi -p`, `opencode run`)
+/// that another agent started inside a pane inherits the pane's `NGTERM_*`: the wrapper's own ancestor walk keeps it
+/// silent, with the Claude adapter's rule and pane boundary. An adapter that has already walked says so.
+#[cfg(unix)]
+#[test]
+fn the_wrapper_reports_nothing_for_an_agent_under_another_agent_in_the_pane() {
+    const CALL: &str = "session status active --target S --blink";
+    for agent in ["pi", "opencode"] {
+        let alone = wrapper_under(&format!("ngterm-session shell {agent}"), &[]);
+        assert_eq!(alone.as_deref(), Some(CALL), "{agent}: the pane's agent");
+        let worker = wrapper_under(&format!("ngterm-session shell claude shell {agent}"), &[]);
+        assert_eq!(worker, None, "{agent}: a worker under another agent");
+        let above = wrapper_under(&format!("claude shell ngterm-headless shell {agent}"), &[]);
+        assert_eq!(
+            above.as_deref(),
+            Some(CALL),
+            "{agent}: an agent above the pane's origin"
+        );
+    }
+    let walked = wrapper_under("ngterm shell claude shell pi", &[("NGTERM_STATUS_WALKED", "1")]);
+    assert_eq!(walked.as_deref(), Some(CALL), "the caller's walk stands");
+    assert_eq!(
+        wrapper_under("ngterm shell", &[]).as_deref(),
+        Some(CALL),
+        "a shell's own call"
+    );
 }
 
 #[test]

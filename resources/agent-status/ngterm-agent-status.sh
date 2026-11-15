@@ -27,6 +27,61 @@ set -u
 
 [ -n "${NGTERM_SESSION_ID:-}" ] || exit 0   # not inside ngterm: nothing to do
 
+# ngterm's spawner guard (an ngterm extension: upstream's wrapper has none). An agent that another agent started
+# inside a pane inherits that pane's NGTERM_*, so its reports would paint the spawner's row. The Claude and Codex
+# adapters decide that themselves and say so (NGTERM_STATUS_WALKED); everything else that reports through this wrapper
+# alone (the Pi extension, the OpenCode plugins: a `pi -p` or an `opencode run` under another agent) is decided here,
+# by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same agent names and the same
+# pane boundary: keep them in step. A second agent above the caller and below the pane's origin makes the call a
+# worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has no such walk yet: a
+# process-table read there is slow next to the one second the Pi extension gives a report.
+is_agent() {
+  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
+  if [ -n "${NGTERM_AGENT_RE:-}" ]; then
+    [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+if [ -z "${NGTERM_STATUS_WALKED:-}" ]; then
+  agents=0
+  prev_agent=
+  p=$PPID
+  for _ in 1 2 3 4 5 6 7 8; do
+    [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || break
+    line=$(ps -o ppid=,command= -p "$p" 2>/dev/null) || break
+    [ -n "$line" ] || break
+    line=${line#"${line%%[![:space:]]*}"} # ltrim the ppid column's padding
+    ppid=${line%% *}
+    cmd=${line#* }
+
+    base=${cmd%% *}
+    base=${base##*/} # argv[0] basename
+    base=${base#-}   # login shells report -/bin/zsh
+    base=${base#\(}
+    base=${base%\)}  # macOS renders (name) when argv is unreadable
+    case "$base" in # node/bun-hosted CLIs present as `node .../cli.js`, so test argv[1] too
+      node | bun | deno | python3 | python)
+        rest=${cmd#* }
+        hosted=${rest%% *}
+        hosted=${hosted##*/}
+        is_agent "$hosted" && base=$hosted
+        ;;
+    esac
+
+    if is_agent "$base"; then
+      [ "$base" = "$prev_agent" ] || agents=$((agents + 1))
+      prev_agent=$base
+    else
+      prev_agent=
+    fi
+    [ "$agents" -gt 1 ] && exit 0 # a second agent above the caller's: a worker's report, not the pane's agent's
+    # the pane boundary: the app, a headless origin, or the session server that holds a live session's shell
+    case "$base" in login | ngterm | ngterm-headless | ngterm-session) break ;; esac
+    p=$ppid
+  done
+fi
+
 # --socket is a SUBCOMMAND option, so it must come AFTER `session status`, not before
 # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
 state=$1
