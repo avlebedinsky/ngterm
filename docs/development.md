@@ -751,7 +751,7 @@ boot took and prints its UDID (`build-ios.sh`, `ios-sim-runner.sh` and `test-ios
 minutes: one that fails or runs out of time prints the simulators' state and the Mac's load, and the simulator is
 made again and booted once more. The simctl calls that prepare or free a simulator (create, delete, shutdown, uninstall,
 keychain reset and the keyboard's `defaults` spawn) have 2 minutes each; the spawn of a test binary in
-`ios-sim-runner.sh` has no limit of its own. Its header has the notes for a Mac reached over ssh (rustup's
+`ios-sim-runner.sh` has no limit of its own. The header of `setup-ios.sh` has the notes for a Mac reached over ssh (rustup's
 `PATH`, a host that can't reach `ziglang.org`).
 
 ## Build and run

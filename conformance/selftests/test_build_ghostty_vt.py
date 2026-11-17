@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -130,6 +131,7 @@ def test_a_stalled_zig_itself_is_stopped(tmp_path: Path) -> None:
     zig.chmod(zig.stat().st_mode | stat.S_IEXEC)
     (tmp_path / "tree").mkdir()
     (tmp_path / "build").mkdir()
+    started = time.monotonic()
     done = bash(
         f'source "{REPO}/scripts/lib/native.sh"\n'
         + "native_path() { echo \"$1\"; }\n"
@@ -138,6 +140,7 @@ def test_a_stalled_zig_itself_is_stopped(tmp_path: Path) -> None:
         + 'status=0; bounded 1 configure_for_target x86_64-linux-gnu || status=$?; echo "$status"'
     )
     assert done.stdout.strip() == "124", done.stderr
+    assert time.monotonic() - started < 10
     pid = int(pid_file.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
