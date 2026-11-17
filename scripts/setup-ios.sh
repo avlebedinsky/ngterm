@@ -276,11 +276,31 @@ ensure_simulator() {
 # IOS_SIM_BOOT_SECONDS sets another limit, to try what happens when a boot runs out of time.
 BOOT_SECONDS="${IOS_SIM_BOOT_SECONDS:-900}"
 
+# `simctl bootstatus`'s report, one line per step of the boot: it prints the whole state about once a second
+# ("[<time>] Status=2, isTerminal=NO, Elapsed=00:10." and the indented step, with a timer), so a step that stays the
+# same is printed once, after the time the boot had taken when it came.
+boot_steps() {
+  awk '
+    function flush() {
+      if (step != "" && step != last) { print "  " elapsed " " step; fflush(); last = step }
+      step = ""
+    }
+    /^\[.*Status=/ {
+      flush()
+      elapsed = match($0, /Elapsed=[0-9:]+/) ? substr($0, RSTART + 8, RLENGTH - 8) : "?"
+      next
+    }
+    /Migration Elapsed:/ || /^[[:space:]]*$/ { next }
+    /^[[:space:]]/ { sub(/^[[:space:]]+/, ""); step = step (step == "" ? "" : ", ") $0; next }
+    { flush(); print; fflush() }
+    END { flush() }'
+}
+
 # Boot simulator $1 ($2, its UDID) and wait until it is up, for up to BOOT_SECONDS; say how long it took.
 boot_simulator() {
   local name="$1" udid="$2" start=$SECONDS status=0
   echo "simulator $name ($udid): booting" >&2
-  simctl_bounded "$BOOT_SECONDS" bootstatus "$udid" -b >&2 || status=$?
+  simctl_bounded "$BOOT_SECONDS" bootstatus "$udid" -b | boot_steps >&2 || status=$?
   if ((status == 124)); then
     echo "simulator $name ($udid): not up after $BOOT_SECONDS s" >&2
   elif ((status)); then
@@ -318,6 +338,7 @@ ready_simulator() {
     udid="$(simulator_udid "$name")"
     if ! boot_simulator "$name" "$udid"; then
       print_simulator_state
+      simctl_bounded "$SIMCTL_SECONDS" shutdown "$udid" >/dev/null 2>&1 || true
       die "simulator $name ($udid): it did not boot a second time"
     fi
   fi
