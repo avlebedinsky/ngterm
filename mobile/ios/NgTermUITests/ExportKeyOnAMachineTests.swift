@@ -26,7 +26,6 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
     private static let concealedType = "org.nspasteboard.ConcealedType"
     private static let firstLabel = "qa-export-mac"
     private static let secondLabel = "qa-import-mac"
-    private static let wait: TimeInterval = 30
     private static let connectWait: TimeInterval = 60
     private static let offerWait: TimeInterval = 5
     private static let beat: TimeInterval = 1
@@ -37,9 +36,6 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
     private static let swipes = 12
     // how many times a face or finger is shown before the system's prompt is known to be up
     private static let looks = 10
-    // how often, and how many times at most, the file screen's Save is read while it settles
-    private static let settleBeat: TimeInterval = 0.5
-    private static let settleReads = 20
     private static let springboardIdentifier = "com.apple.springboard"
 
     private static func pause(_ seconds: TimeInterval) {
@@ -79,9 +75,8 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         shot("short", app)
 
         typePassphrase(Self.passphrase, in: app)
-        app.buttons["export-save"].tap()
-        awaitFileScreen(in: app).tap()
-        expectFileScreenGone(in: app)
+        FileScreen.open(with: app.buttons["export-save"], in: app)
+        FileScreen.save(in: app, back: app.buttons["export-copy"])
         FakeApp.expect(app.staticTexts["Saved"], "that the key was saved")
         assertSavedFileIsAnEncryptedOpenSSHKey()
 
@@ -130,11 +125,11 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         let start = app.buttons["import-key"]
         FakeApp.expect(start, "the welcome's Import a key: is the install fresh?")
         start.tap()
-        app.buttons["Choose file"].tap()
-        FileScreen.choose(fileStartingWith: ExportedKeyFiles.name, in: app)
-        FakeApp.expect(
-            FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
-            "that the file is under a passphrase"
+        FileScreen.choose(
+            fileStartingWith: ExportedKeyFiles.name,
+            opening: app.buttons["Choose file"],
+            then: FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
+            in: app
         )
 
         // a wrong passphrase is refused, and the key stays out
@@ -293,33 +288,6 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
             // a secure field reads as a dot for each character it holds
             XCTAssertEqual((field.value as? String)?.count, passphrase.count, "\(identifier) holds another text")
         }
-    }
-
-    // waits for the system's file screen to take taps: its Save enabled and still
-    @MainActor
-    private func awaitFileScreen(in app: XCUIApplication) -> XCUIElement {
-        let place = app.buttons["DOCPicker.actionButton"]
-        FakeApp.expect(place, "the system's file screen")
-        var before = CGRect.null
-        for _ in 0..<Self.settleReads {
-            let now = place.frame
-            if place.isEnabled, place.isHittable, now == before {
-                break
-            }
-            before = now
-            Self.pause(Self.settleBeat)
-        }
-        return place
-    }
-
-    // waits for the system's file screen to go, the export screen taking taps again
-    @MainActor
-    private func expectFileScreenGone(in app: XCUIApplication) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "isHittable == true"),
-            object: app.buttons["export-copy"]
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: Self.wait), .completed, "the file screen stayed")
     }
 
     // the one saved file is an OpenSSH private key under a cipher, never in the clear; only its cipher is reported

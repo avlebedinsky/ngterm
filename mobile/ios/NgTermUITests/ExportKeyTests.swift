@@ -12,15 +12,7 @@ internal final class ExportKeyTests: XCTestCase {
     private static let passphrase = "correct horse battery"
     // how many swipes a row far down the form may take to come into view
     private static let swipes = 12
-    // how long the system's file screen may take to come or go
-    private static let wait: TimeInterval = 30
     private static let nameLength = 8
-    // how often, and how many times at most, a button is read while the file screen settles
-    private static let settleBeat: TimeInterval = 0.5
-    private static let settleReads = 20
-    // where a drag of the file screen's bar starts, and how long it is held first
-    private static let middle: CGFloat = 0.5
-    private static let dragPress: TimeInterval = 0.1
 
     private let fileName = "ngterm-key-\(UUID().uuidString.prefix(ExportKeyTests.nameLength).lowercased())"
 
@@ -99,55 +91,6 @@ internal final class ExportKeyTests: XCTestCase {
         again.typeText(passphrase + "\n")
     }
 
-    // the button of the system's file screen that places the file (Save)
-    @MainActor
-    private func placeButton(in app: XCUIApplication) -> XCUIElement {
-        app.buttons["DOCPicker.actionButton"]
-    }
-
-    // waits for the system's file screen to take taps: its Save enabled and still. The screen can take seconds to
-    // lay out, and a tap that lands while its toolbar still moves opens a neighbouring button's menu instead
-    @MainActor
-    private func awaitFileScreen(in app: XCUIApplication, _ what: String) -> XCUIElement {
-        let place = placeButton(in: app)
-        FakeApp.expect(place, what)
-        var before = CGRect.null
-        for _ in 0..<Self.settleReads {
-            let now = place.frame
-            if place.isEnabled, place.isHittable, now == before {
-                break
-            }
-            before = now
-            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: Self.settleBeat)
-        }
-        return place
-    }
-
-    // leaves the system's file screen without a place for the file: its Cancel where it has one, else the sheet
-    // swiped down by its bar, as a user lets it go
-    @MainActor
-    private func cancelFileScreen(in app: XCUIApplication) {
-        let cancel = app.buttons["Cancel"].firstMatch
-        if cancel.exists {
-            cancel.tap()
-            return
-        }
-        let bar = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        let start = bar.coordinate(withNormalizedOffset: CGVector(dx: Self.middle, dy: Self.middle))
-        let foot = app.coordinate(withNormalizedOffset: CGVector(dx: Self.middle, dy: 1))
-        start.press(forDuration: Self.dragPress, thenDragTo: foot)
-    }
-
-    // waits for the system's file screen to go, the export screen taking taps again
-    @MainActor
-    private func expectFileScreenGone(in app: XCUIApplication) {
-        let gone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "isHittable == true"),
-            object: app.buttons["export-copy"]
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: Self.wait), .completed, "the file screen stayed")
-    }
-
     @MainActor
     internal func testAKeySavedUnderAPassphraseImportsBackAsTheSameKey() throws {
         let saved = fileName
@@ -164,19 +107,17 @@ internal final class ExportKeyTests: XCTestCase {
         // nothing is saved under a passphrase too short
         app.buttons["export-save"].tap()
         FakeApp.expect(FakeApp.element(containing: "Use at least 8 characters.", in: app), "the short passphrase")
-        XCTAssertFalse(placeButton(in: app).exists)
+        XCTAssertFalse(app.buttons["DOCPicker.actionButton"].exists)
 
         typePassphrase(Self.passphrase, in: app)
-        app.buttons["export-save"].tap()
-        awaitFileScreen(in: app, "the system's file screen").tap()
-        expectFileScreenGone(in: app)
+        let back = app.buttons["export-copy"]
+        FileScreen.open(with: app.buttons["export-save"], in: app)
+        FileScreen.save(in: app, back: back)
         FakeApp.expect(app.staticTexts["Saved"], "that the key was saved")
 
         // a second save left without a place no longer says Saved
-        app.buttons["export-save"].tap()
-        _ = awaitFileScreen(in: app, "the system's file screen again")
-        cancelFileScreen(in: app)
-        expectFileScreenGone(in: app)
+        FileScreen.open(with: app.buttons["export-save"], in: app)
+        FileScreen.cancel(in: app, back: back)
         XCTAssertFalse(app.staticTexts["Saved"].exists, "a cancelled save still says Saved")
 
         // Import a key reads the file back, once it has the passphrase
@@ -185,11 +126,11 @@ internal final class ExportKeyTests: XCTestCase {
         scroll(to: importKey, in: app)
         importKey.tap()
         FakeApp.expect(app.navigationBars["Import a key"], "the import screen")
-        app.buttons["Choose file"].tap()
-        FileScreen.choose(fileStartingWith: fileName, in: app)
-        FakeApp.expect(
-            FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
-            "that the file is under a passphrase"
+        FileScreen.choose(
+            fileStartingWith: fileName,
+            opening: app.buttons["Choose file"],
+            then: FakeApp.element(containing: "This key is protected: enter its passphrase.", in: app),
+            in: app
         )
         let field = app.secureTextFields["passphrase"]
         field.tap()
