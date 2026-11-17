@@ -165,8 +165,8 @@ internal enum FileScreen {
         app.cells.matching(NSPredicate(format: ownStorage)).firstMatch
     }
 
-    // reads `done` until it holds, a beat apart, and runs `again` after each `retry` reads; after `reads` reads it
-    // fails the test with the app's hierarchy and a screenshot
+    // reads `done` until it holds, a beat apart, and runs `again` after each `retry` reads before the last; after
+    // `reads` reads it fails the test with the app's hierarchy and a screenshot
     @MainActor
     @discardableResult
     private static func read(
@@ -178,6 +178,9 @@ internal enum FileScreen {
         for count in 1...reads {
             if done() {
                 return true
+            }
+            guard count < reads else {
+                break
             }
             if count.isMultiple(of: retry) {
                 again()
