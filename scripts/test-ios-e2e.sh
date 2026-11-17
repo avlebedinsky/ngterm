@@ -311,16 +311,6 @@ case "$DEVICE" in
   phone) NAME="$IOS_SIM_PHONE_NAME" ;;
   tablet) NAME="$IOS_SIM_TABLET_NAME" ;;
 esac
-UDID="$(xcrun simctl list devices 2>/dev/null | awk -v header="-- iOS $IOS_SIMULATOR_RUNTIME --" -v name="    $NAME (" '
-  /^-- / { inside = ($0 == header); next }
-  inside && index($0, name) == 1 { rest = substr($0, length(name) + 1); print substr(rest, 1, index(rest, ")") - 1); exit }')"
-[[ -n "$UDID" ]] || die "no $NAME simulator on iOS $IOS_SIMULATOR_RUNTIME: run scripts/setup-ios.sh"
-TCC_DB="$(xcrun simctl list devices -j | python3 -I -c '
-import json, sys
-for device in (d for ds in json.load(sys.stdin)["devices"].values() for d in ds):
-    if device["udid"] == sys.argv[1]:
-        print(device["dataPath"] + "/Library/TCC/TCC.db")' "$UDID")"
-[[ -n "$TCC_DB" ]] || die "simctl names no data directory for $NAME ($UDID)"
 
 # The environment xcodebuild gets: the caller's, without NGTERM_* and what would forward it into a simulator
 # (build-ios.sh's), and with the machine for the test runner.
@@ -337,10 +327,18 @@ for test in "${TESTS[@]}"; do
   echo "→ $test on $NAME" >&2
   # a fresh install: booted first, so the removal and the keychain reset reach the device; the keyboard's
   # slide-to-type introduction marked as shown (it would cover the keys a test taps)
-  xcrun simctl bootstatus "$UDID" -b >/dev/null
-  xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true
-  xcrun simctl uninstall "$UDID" com.nickalie.ngterm.ios 2>/dev/null || true
-  xcrun simctl keychain "$UDID" reset
+  UDID="$("$NATIVE_ROOT/scripts/setup-ios.sh" --simulator "$NAME")" ||
+    die "the $NAME simulator on iOS $IOS_SIMULATOR_RUNTIME is not ready (see above)"
+  TCC_DB="$(simctl_bounded "$SIMCTL_SECONDS" list devices -j | python3 -I -c '
+import json, sys
+for device in (d for ds in json.load(sys.stdin)["devices"].values() for d in ds):
+    if device["udid"] == sys.argv[1]:
+        print(device["dataPath"] + "/Library/TCC/TCC.db")' "$UDID")"
+  [[ -n "$TCC_DB" ]] || die "simctl names no data directory for $NAME ($UDID)"
+  simctl_bounded "$SIMCTL_SECONDS" spawn "$UDID" defaults write com.apple.keyboard.preferences \
+    DidShowContinuousPathIntroduction -bool true
+  simctl_bounded "$SIMCTL_SECONDS" uninstall "$UDID" com.nickalie.ngterm.ios 2>/dev/null || true
+  simctl_bounded "$SIMCTL_SECONDS" keychain "$UDID" reset
   pasteboard_allow
   bundle="$BUILD_DIR/e2e-${test//\//-}-$DEVICE.xcresult"
   rm -rf "$bundle"

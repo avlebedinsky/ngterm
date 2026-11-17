@@ -28,15 +28,15 @@
 #      none of them. Each runs even when an earlier one failed, and the action fails when any did;
 #    - build: the app, its tests and its packages for the simulator (Debug);
 #    - test: the Unit and then the UI test plan on the pinned phone and tablet simulators (IOS_SIM_PHONE_NAME and
-#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time (each boots right before its run, and shuts down
-#      before the next one boots), each with its keyboard's slide-to-type introduction marked as shown (it would
-#      cover the keys the UI tests tap); result bundles in mobile/ios/build/, and a failed snapshot's image in
-#      mobile/ios/build/snapshot-failures/ (its diff is in the result bundle). The Unit plan measures line coverage
-#      of the app's own code (Unit.xctestplan names the targets): scripts/ios-coverage.py writes its summary beside
-#      the result bundle (Unit.coverage.txt and Unit.coverage.json, from the run's profiles merged into
-#      Unit.profdata) and, after the UI plan, fails the action when a target is below its floor in
-#      mobile/ios/coverage-floors.txt. Each plan's run ends with its tests counted per simulator and its test
-#      classes' times;
+#      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time (each plan is built once before any boots; each
+#      simulator boots right before its run, and shuts down before the next one boots), each with its keyboard's
+#      slide-to-type introduction marked as shown (it would cover the keys the UI tests tap); result bundles in
+#      mobile/ios/build/, and a failed snapshot's image in mobile/ios/build/snapshot-failures/ (its diff is in the
+#      result bundle). The Unit plan measures line coverage of the app's own code (Unit.xctestplan names the
+#      targets): scripts/ios-coverage.py writes its summary beside the result bundle (Unit.coverage.txt and
+#      Unit.coverage.json, from the run's profiles merged into Unit.profdata) and, after the UI plan, fails the
+#      action when a target is below its floor in mobile/ios/coverage-floors.txt. Each plan's run ends with its tests
+#      counted per simulator and its test classes' times;
 #    - coverage: the Unit plan alone on both simulators, its coverage summary and the floor check, as test measures
 #      them;
 #    - ui: the UI plan alone, as test runs it;
@@ -354,22 +354,23 @@ action_build() {
 # the keys type nothing (KeyboardTests). The system writes the same preference once it has shown the introduction. The
 # simulator is booted (setup-ios.sh --simulator boots it right before), so its preferences daemon takes the setting.
 quiet_keyboard_introduction() {
-  xcrun simctl spawn "$1" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true ||
-    die "couldn't set simulator $1's keyboard preferences"
+  simctl_bounded "$SIMCTL_SECONDS" spawn "$1" defaults write com.apple.keyboard.preferences \
+    DidShowContinuousPathIntroduction -bool true || die "couldn't set simulator $1's keyboard preferences"
 }
 
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into
 # mobile/ios/build/$1.xcresult, with xcodebuild's options $2... (the UI plan's retry and shard), then count its tests
 # (report_test_counts); its status is that of the runs.
 #
-# Only one simulator runs at a time: each boots right before its own xcodebuild run, and shuts down before the next
-# one boots; the last one shuts down before the function returns. A CI Mac has 3 CPUs and 7 GB; a new simulator's
-# first boot alone took it to a load of 800, 1 GB of swap and 97 s stalls (a UI leg of ios run 44064367405), and the
-# unit job, with both simulators booted for its whole run, twice went silent until its job timeout (d0bd06ee,
-# 9a986aa3). Each run writes its own result bundle, $1-<simulator>.xcresult (CI uploads it if the job ends before the
-# merge); xcresulttool merges two into $1.xcresult, and one is moved there.
+# The plan is built once, before any simulator boots, and each simulator's run tests that build. Only one simulator runs
+# at a time: each boots right before its own run, and shuts down before the next one boots; the last one shuts down
+# before the function returns. A CI Mac has 3 CPUs and 7 GB: the unit job, with both simulators booted for its whole
+# run, twice went silent until its job timeout (d0bd06ee, 9a986aa3), and a build beside a simulator in its first
+# minutes took a UI leg to a load of 800, 1 GB of swap and a 97 s stall (ui-tablet-1 of ios run 44064367405). Each run
+# writes its own result bundle, $1-<simulator>.xcresult (CI uploads it if the job ends before the merge);
+# xcresulttool merges two into $1.xcresult, and one is moved there.
 run_test_plan() {
-  local plan="$1" name udid booted="" status=0 bundle bundles=()
+  local plan="$1" name udid booted="" status=0 bundle bundles=() start
   shift
   mkdir -p "$BUILD_DIR"
   # a failed snapshot's image goes to snapshot-failures/<test file>/ (xcodebuild hands TEST_RUNNER_* to the test
@@ -378,13 +379,22 @@ run_test_plan() {
   # the profiles of this plan's runs only: each simulator's are in Build/ProfileData/<its UDID>/, and a later run
   # leaves an earlier one's in place
   rm -rf "${BUILD_DIR:?}/$plan.xcresult" "${BUILD_DIR:?}/$plan-"*.xcresult "${DERIVED_DATA:?}/Build/ProfileData"
+  start=$SECONDS
+  echo "build-ios.sh: building the $plan plan" >&2
+  project_xcodebuild build-for-testing "${SIMULATOR_BUILD[@]}" -testPlan "$plan" -quiet || {
+    status=$?
+    echo "build-ios.sh: the $plan plan's build failed" >&2
+    return "$status"
+  }
+  echo "build-ios.sh: the $plan plan built in $((SECONDS - start)) s" >&2
   for name in "$IOS_SIM_PHONE_NAME" "$IOS_SIM_TABLET_NAME"; do
     case "$DEVICE" in
       phone) [[ "$name" == "$IOS_SIM_PHONE_NAME" ]] || continue ;;
       tablet) [[ "$name" == "$IOS_SIM_TABLET_NAME" ]] || continue ;;
     esac
     if [[ -n "$booted" ]]; then
-      xcrun simctl shutdown "$booted" || die "couldn't shut down simulator $booted before the next one boots"
+      simctl_bounded "$SIMCTL_SECONDS" shutdown "$booted" ||
+        die "couldn't shut down simulator $booted before the next one boots"
     fi
     # found, made again when it is gone, and booted right before the run: a CI Mac's simulators can still come and go
     udid="$("$NATIVE_ROOT/scripts/setup-ios.sh" --simulator "$name")" ||
@@ -392,13 +402,15 @@ run_test_plan() {
     booted="$udid"
     quiet_keyboard_introduction "$udid"
     bundle="$BUILD_DIR/$plan-$name.xcresult"
-    project_xcodebuild test -scheme NgTerm -configuration Debug -testPlan "$plan" -destination "id=$udid" \
-      -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" -quiet || status=$?
+    start=$SECONDS
+    project_xcodebuild test-without-building -scheme NgTerm -configuration Debug -testPlan "$plan" \
+      -destination "id=$udid" -parallel-testing-enabled NO -resultBundlePath "$bundle" "$@" -quiet || status=$?
+    echo "build-ios.sh: the $plan plan ran on $name in $((SECONDS - start)) s" >&2
     [[ ! -d "$bundle" ]] || bundles+=("$bundle")
   done
   # the last one too: the next plan's run (test runs Unit, then UI) starts with its own first simulator. A failed
   # shutdown fails the plan, but the merge and the counts still come.
-  if [[ -n "$booted" ]] && ! xcrun simctl shutdown "$booted"; then
+  if [[ -n "$booted" ]] && ! simctl_bounded "$SIMCTL_SECONDS" shutdown "$booted"; then
     echo "build-ios.sh: couldn't shut down simulator $booted after the $plan plan's runs" >&2
     ((status)) || status=1
   fi

@@ -41,7 +41,8 @@
 # which setup-ios.sh then finds), then the iOS toolchain (scripts/setup-ios.sh: the Rust iOS targets, the phone and
 # tablet simulators, SwiftLint). The simulator runtimes of the image are mounted for minutes after the Mac starts, and
 # until then the pinned runtime and the simulators on it can disappear: setup-ios.sh waits for them, and each test run
-# readies its simulators right before it starts (setup-ios.sh --simulator: made again when gone, booted). `unit` and
+# readies its simulators right before it starts (setup-ios.sh --simulator: made again when gone, booted, with a time
+# limit on the boot), after the plan's build (build-ios.sh builds before any simulator boots). `unit` and
 # `ui` end with their tests counted per simulator, so the split can be checked against `scripts/build-ios.sh test`,
 # which runs both plans whole.
 #

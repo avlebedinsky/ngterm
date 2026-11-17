@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Shared helpers of the native build scripts (build-ghostty-vt.sh, build-weston.sh, fetch-wpe.sh, fetch-lavapipe.sh,
-# fetch-fonts.sh, gen-wpe-bindings.sh, gen-ghostty-config-keys.sh, pkg-config.sh, stage.sh, lib/dev-instance.sh).
+# fetch-fonts.sh, gen-wpe-bindings.sh, gen-ghostty-config-keys.sh, pkg-config.sh, stage.sh, lib/dev-instance.sh, and
+# the iOS scripts).
 # Sourced, not run.
 #
 # Each native dependency lives in its own vendored prefix, ${NGTERM_VENDOR:-~/.cache/ngterm/vendor}/<name>-<key>/,
@@ -19,6 +20,43 @@
 die() {
   echo "$*" >&2
   exit 1
+}
+
+# Run $2... for at most $1 seconds. The status is the command's, or 124 (as coreutils' timeout gives) when the time
+# ran out: the command then gets TERM, and KILL 10 s later. Give a tool's own path, not a launcher such as xcrun: a
+# launcher's child would stay alive after the stop and keep the caller's output open.
+bounded() {
+  local limit="$1" pid deadline
+  shift
+  "$@" &
+  pid=$!
+  deadline=$((SECONDS + limit))
+  while kill -0 "$pid" 2>/dev/null; do
+    if ((SECONDS >= deadline)); then
+      kill -TERM "$pid" 2>/dev/null
+      deadline=$((SECONDS + 10))
+      while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do
+        sleep 1
+      done
+      kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+  done
+  wait "$pid"
+}
+
+# How long a simctl command that changes or asks a simulator (create, delete, shutdown, spawn) may take, in seconds.
+# shellcheck disable=SC2034 # for the sourcing scripts
+SIMCTL_SECONDS=120
+
+# `simctl $2...` for at most $1 seconds (bounded), macOS only.
+simctl_bounded() {
+  local limit="$1" simctl
+  shift
+  simctl="$(xcrun -f simctl)" || return 1
+  bounded "$limit" "$simctl" "$@"
 }
 
 # The host OS as Zig and ziglang.org's archives name it: linux, macos or windows (Git Bash, MSYS2, Cygwin).

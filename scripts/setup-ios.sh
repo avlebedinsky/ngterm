@@ -39,8 +39,12 @@
 #        scripts/setup-ios.sh --simulator <name>
 #                                       make simulator <name> (IOS_SIM_PHONE_NAME or IOS_SIM_TABLET_NAME) ready for a
 #                                       run: wait for the runtime disk images, create the simulator again when it is
-#                                       gone, boot it and wait until it is up, then print its UDID (build-ios.sh and
-#                                       ios-sim-runner.sh call it right before each test run)
+#                                       gone, boot it and wait until it is up, then print its UDID (build-ios.sh,
+#                                       ios-sim-runner.sh and test-ios-e2e.sh call it right before each test run).
+#                                       It prints how long the boot took. A boot that fails, or is not done in 15
+#                                       minutes (IOS_SIM_BOOT_SECONDS sets another limit), prints the simulators'
+#                                       state and the Mac's load, and the simulator is deleted, made again and booted
+#                                       once more
 set -euo pipefail
 
 CHECK=0
@@ -181,7 +185,7 @@ wait_for_simulator_service() {
   done
 }
 
-# What simctl knows of the runtimes and the simulators, for a failure's log.
+# What simctl knows of the runtimes and the simulators, and the Mac's load, for a failure's log.
 print_simulator_state() {
   {
     echo "the runtime disk images:"
@@ -190,6 +194,11 @@ print_simulator_state() {
     xcrun simctl list runtimes 2>&1 || true
     echo "the simulators on iOS $IOS_SIMULATOR_RUNTIME:"
     simulators_on_runtime || true
+    echo "the Mac's load:"
+    uptime || true
+    vm_stat || true
+    echo "the processes with the most CPU:"
+    ps -axro pcpu=,rss=,comm= | head -n 12 || true
   } >&2
 }
 
@@ -256,16 +265,35 @@ ensure_simulator() {
     could_not "simulator $name: the iOS $IOS_SIMULATOR_RUNTIME runtime is not installed"
     return 0
   fi
-  if xcrun simctl create "$name" "$device" "$RUNTIME_ID" >/dev/null; then
+  if simctl_bounded "$SIMCTL_SECONDS" create "$name" "$device" "$RUNTIME_ID" >/dev/null; then
     did "created simulator $name ($device, iOS $IOS_SIMULATOR_RUNTIME)"
   else
     could_not "create simulator $name (xcrun simctl create failed)"
   fi
 }
 
+# How long a simulator may take to boot, in seconds: a new one took up to about 10 minutes on a CI Mac.
+# IOS_SIM_BOOT_SECONDS sets another limit, to try what happens when a boot runs out of time.
+BOOT_SECONDS="${IOS_SIM_BOOT_SECONDS:-900}"
+
+# Boot simulator $1 ($2, its UDID) and wait until it is up, for up to BOOT_SECONDS; say how long it took.
+boot_simulator() {
+  local name="$1" udid="$2" start=$SECONDS status=0
+  echo "simulator $name ($udid): booting" >&2
+  simctl_bounded "$BOOT_SECONDS" bootstatus "$udid" -b >&2 || status=$?
+  if ((status == 124)); then
+    echo "simulator $name ($udid): not up after $BOOT_SECONDS s" >&2
+  elif ((status)); then
+    echo "simulator $name ($udid): its boot failed after $((SECONDS - start)) s (status $status)" >&2
+  else
+    echo "simulator $name ($udid): booted in $((SECONDS - start)) s" >&2
+  fi
+  return "$status"
+}
+
 # --simulator: make simulator $1 ready for a run and print its UDID (see the usage above).
 ready_simulator() {
-  local name="$1" device xcode udid state boot
+  local name="$1" device xcode udid state
   case "$name" in
     "$IOS_SIM_PHONE_NAME") device="$IOS_SIM_PHONE" ;;
     "$IOS_SIM_TABLET_NAME") device="$IOS_SIM_TABLET" ;;
@@ -280,10 +308,18 @@ ready_simulator() {
   ensure_simulator "$name" "$device"
   ((${#COULD_NOT[@]} == 0)) || die "simulator $name: ${COULD_NOT[*]}"
   udid="$(simulator_udid "$name")"
-  if ! boot="$(xcrun simctl bootstatus "$udid" -b 2>&1)"; then
-    echo "$boot" >&2
+  if ! boot_simulator "$name" "$udid"; then
     print_simulator_state
-    die "simulator $name ($udid): it did not boot"
+    echo "simulator $name ($udid): it did not boot, so it is made again and booted once more" >&2
+    simctl_bounded "$SIMCTL_SECONDS" shutdown "$udid" >/dev/null 2>&1 || true
+    simctl_bounded "$SIMCTL_SECONDS" delete "$udid" >&2 || die "simulator $name ($udid): it could not be deleted"
+    ensure_simulator "$name" "$device"
+    ((${#COULD_NOT[@]} == 0)) || die "simulator $name: ${COULD_NOT[*]}"
+    udid="$(simulator_udid "$name")"
+    if ! boot_simulator "$name" "$udid"; then
+      print_simulator_state
+      die "simulator $name ($udid): it did not boot a second time"
+    fi
   fi
   state="$(simulator_udid "$name" --state)"
   if [[ "$state" != "$udid Booted" ]]; then
