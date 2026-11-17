@@ -749,8 +749,9 @@ disappear. An image that stays unusable does not stop it. `--simulator <name>`
 does the same right before a test run: it creates the simulator again if it is gone, boots it, prints how long the
 boot took and prints its UDID (`build-ios.sh`, `ios-sim-runner.sh` and `test-ios-e2e.sh` call it). A boot has 15
 minutes: one that fails or runs out of time prints the simulators' state and the Mac's load, and the simulator is
-made again and booted once more. Every other simctl call of these scripts that waits on a simulator (create, delete,
-shutdown, spawn) has 2 minutes. Its header has the notes for a Mac reached over ssh (rustup's
+made again and booted once more. The simctl calls that prepare or free a simulator (create, delete, shutdown, uninstall,
+keychain reset and the keyboard's `defaults` spawn) have 2 minutes each; the spawn of a test binary in
+`ios-sim-runner.sh` has no limit of its own. Its header has the notes for a Mac reached over ssh (rustup's
 `PATH`, a host that can't reach `ziglang.org`).
 
 ## Build and run
@@ -1136,7 +1137,8 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
 - `test` builds each plan once (`build-for-testing`), with no simulator booted, then runs it on the pinned
   `ngterm-phone` and `ngterm-tablet` simulators, one after the other (`test-without-building`): each boots right
   before its run and shuts down before the next one boots, so a CI Mac (3 CPUs, 7 GB) never has two booted, nor a
-  build beside a simulator that has just booted. It prints how long the build and each run took. The UI
+  build beside a simulator that has just booted. It prints how long the build and each run took. A plan whose build
+  fails boots no simulator and counts no tests. The UI
   tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI
   test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
   terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry

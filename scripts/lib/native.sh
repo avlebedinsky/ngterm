@@ -23,31 +23,42 @@ die() {
 }
 
 # Run $2... for at most $1 seconds. The status is the command's, or 124 (as coreutils' timeout gives) when the time
-# ran out: the command then gets TERM, and KILL 10 s later. Give a tool's own path, not a launcher such as xcrun: a
-# launcher's child would stay alive after the stop and keep the caller's output open.
+# ran out: the command then gets TERM, and KILL 10 s later. Stock macOS has no timeout(1). Give a tool's own path, not a
+# launcher such as xcrun: a launcher's child would stay alive after the stop and keep the caller's output open. Safe in
+# a `set -e` caller. A command that ends in time returns at once: the watchdog that fired exits 124 when it is stopped.
 bounded() {
-  local limit="$1" pid deadline
+  local limit="$1" pid watchdog status=0 watched=0
   shift
   "$@" &
   pid=$!
-  deadline=$((SECONDS + limit))
-  while kill -0 "$pid" 2>/dev/null; do
-    if ((SECONDS >= deadline)); then
-      kill -TERM "$pid" 2>/dev/null
-      deadline=$((SECONDS + 10))
-      while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do
-        sleep 1
-      done
-      kill -KILL "$pid" 2>/dev/null
-      wait "$pid" 2>/dev/null
-      return 124
-    fi
-    sleep 1
-  done
-  wait "$pid"
+  (
+    elapsed=0
+    while ((elapsed < limit)); do
+      sleep 1 >/dev/null 2>&1
+      elapsed=$((elapsed + 1))
+    done
+    trap 'exit 124' TERM
+    echo "${1##*/} ${*:2} still running after ${limit}s: stopping it" >&2
+    kill -TERM "$pid" 2>/dev/null || exit 0
+    while ((elapsed < limit + 10)) && kill -0 "$pid" 2>/dev/null; do
+      sleep 1 >/dev/null 2>&1
+      elapsed=$((elapsed + 1))
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+    exit 124
+  ) >/dev/null &
+  watchdog=$!
+  wait "$pid" || status=$?
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || watched=$?
+  if ((watched == 124)); then
+    return 124
+  fi
+  return "$status"
 }
 
-# How long a simctl command that changes or asks a simulator (create, delete, shutdown, spawn) may take, in seconds.
+# How long a simctl call that prepares or frees a simulator (create, delete, shutdown, uninstall, keychain reset, the
+# keyboard's `defaults` spawn) may take, in seconds.
 # shellcheck disable=SC2034 # for the sourcing scripts
 SIMCTL_SECONDS=120
 

@@ -7,7 +7,6 @@ import re
 import shutil
 import stat
 import subprocess
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -123,25 +122,6 @@ def bash(body: str, timeout: float = 30, **env: str) -> subprocess.CompletedProc
     )
 
 
-def test_run_bounded_stops_a_command_past_its_limit() -> None:
-    started = time.monotonic()
-    done = bash(functions("run_bounded") + 'status=0; run_bounded 1 sleep 25 || status=$?; echo "$status"')
-    assert done.stdout.strip() == "143", done.stderr
-    assert time.monotonic() - started < 15
-    assert "still running after 1s" in done.stderr
-
-
-def test_run_bounded_returns_a_commands_own_status_at_once() -> None:
-    started = time.monotonic()
-    done = bash(
-        functions("run_bounded")
-        + 'fails() { return 7; }\nstatus=0; run_bounded 25 fails || status=$?; echo "$status"\n'
-        + "run_bounded 25 true; echo ok"
-    )
-    assert done.stdout.split() == ["7", "ok"], done.stderr
-    assert time.monotonic() - started < 15
-
-
 def test_a_stalled_zig_itself_is_stopped(tmp_path: Path) -> None:
     """The signal has to reach zig: a shell left between them would die and leave the stalled zig running."""
     pid_file = tmp_path / "zig.pid"
@@ -151,12 +131,13 @@ def test_a_stalled_zig_itself_is_stopped(tmp_path: Path) -> None:
     (tmp_path / "tree").mkdir()
     (tmp_path / "build").mkdir()
     done = bash(
-        "native_path() { echo \"$1\"; }\n"
-        + functions("run_bounded", "configure_for_target")
+        f'source "{REPO}/scripts/lib/native.sh"\n'
+        + "native_path() { echo \"$1\"; }\n"
+        + functions("configure_for_target")
         + f'TREE="{tmp_path}/tree"; BUILD_DIR="{tmp_path}/build"; ZIG_CACHE="{tmp_path}/cache"; ZIG_EXE="{zig}"\n'
-        + 'status=0; run_bounded 1 configure_for_target x86_64-linux-gnu || status=$?; echo "$status"'
+        + 'status=0; bounded 1 configure_for_target x86_64-linux-gnu || status=$?; echo "$status"'
     )
-    assert done.stdout.strip() == "143", done.stderr
+    assert done.stdout.strip() == "124", done.stderr
     pid = int(pid_file.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)

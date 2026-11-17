@@ -217,33 +217,8 @@ seed_zig_packages() {
   done
 }
 
-# Runs "$@" in the background and ends it after $1 seconds, returning its status. Stock macOS has no timeout(1). The
-# watchdog sleeps a second at a time so that stopping it leaves no long sleep behind.
-run_bounded() {
-  local limit="$1" pid watchdog status=0
-  shift
-  "$@" &
-  pid=$!
-  (
-    elapsed=0
-    while ((elapsed < limit)); do
-      sleep 1
-      elapsed=$((elapsed + 1))
-    done
-    echo "still running after ${limit}s: stopping it" >&2
-    kill -TERM "$pid" 2>/dev/null || exit 0
-    sleep 5
-    kill -KILL "$pid" 2>/dev/null || true
-  ) >/dev/null &
-  watchdog=$!
-  wait "$pid" || status=$?
-  kill "$watchdog" 2>/dev/null || true
-  wait "$watchdog" 2>/dev/null || true
-  return "$status"
-}
-
 # Configures the tree for Zig triple $1, which fetches what that target needs. It replaces its own process with zig, so
-# that run_bounded's signal reaches zig itself.
+# that bounded's signal reaches zig itself.
 configure_for_target() {
   cd "$TREE"
   export ANDROID_NDK_HOME
@@ -269,7 +244,7 @@ for target in "${ZIG_TARGETS[@]}"; do
     continue
   fi
   attempt=1
-  until run_bounded "$ZIG_FETCH_TIMEOUT" configure_for_target "$target"; do
+  until bounded "$ZIG_FETCH_TIMEOUT" configure_for_target "$target"; do
     ((attempt < ZIG_FETCH_ATTEMPTS)) \
       || die "cannot fetch the Zig packages of libghostty-vt for $target after $attempt attempts"
     echo "fetching the Zig packages for $target failed (attempt $attempt of $ZIG_FETCH_ATTEMPTS), retrying..." >&2

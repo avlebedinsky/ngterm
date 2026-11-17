@@ -360,7 +360,8 @@ quiet_keyboard_introduction() {
 
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into
 # mobile/ios/build/$1.xcresult, with xcodebuild's options $2... (the UI plan's retry and shard), then count its tests
-# (report_test_counts); its status is that of the runs.
+# (report_test_counts); its status is that of the runs. When the plan's build fails, no simulator boots, nothing is
+# counted and the status is the build's.
 #
 # The plan is built once, before any simulator boots, and each simulator's run tests that build. Only one simulator runs
 # at a time: each boots right before its own run, and shuts down before the next one boots; the last one shuts down
