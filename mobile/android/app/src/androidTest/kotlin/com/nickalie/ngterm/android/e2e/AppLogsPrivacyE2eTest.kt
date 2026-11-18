@@ -209,7 +209,7 @@ class AppLogsPrivacyE2eTest {
         compose.waitForIdle()
         val bounds = compose.onNode(terminal()).fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
-        keyboards.awaitKey(QaKeyboard.keyDescription("e"))
+        keyboards.awaitShown(compose::waitForIdle)
         linesBeforeTyping = logLines().size
         TYPED.split(' ').forEach { word ->
             keyboards.tapKeys(word)

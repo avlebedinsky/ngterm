@@ -222,6 +222,7 @@ class BothAppsE2eTest {
         compose.waitForIdle()
         val bounds = compose.onAllNodes(terminal())[0].fetchSemanticsNode().boundsInWindow
         device.click(bounds.center.x.toInt(), bounds.center.y.toInt())
+        keyboards.awaitShown(compose::waitForIdle)
         listOf("expr", "$ANSWER_BASE", "+", "$step").forEach { word ->
             keyboards.tapKeys(word)
             keyboards.tapKey(QaKeyboard.keyDescription(QaKeyboard.SPACE))
