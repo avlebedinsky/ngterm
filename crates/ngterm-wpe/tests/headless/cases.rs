@@ -64,6 +64,14 @@ pub const CASES: &[(&str, Case)] = &[
         crate::text::bar,
     ),
     (
+        "text_page_posts_its_counts_only_after_its_ready_report",
+        crate::text::counts_after_ready,
+    ),
+    (
+        "text_page_log_bar_fits_a_narrow_page_following_paused_and_with_a_note",
+        crate::text::narrow_bar,
+    ),
+    (
         "a_clicked_document_loads_nothing_from_the_network_behind_its_filter",
         crate::document::silent,
     ),

@@ -5,7 +5,9 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
-use ngterm_wpe::{Event, Geometry, InjectionTime, Load, PolicyKind, Settings, UserScript, ViewId, ViewSpec};
+use ngterm_wpe::{
+    Event, Geometry, InjectionTime, Load, MessageHandler, PolicyKind, Settings, UserScript, ViewId, ViewSpec,
+};
 
 use crate::cases::Context;
 use crate::markdown::escaped;
@@ -55,6 +57,11 @@ fn document(text: &str, language: Option<&str>, line: Option<i64>) -> Load {
     if let Some(line) = line {
         let _ = write!(attributes, " data-line=\"{line}\"");
     }
+    document_with(text, &attributes)
+}
+
+/// The document `text_page::html` builds for `text`, its holder carrying `attributes` as they are.
+fn document_with(text: &str, attributes: &str) -> Load {
     Load::Html {
         html: format!(
             "<!doctype html><html><head><meta charset=\"utf-8\">\
@@ -71,6 +78,11 @@ fn document(text: &str, language: Option<&str>, line: Option<i64>) -> Load {
 
 /// A text page's view: the renderer at document end in its world, the page's own JavaScript off, and `extra`.
 fn view(h: &Harness, extra: Vec<UserScript>) -> ViewId {
+    view_of(h, 320, extra, Vec::new())
+}
+
+/// A text page's view `width` pixels wide, with `handlers` registered.
+fn view_of(h: &Harness, width: u32, extra: Vec<UserScript>, handlers: Vec<MessageHandler>) -> ViewId {
     let mut scripts = vec![UserScript {
         source: script(),
         time: InjectionTime::End,
@@ -81,11 +93,11 @@ fn view(h: &Harness, extra: Vec<UserScript>) -> ViewId {
         session: h.ephemeral(),
         settings: Settings::overlay(false),
         scripts,
-        message_handlers: Vec::new(),
+        message_handlers: handlers,
         zoom: 1.0,
         background: None,
         geometry: Geometry {
-            width: 320,
+            width,
             height: 240,
             scale: 1.0,
         },
@@ -318,5 +330,101 @@ pub fn bar(h: &Harness, _: &Context) -> Outcome {
     )?;
     h.host.close_view(view);
     h.forget(view);
+    Ok(())
+}
+
+/// The handler the app registers in the renderer's world (`text_page::HANDLER`).
+const HANDLER: &str = "ngtermTextPage";
+
+/// Upstream 696edcf0 (#978): a page's counts wait for its ready report, so a count the app holds is the page's own. A
+/// diff page with changes or none, and a page opened on a search, post `ready` before `changes` or `report`.
+pub fn counts_after_ready(h: &Harness, _: &Context) -> Outcome {
+    let cases = [
+        (
+            "a diff",
+            "@@ -1 +1 @@\n-a\n+b\n",
+            " data-diff data-language=\"diff\"",
+            "changes",
+        ),
+        (
+            "a diff with no changes",
+            "@@ -1 +1 @@\n a\n",
+            " data-diff data-language=\"diff\"",
+            "changes",
+        ),
+        (
+            "a seeded search",
+            "a b a\n",
+            " data-revision=\"1\" data-query=\"a\" data-current=\"0\"",
+            "report",
+        ),
+    ];
+    for (name, text, attributes, count) in cases {
+        let handler = MessageHandler {
+            name: HANDLER.to_owned(),
+            world: Some(WORLD.to_owned()),
+        };
+        let view = view_of(h, 320, Vec::new(), vec![handler]);
+        h.host.load(view, document_with(text, attributes));
+        let mut posted = Vec::new();
+        while posted.last().is_none_or(|kind: &String| kind != count) {
+            let message = h.script_message(view)?;
+            h.host.reply_script_message(message.token, Ok("null".to_owned()));
+            let body: serde_json::Value =
+                serde_json::from_str(message.body.as_deref().unwrap_or("null")).map_err(|error| error.to_string())?;
+            let kind = body
+                .as_object()
+                .and_then(|body| body.keys().next().cloned())
+                .unwrap_or_default();
+            posted.push(kind);
+        }
+        ensure(posted.first().is_some_and(|kind| kind == "ready"), || {
+            format!("{name}: the page posted {posted:?}")
+        })?;
+        h.host.close_view(view);
+        h.forget(view);
+    }
+    Ok(())
+}
+
+/// Upstream 6c082ecd (#934): a log page's bar keeps every control in one line on a narrow (400px, upstream's) page,
+/// following, paused and with a note: the Follow button ends before Wrap, Wrap shows its whole label, and the search
+/// box and its buttons end inside the page. Under 480px the paused label drops its prefix and keeps `Resume`.
+pub fn narrow_bar(h: &Harness, _: &Context) -> Outcome {
+    const FITS: &str = "(() => {
+      const width = document.documentElement.clientWidth;
+      const follow = document.querySelector('.ngterm-logbar button');
+      const box = document.querySelector('.ngterm-search').getBoundingClientRect();
+      const controls = [...document.querySelectorAll('.ngterm-search button')].map(e => e.getBoundingClientRect().right);
+      const wrap = document.querySelector('.ngterm-wrap');
+      return [follow.innerText, document.querySelector('.ngterm-logbar > span').textContent, wrap.textContent,
+              follow.getBoundingClientRect().right <= wrap.getBoundingClientRect().left,
+              wrap.scrollWidth <= wrap.clientWidth, box.right <= width, Math.max(...controls) <= width].join('|');
+    })()";
+    let text = numbered(200, "") + "x\n";
+    let search = " data-revision=\"1\" data-query=\"line\" data-current=\"0\"";
+    let cases = [
+        (400, "true", "", "Follow: on||Wrap: off"),
+        (400, "false", "", "Resume||Wrap: off"),
+        (400, "false", " data-waiting", "Resume|waiting for file|Wrap: off"),
+        (
+            520,
+            "false",
+            " data-waiting",
+            "Follow: paused - Resume|waiting for file|Wrap: off",
+        ),
+    ];
+    for (width, following, note, label) in cases {
+        let view = view_of(h, width, Vec::new(), Vec::new());
+        let attributes = format!(" data-log data-following=\"{following}\"{note}{search}");
+        h.load(view, document_with(&text, &attributes))?;
+        let fits = reading(h, view, FITS, None)?;
+        let expected = format!("{label}|true|true|true|true");
+        ensure(fits == expected, || {
+            format!("{width}px, following {following}{note}: {fits:?}, not {expected:?}")
+        })?;
+        h.host.close_view(view);
+        h.forget(view);
+    }
     Ok(())
 }

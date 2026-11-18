@@ -199,7 +199,7 @@ What Task 1 left for the feature tasks:
 **ngterm's own:** the script's name adaptations stay.
 **Conformance:** existing text, Markdown and diff page ids stay green.
 
-- [ ] Refresh the resources with the script; `--check` passes.
+- [x] Refresh the resources with the script; `--check` passes.
 - [ ] Existing pages render as before with the new scripts while wrap, link grants and log colors have no caller
   (Tasks 15 to 17): engine tests on WPE, and the page smoke on WKWebView and WebView2.
 
