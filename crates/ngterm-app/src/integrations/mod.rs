@@ -75,6 +75,10 @@
 //!   again through `ngtermctl agent rerun claude`, which finds the pane whose agent record holds the payload's
 //!   conversation or the one it moved from (`agent.locate`) and runs the hook as that pane; a job no pane started
 //!   does nothing and prints nothing (`build/patches/agent-status/0009-claude-background-job.patch`);
+//! - under Git Bash (MSYS or Cygwin) the Codex adapter starts no screen watcher, since a Codex there was seen waiting
+//!   at "Running hook" while the watcher lived: on Windows a Codex dialog does not set the pane to blocked, and
+//!   lifecycle status, the agent record and mail work as on the other systems
+//!   (`build/patches/agent-status/0011-codex-windows-watcher.patch`);
 //! - the skill speaks of the `live` group and the attach contract's `NGTERM_LIVE_*` variables where upstream's names
 //!   `zmx`, and it is named `ngterm` (frontmatter `name`, a description that also triggers on ngterm and `ngtermctl`),
 //!   its text, examples and `show-image.sh` running `ngtermctl` wherever upstream runs `agtermctl`, the far side of a

@@ -1,0 +1,15 @@
+Start no screen watcher for a Codex hook under MSYS or Cygwin (Git Bash on Windows). In a Codex 0.169.0 session under Git Bash the prompt stayed at "Running hook" while the watcher was alive, and ending the watcher released it (the reporter's session, PR 23; a harness that starts the hook as Codex does showed no wait, so the cause is not known). On Windows a dialog on the screen therefore does not set the pane to blocked; lifecycle status, the agent record and mail work as before. Applied after 0010-origin-pane-boundary.patch.
+
+diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
+index 3f400dc2..f878faf0 100755
+--- a/ngterm-codex-status.sh
++++ b/ngterm-codex-status.sh
+@@ -157,6 +157,8 @@ stop_watcher() {
+ }
+ 
+ start_watcher() {
++  # Windows Codex can wait for the background descendant after the hook itself exits.
++  case "${OSTYPE:-}" in msys*|cygwin*|win32*) return 0 ;; esac
+   local token token_file
+   token_file=$(watch_file_path)
+   token="$$-${RANDOM:-0}"
