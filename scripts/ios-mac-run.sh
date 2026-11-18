@@ -173,18 +173,18 @@ CLAIM="$SCRATCH/claim"
 # The start time of process $1, empty when it is gone. A pid and its start time name one process: a pid that the
 # system gives again (after a restart, or when the pids wrap) has a different start time. ps writes the time with the
 # time zone and the locale of its environment, so the call clears the environment: the job (after the --env exports
-# of the run) and a later call (with none of them) must write the same text. The job script makes the same call.
+# of the run) and a later call (with none of them) must write the same text. The job script gets this function.
 started() { /usr/bin/env -i PATH=/bin:/usr/bin LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" 2>/dev/null || true; }
 # Whether the pid of file $1 is still the process that it named: alive, with the start time in file $1.start. The
-# start time is written before the pid, so a pid with no start time is from a runner that wrote none (or ps failed):
-# then only the pid is known, and a live pid counts.
+# start time is written before the pid. So no file $1.start means a runner that wrote none: then only the pid is
+# known, and a live pid counts. An empty one means that the process was gone when the runner recorded it.
 recorded_alive() {
   local pid
   [[ -s "$1" ]] || return 1
   pid="$(cat "$1")"
   kill -0 "$pid" 2>/dev/null || return 1
-  [[ -s "$1.start" ]] || return 0
-  [[ "$(started "$pid")" == "$(cat "$1.start")" ]]
+  [[ -e "$1.start" ]] || return 0
+  [[ -s "$1.start" && "$(started "$pid")" == "$(cat "$1.start")" ]]
 }
 
 # Whether the run lives: it has no exit status yet and its job is there. A stored pid of an ended run is no proof,
@@ -337,6 +337,7 @@ op_start() {
   cat >"$RUN/command.sh" <<EOF
 set -u
 run=$(printf %q "$RUN")
+$(declare -f started)
 date +%s >"\$run/started"
 export PATH="\$HOME/.cargo/bin:\$PATH" BUILD_IOS_LOCK_HELD=$(printf %q "$LOCK")
 export BUILD_IOS_TREE_STAMP=$(printf %q "$STAMP") BUILD_IOS_CORE_CACHE=$(printf %q "$CORE_CACHE")
@@ -346,7 +347,7 @@ eval "set -- \$(cat "\$run/command")"
 cd $(printf %q "$SCRATCH/tree")
 perl -e "setpgrp(0, 0); exec @ARGV or die qq(cannot run \\\$ARGV[0]: \\\$!\\\\n)" -- "\$@" </dev/null >>"\$run/command.log" 2>&1 &
 pid=\$!
-/usr/bin/env -i PATH=/bin:/usr/bin LC_ALL=C TZ=UTC0 ps -o lstart= -p "\$pid" >"\$run/cmdpid.start" 2>/dev/null || true
+started "\$pid" >"\$run/cmdpid.start"
 echo "\$pid" >"\$run/cmdpid"
 elapsed=0 stopped=0
 while kill -0 "\$pid" 2>/dev/null; do

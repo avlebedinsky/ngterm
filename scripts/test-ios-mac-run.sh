@@ -272,6 +272,18 @@ run "$runner" cancel
 check "cancel sends no signal to a pid of a lost run that names a different process" \
   '((status == 0)) && kill -0 "$stranger" 2>/dev/null && [[ "$(cat "$scratch/run/exit")" == 143 ]]'
 run "$runner" clean
+# A run whose start times are empty: its processes were gone when the runner recorded them.
+mkdir -p "$scratch/run"
+for name in pid cmdpid; do
+  echo "$stranger" >"$scratch/run/$name"
+  : >"$scratch/run/$name.start"
+done
+run "$runner" cancel
+check "cancel sends no signal to a pid whose recorded start time is empty" \
+  '((status == 0)) && kill -0 "$stranger" 2>/dev/null'
+run "$runner" clean
+check "clean does not take a pid with an empty start time for a live run" \
+  '((status == 0)) && [[ ! -e "$scratch" ]] && kill -0 "$stranger" 2>/dev/null'
 # A run of a runner that wrote no start times: its live pids count, so the scratch stays.
 mkdir -p "$scratch/run"
 echo "$stranger" >"$scratch/run/pid"
