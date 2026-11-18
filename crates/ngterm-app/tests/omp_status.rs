@@ -12,24 +12,39 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const { default: extension } = await import(pathToFileURL(process.env.EXTENSION).href);
 
-function setup(fail = false) {
+// mode: 'ok', 'reject' (the call fails), 'throw' (exec throws before it returns a promise) or 'hold' (each call
+// ends only when the test calls finish(), as a slow wrapper does).
+function setup(mode = 'ok') {
   const handlers = new Map();
   const calls = [];
+  const held = [];
   extension({
     on(event, handler) { handlers.set(event, handler); },
-    async exec(program, args, options) {
+    exec(program, args, options) {
       calls.push({ program, args, options });
-      if (fail) throw new Error('wrapper unavailable');
-      return { stdout: '', stderr: '', code: 0, killed: false };
+      if (mode === 'throw') throw new Error('no such program');
+      if (mode === 'reject') return Promise.reject(new Error('wrapper unavailable'));
+      const result = { stdout: '', stderr: '', code: 0, killed: false };
+      if (mode === 'hold') return new Promise(resolve => held.push(() => resolve(result)));
+      return Promise.resolve(result);
     },
   });
   return {
     calls,
-    async emit(type, fields = {}, ctx = undefined) {
+    finish() { held.shift()(); },
+    emit(type, fields = {}, ctx = undefined) {
       const handler = handlers.get(type);
-      if (handler) await handler({ type, ...fields }, ctx);
+      return handler ? Promise.resolve(handler({ type, ...fields }, ctx)) : Promise.resolve();
     },
   };
+}
+
+// Lets the calls that the handlers did not wait for (on Windows) run.
+const drained = () => new Promise(resolve => setTimeout(resolve, 10));
+
+// True when the promise settles within a short time.
+function settles(promise) {
+  return Promise.race([promise.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 100))]);
 }
 
 for (const platform of ['linux', 'darwin', 'win32']) {
@@ -44,6 +59,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
   await run.emit('agent_start');
   await run.emit('agent_end');
   await run.emit('session_shutdown');
+  await drained();
   const statuses = [
     ['active', '--blink'], ['active', '--blink'], ['active', '--blink'],
     ['active', '--blink'], ['completed', '--auto-reset'], ['active', '--blink'],
@@ -55,7 +71,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
     : [];
   assert.deepEqual(run.calls, statuses.map(args => ({
     program: platform === 'win32' ? 'powershell.exe' : wrapper,
-    args: [...prefix, ...args], options: { timeout: 1000 },
+    args: [...prefix, ...args], options: { timeout: platform === 'win32' ? 10000 : 1000 },
   })));
 
   // A task subagent runs this extension again in the same process, with the pane of its parent: only the
@@ -72,26 +88,48 @@ for (const platform of ['linux', 'darwin', 'win32']) {
   }
   await nested.emit('agent_end', { willContinue: false }, main);
   await nested.emit('session_shutdown', {}, main);
+  await drained();
   assert.deepEqual(nested.calls.map(call => call.args.slice(prefix.length)), [
     ['active', '--blink'], ['completed', '--auto-reset'], ['idle'],
   ]);
 
-  const failing = setup(true);
-  await failing.emit('agent_start');
-  await failing.emit('agent_end');
-  await failing.emit('session_shutdown');
-  assert.deepEqual(failing.calls.map(call => call.args.slice(prefix.length)), [
-    ['active', '--blink'], ['completed', '--auto-reset'], ['idle'],
+  for (const mode of ['reject', 'throw']) {
+    const failing = setup(mode);
+    await failing.emit('agent_start');
+    await failing.emit('agent_end');
+    await failing.emit('session_shutdown');
+    await drained();
+    assert.deepEqual(failing.calls.map(call => call.args.slice(prefix.length)), [
+      ['active', '--blink'], ['completed', '--auto-reset'], ['idle'],
+    ], mode);
+  }
+
+  // A slow wrapper call: on Windows a cold powershell.exe takes seconds, so the handler does not wait for it and
+  // the turn goes on at once; elsewhere the handler waits. On each system a call starts only after the call before
+  // it ends, so an old status cannot land over a new one.
+  const slow = setup('hold');
+  const start = slow.emit('agent_start');
+  assert.equal(await settles(start), platform === 'win32', 'agent_start waits on the wrapper call');
+  const end = slow.emit('agent_end', { willContinue: false });
+  assert.equal(await settles(end), platform === 'win32', 'agent_end waits on the wrapper call');
+  assert.deepEqual(slow.calls.map(call => call.args.slice(prefix.length)), [['active', '--blink']]);
+  slow.finish();
+  assert.equal(await settles(start), true);
+  assert.deepEqual(slow.calls.map(call => call.args.slice(prefix.length)), [
+    ['active', '--blink'], ['completed', '--auto-reset'],
   ]);
+  slow.finish();
+  assert.equal(await settles(end), true);
 
   delete process.env.NGTERM_SESSION_ID;
   const outside = setup();
   await outside.emit('agent_start');
   await outside.emit('agent_end');
   await outside.emit('session_shutdown');
+  await drained();
   assert.deepEqual(outside.calls, []);
 }
-console.log('OMP lifecycle: active, continuations, background work, completed, shutdown, subagents, failures, outside ngterm; POSIX and Windows commands');
+console.log('OMP lifecycle: active, continuations, background work, completed, shutdown, subagents, failures, slow calls, outside ngterm; POSIX and Windows commands');
 ";
 
 #[test]

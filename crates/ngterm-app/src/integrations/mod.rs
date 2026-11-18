@@ -53,7 +53,9 @@
 //!   PowerShell 5.1 and PowerShell 7 (the Claude adapter reads the process table through `Win32_Process` where the
 //!   POSIX one runs `ps`; the restore pin is `claude --resume <id>; if (-not $?) { claude }`, as 5.1 has no `||`), and
 //!   on Windows the Pi extension and both `OpenCode` plugins start the PowerShell wrapper through `powershell.exe`
-//!   instead of spawning the POSIX one (`build/patches/agent-status/0004-windows-forms.patch`);
+//!   instead of spawning the POSIX one; a cold `powershell.exe` needs some seconds, so there the Pi extension gives
+//!   each call 10 s (upstream: 1 s), in order, and does not hold the turn for it, as the OMP extension does
+//!   (`build/patches/agent-status/0004-windows-forms.patch`);
 //! - the shell integration wraps `codex` so that each TUI runs with `--no-daemon`, its hooks then getting their own
 //!   pane's `NGTERM_*` rather than those of the pane that started Codex's shared daemon, which upstream documents as a
 //!   limitation (umputun/agterm#711): `build/patches/agent-status/0005-codex-own-process.patch`, with the PowerShell

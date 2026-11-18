@@ -19,13 +19,21 @@ export default function (pi: ExtensionAPI) {
         ]
       : [wrapper, []];
 
-  async function report(args: string[]): Promise<void> {
-    if (!process.env.NGTERM_SESSION_ID) return;
-    try {
-      await pi.exec(program, [...prefix, ...args], { timeout: 1_000 });
-    } catch {
-      // Status reporting is advisory and must never interrupt Pi's agent loop.
-    }
+  // Each call starts after the call before it ends, so a slow call cannot put an old status over a new one. On
+  // Windows a cold powershell.exe needs 3 to 4 s while the GUI and the agent run, so the call gets 10 s and the
+  // handler does not wait for it: the turn continues at once. On other systems the handler waits, as before.
+  const windows = process.platform === "win32";
+  let last: Promise<void> = Promise.resolve();
+  function report(args: string[]): Promise<void> {
+    if (!process.env.NGTERM_SESSION_ID) return Promise.resolve();
+    // Status reporting is advisory and must never interrupt Pi's agent loop or stop the calls after it.
+    last = last
+      .then(() => pi.exec(program, [...prefix, ...args], { timeout: windows ? 10_000 : 1_000 }))
+      .then(
+        () => {},
+        () => {},
+      );
+    return windows ? Promise.resolve() : last;
   }
 
   pi.on("agent_start", async () => {

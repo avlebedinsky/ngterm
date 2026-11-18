@@ -3,6 +3,8 @@ ngterm-claude-status.ps1 and ngterm-agent-restore.ps1 do what their POSIX namesa
 and PowerShell 7 (the Claude adapter reads the process table through Win32_Process where the POSIX one runs `ps`; the
 restore pin is `claude --resume <id>; if (-not $?) { claude }`, as 5.1 has no `||`), and on Windows the Pi extension
 and both OpenCode plugins start the PowerShell wrapper through powershell.exe instead of spawning the POSIX one.
+A cold powershell.exe needs 3 to 4 s while the GUI and the agent run, so on Windows the Pi extension gives each call
+10 s, not upstream's 1 s, runs the calls in order and does not hold the turn for them.
 Applied after 0003-restore-adapter.patch.
 
 diff --git a/ngterm-agent-restore.ps1 b/ngterm-agent-restore.ps1
@@ -392,10 +394,10 @@ index 7171a63..bb5890d 100644
  }
  
 diff --git a/pi/ngterm-status.ts b/pi/ngterm-status.ts
-index 0a5bdf3..905f701 100644
+index 0a5bdf3..1c57a62 100644
 --- a/pi/ngterm-status.ts
 +++ b/pi/ngterm-status.ts
-@@ -10,11 +10,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+@@ -10,14 +10,30 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
  
  export default function (pi: ExtensionAPI) {
    const wrapper = join(homedir(), ".config", "ngterm", "agent-status", "ngterm-agent-status.sh");
@@ -408,11 +410,28 @@ index 0a5bdf3..905f701 100644
 +        ]
 +      : [wrapper, []];
  
-   async function report(args: string[]): Promise<void> {
-     if (!process.env.NGTERM_SESSION_ID) return;
-     try {
+-  async function report(args: string[]): Promise<void> {
+-    if (!process.env.NGTERM_SESSION_ID) return;
+-    try {
 -      await pi.exec(wrapper, args, { timeout: 1_000 });
-+      await pi.exec(program, [...prefix, ...args], { timeout: 1_000 });
-     } catch {
-       // Status reporting is advisory and must never interrupt Pi's agent loop.
-     }
+-    } catch {
+-      // Status reporting is advisory and must never interrupt Pi's agent loop.
+-    }
++  // Each call starts after the call before it ends, so a slow call cannot put an old status over a new one. On
++  // Windows a cold powershell.exe needs 3 to 4 s while the GUI and the agent run, so the call gets 10 s and the
++  // handler does not wait for it: the turn continues at once. On other systems the handler waits, as before.
++  const windows = process.platform === "win32";
++  let last: Promise<void> = Promise.resolve();
++  function report(args: string[]): Promise<void> {
++    if (!process.env.NGTERM_SESSION_ID) return Promise.resolve();
++    // Status reporting is advisory and must never interrupt Pi's agent loop or stop the calls after it.
++    last = last
++      .then(() => pi.exec(program, [...prefix, ...args], { timeout: windows ? 10_000 : 1_000 }))
++      .then(
++        () => {},
++        () => {},
++      );
++    return windows ? Promise.resolve() : last;
+   }
+ 
+   pi.on("agent_start", async () => {
