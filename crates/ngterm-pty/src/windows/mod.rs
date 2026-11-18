@@ -86,8 +86,8 @@ pub struct Child {
     job: Arc<Job>,
 }
 
-/// A child's kill-on-close job. Its close first takes back what escaped it ([`escapees::adopt`]), so the tree that
-/// ends with it is whole.
+/// A child's kill-on-close job. Its close first takes back what escaped it ([`escapees::Tree::adopt`]), so the tree
+/// that ends with it is whole.
 #[derive(Debug)]
 struct Job {
     handle: OwnedHandle,
@@ -95,7 +95,7 @@ struct Job {
 
 impl Drop for Job {
     fn drop(&mut self) {
-        escapees::adopt(&self.handle, &escapees::processes());
+        escapees::Tree::of(&self.handle).adopt(&self.handle, &escapees::processes());
     }
 }
 
@@ -300,23 +300,35 @@ impl Killer {
     }
 
     /// Terminate every process of the child's job, the child too (exit code 1), after it takes back what escaped
-    /// the job ([`escapees::adopt`]).
+    /// the job ([`escapees::Tree::adopt`]). Once the terminated tree ended (it waits a second at most), it takes back
+    /// and terminates what a process of the tree started outside the job as it ended.
     ///
     /// # Errors
     ///
     /// `TerminateJobObject` failed.
     pub fn kill_tree(&self) -> io::Result<()> {
-        escapees::adopt(&self.job.handle, &escapees::processes());
-        // SAFETY: terminates the processes of a job handle this killer keeps open; no memory is passed.
-        if unsafe { TerminateJobObject(self.job.handle.as_raw_handle(), 1) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        let job = &self.job.handle;
+        let mut tree = escapees::Tree::of(job);
+        tree.adopt(job, &escapees::processes());
+        terminate(job)?;
+        tree.wait_ended(escapees::ENDING);
+        tree.adopt(job, &escapees::processes());
+        terminate(job)
     }
 
-    /// Nothing on Windows: the job names the child's tree for as long as a handle holds it, so no id is ever reused
-    /// under a killer (Unix's [`Killer::retire`] stops signalling a group whose id may be).
+    /// Nothing on Windows: the job, not a process id, names the child's tree for as long as a handle holds it (Unix's
+    /// [`Killer::retire`] stops signalling a group whose id may be reused). The ids [`Killer::kill_tree`] reads from
+    /// the process table only find what escaped the job, and each is checked through a handle before it is taken.
     pub fn retire(&self) {}
+}
+
+/// Terminate every process of `job` (exit code 1).
+fn terminate(job: &OwnedHandle) -> io::Result<()> {
+    // SAFETY: terminates the processes of an open job handle; no memory is passed.
+    if unsafe { TerminateJobObject(job.as_raw_handle(), 1) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// The processes of a child's job, read without holding the job open ([`Child::job_view`]): what stands in for a
@@ -520,7 +532,7 @@ fn start(builder: CommandBuilder, size: Size, job: &OwnedHandle, joining: Joinin
 /// Assign a child started suspended to `job`, then resume its main thread, `thread`; a child that cannot join or
 /// resume is terminated.
 fn join_and_resume(
-    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
     thread: &OwnedHandle,
     job: &OwnedHandle,
 ) -> io::Result<Box<dyn portable_pty::Child + Send + Sync>> {
@@ -533,8 +545,14 @@ fn join_and_resume(
         return Ok(child);
     }
     let err = io::Error::last_os_error();
-    if let Err(kill) = child.kill() {
-        tracing::debug!(%kill, "a child that could not join its job could not be terminated");
+    // portable-pty's kill ignores a failed `TerminateProcess`: the process handle tells whether the child ends
+    match child.as_raw_handle() {
+        // SAFETY: terminates the child through the process handle that `child` keeps open; no memory is passed.
+        Some(process) if unsafe { TerminateProcess(process, 1) } != 0 => {}
+        Some(_) => {
+            tracing::warn!(err = %io::Error::last_os_error(), "a child that could not join its job could not be terminated");
+        }
+        None => tracing::warn!("a child that could not join its job has no handle to terminate it through"),
     }
     Err(err)
 }

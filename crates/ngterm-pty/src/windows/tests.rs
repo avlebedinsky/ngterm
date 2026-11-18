@@ -1,8 +1,8 @@
 //! The Windows child and its job on real pseudoconsoles: a handed-over child killed through its process handle, a
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
-//! list has room for, the spawn's and the master's refusals, the suspended start a denied one falls back to, and the
-//! processes that left a job taken back into it. An actor reads each child's output away, so the console never
-//! waits on its pipe.
+//! list has room for, the spawn's and the master's refusals, the suspended start a denied one falls back to and its
+//! failure, and the processes that left a job taken back into it, but not a process that got a listed one's id. An
+//! actor reads each child's output away, so the console never waits on its pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
@@ -222,7 +222,7 @@ fn a_job_handle_without_a_right_fails_what_needs_it() {
     assert_eq!(running.child.wait().expect("the exit").exit_code(), 1);
 }
 
-/// Windows never reuses an id under a killer, so a retired one still ends the tree.
+/// The job, not a process id, names the tree, so a retired killer still ends it.
 #[test]
 fn a_retired_killer_still_ends_the_tree() {
     let mut running = lasting();
@@ -566,6 +566,76 @@ fn what_an_escaped_process_started_is_taken_back_too() {
     let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
     escaped.killer().kill_tree().expect("the kill");
     assert_eq!(exit_code_of(&ping), Some(1));
+}
+
+/// A process table read before a process ended can name its id as a child of the tree, after another process got
+/// that id: that process is left alone, as its creator, read through its own handle, is not of the tree. It is
+/// created after the tree's process, so the creation time alone does not tell.
+#[test]
+fn a_process_that_got_the_id_of_a_listed_child_is_not_taken() {
+    let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
+    let ping = child_of(escaped.shell.id(), "ping.exe");
+    let mut bystander = std::process::Command::new("ping")
+        .args(["-n", "300", "127.0.0.1"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("a process outside the tree");
+    let mut listed = escapees::processes();
+    listed.push(escapees::Entry {
+        pid: bystander.id(),
+        parent: escaped.shell.id(),
+    });
+    escapees::Tree::of(&escaped.job.handle).adopt(&escaped.job.handle, &listed);
+    assert!(escaped.holds(ping), "the shell's own ping stayed out");
+    assert!(!escaped.holds(bystander.id()), "a process of another tree was taken");
+    bystander.kill().expect("the bystander's end");
+    bystander.wait().expect("the bystander's exit");
+}
+
+/// What a process of the tree starts outside the job as the kill ends it is taken back once the tree ended, and
+/// ended too: the tree holds that process open, so its id still names it.
+#[test]
+fn what_a_process_started_as_its_tree_was_killed_is_taken_back() {
+    let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
+    let ping = watched(child_of(escaped.shell.id(), "ping.exe")).expect("the ping");
+    let shell = watched(escaped.shell.id()).expect("the shell");
+    let job = &escaped.job.handle;
+    // the ping, outside the job and not yet taken back, stands for one started after the first pass
+    let mut tree = escapees::Tree::of(job);
+    terminate(job).expect("the kill");
+    tree.wait_ended(escapees::ENDING);
+    assert_eq!(exit_code_of(&shell), Some(1));
+    tree.adopt(job, &escapees::processes());
+    terminate(job).expect("the second kill");
+    assert_eq!(exit_code_of(&ping), Some(1), "the ping outlived its tree");
+}
+
+/// A child started suspended that cannot join its job (a job handle without the right to assign) is terminated
+/// before it runs, and the start fails with the assignment's error.
+#[test]
+fn a_suspended_child_that_cannot_join_its_job_is_terminated() {
+    let pair = ConPtySystem::default()
+        .openpty(Size::cells(24, 80).pty())
+        .expect("a pseudoconsole");
+    drop(pair.slave);
+    let master: Box<dyn MasterPty> = pair.master;
+    let Ok(conpty) = master.downcast::<ConPtyMasterPty>() else {
+        panic!("the master is not a ConPTY master");
+    };
+    let (child, thread) = conpty
+        .spawn_command_suspended(command("cmd.exe", &["/d", "/c", "exit 0"]).builder())
+        .expect("a suspended child");
+    let process = watched(child.process_id().expect("the child's id")).expect("the child");
+    let job = kill_on_close_job().expect("a job");
+    let query_only = restricted(job.as_handle(), JOB_QUERY);
+    let err = join_and_resume(child, &thread, &query_only).expect_err("joined without the right");
+    assert_eq!(os_error(&err), Some(ERROR_ACCESS_DENIED), "{err}");
+    assert_eq!(
+        exit_code_of(&process),
+        Some(1),
+        "the suspended child was not terminated"
+    );
 }
 
 /// PowerShell from the Microsoft Store (a packaged app) as a pane's program, the issue's setup: the first pane starts

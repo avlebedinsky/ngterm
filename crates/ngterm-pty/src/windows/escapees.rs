@@ -2,21 +2,32 @@
 //! the Microsoft Store) starts each program outside its package's runtime, and Windows then creates that program
 //! outside every job, a kill-on-close job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` included. A program that a pane's
 //! process starts is outside its job only so: the job permits no breakaway, and a process another one creates with
-//! the pane's process as its parent joins that parent's job. So a process whose parent is in the job, created after
-//! that parent, but which is not in the job itself, escaped it, and is assigned to it. The job then ends it with the
-//! rest of the tree, lists it as the pane's foreground and keeps it across a handoff.
+//! the pane's process as its parent joins that parent's job. So a process that a process of the job created, but
+//! which is not in the job itself, escaped it, and is assigned to it. The job then ends it with the rest of the tree,
+//! lists it as the pane's foreground and keeps it across a handoff.
 //!
-//! [`adopt`] does one pass: [`super::Killer::kill_tree`] before it terminates the job, and the job's last close
-//! before it kills the tree. [`watch`] repeats the pass every [`TICK`] for the job of a packaged program, so what it
-//! starts joins the job before the pane ends, the app exits or a program reads the pane's foreground. A program that
-//! a short-lived escaped process starts and leaves behind between two passes stays outside the job: its parent is
-//! gone, and the process table names it no more.
+//! The process table is a snapshot, and an id in it can name another process by the time it is read: one that took
+//! the id of a process that ended since. So the table only names the candidates. A [`Tree`] holds each process of
+//! the job open, and an open process keeps its id from its creation on. A candidate is opened in turn, and its
+//! creator's id is read through that handle (`NtQueryInformationProcess`), not from the snapshot. A candidate
+//! whose creator's id is that of a held process, and which was created after that process, was created by it. Any
+//! other process is left alone.
+//!
+//! [`Tree::adopt`] does one pass: [`super::Killer::kill_tree`] before it terminates the job and again once the tree
+//! ended (what a process of the tree started as it ended), and the job's last close before it kills the tree. The
+//! close cannot wait for the tree to end (after a handoff, another process holds the job and the tree runs on), so
+//! what a process of the tree starts outside the job between that pass and the kill stays out.
+//! [`watch`] repeats the pass every [`TICK`] for the job of a packaged program, so what it starts joins the job
+//! before the pane ends, the app exits or a program reads the pane's foreground. A program that a short-lived
+//! escaped process starts and leaves behind between two passes stays outside the job: its parent is gone, and the
+//! process table names it no more.
 
 use std::collections::HashSet;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
 use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, FILETIME, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFamilyName;
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -24,13 +35,25 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, IsProcessInJob};
 use windows_sys::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    GetProcessTimes, OpenProcess, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, WaitForSingleObject,
 };
 
 use super::Job;
+use crate::actor::lock;
 
 /// How often a watched job takes back what escaped it.
 pub(super) const TICK: Duration = Duration::from_millis(250);
+
+/// How long [`super::Killer::kill_tree`] waits for the terminated tree to end before its last pass: a terminated
+/// process ends in milliseconds, and until then it can still start one more.
+pub(super) const ENDING: Duration = Duration::from_secs(1);
+
+/// The rights a process of the tree is held with: to read its creation time, and to wait for its end.
+const HELD: u32 = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE;
+
+/// The rights a candidate is opened with: [`HELD`], and the rights its assignment to a job needs.
+const CANDIDATE: u32 = HELD | PROCESS_SET_QUOTA | PROCESS_TERMINATE;
 
 /// A process the system lists: its id and the id of the process that created it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,65 +89,105 @@ pub(super) fn processes() -> Vec<Entry> {
     listed
 }
 
-/// Assign to `job` each process of `processes` that escaped it: one created after its parent, a process of the
-/// job, that is not in the job (a breakaway the system made). One taken back counts as a parent in its turn, as
-/// whatever it started before then escaped too. A process that cannot be opened with the rights the assignment
-/// needs (another user's, an elevated one) stays where it is.
-pub(super) fn adopt(job: &OwnedHandle, processes: &[Entry]) {
-    let Some(members) = super::job_process_ids(job) else {
-        return;
-    };
-    let mut known: HashSet<u32> = members.iter().copied().collect();
-    let mut parents = members;
-    while let Some(parent) = parents.pop() {
-        let children: Vec<u32> = processes
-            .iter()
-            .filter(|entry| entry.parent == parent && entry.pid != parent && !known.contains(&entry.pid))
-            .map(|entry| entry.pid)
+/// A process of a job's tree, held open: no other process can get its id while the handle is open.
+#[derive(Debug)]
+struct Held {
+    pid: u32,
+    /// When it was created, in 100 ns units since 1601.
+    started: u64,
+    process: OwnedHandle,
+}
+
+/// The processes of a job's tree, held open from the time they are found, so that the id of each names it alone.
+#[derive(Debug)]
+pub(super) struct Tree {
+    held: Vec<Held>,
+}
+
+impl Tree {
+    /// Each process that `job` holds now, opened: one that cannot be opened (another user's, an elevated one) or
+    /// that holds the id of one that left the job is not held.
+    pub(super) fn of(job: &OwnedHandle) -> Self {
+        let held = super::job_process_ids(job)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|pid| {
+                let process = open(pid, HELD)?;
+                if !in_job(&process, job)? {
+                    return None;
+                }
+                Some(Held {
+                    pid,
+                    started: started(&process)?,
+                    process,
+                })
+            })
             .collect();
-        if children.is_empty() {
-            continue;
-        }
-        let Some(parent_started) =
-            open(parent, PROCESS_QUERY_LIMITED_INFORMATION).and_then(|process| started(&process))
-        else {
-            continue;
-        };
-        for child in children {
-            if take_back(job, child, parent_started) {
-                known.insert(child);
-                parents.push(child);
+        Self { held }
+    }
+
+    /// Assign to `job` each process of `processes` that escaped it: one that a held process created, that is not in
+    /// the job (a breakaway the system made). One taken back is held, and counts as a parent in its turn, as what it
+    /// started before then escaped too. A process that cannot be opened with the rights the assignment needs (another
+    /// user's, an elevated one) stays where it is.
+    pub(super) fn adopt(&mut self, job: &OwnedHandle, processes: &[Entry]) {
+        let mut known: HashSet<u32> = self.held.iter().map(|held| held.pid).collect();
+        let mut next = 0;
+        while let Some(parent) = self.held.get(next) {
+            let (parent, parent_started) = (parent.pid, parent.started);
+            next += 1;
+            for entry in processes {
+                if entry.parent != parent || entry.pid == parent || known.contains(&entry.pid) {
+                    continue;
+                }
+                if let Some(child) = take_back(job, entry.pid, parent, parent_started) {
+                    known.insert(child.pid);
+                    self.held.push(child);
+                }
             }
+        }
+    }
+
+    /// Wait up to `limit` for each held process to end.
+    pub(super) fn wait_ended(&self, limit: Duration) {
+        let deadline = Instant::now() + limit;
+        for held in &self.held {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let millis = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+            // SAFETY: waits on a process handle held open with `PROCESS_SYNCHRONIZE`; no memory is passed.
+            unsafe { WaitForSingleObject(held.process.as_raw_handle(), millis) };
         }
     }
 }
 
-/// Assign process `pid` to `job` unless it is in it already; whether it is in the job now. A process created
-/// before `parent_started` names its parent by an id an earlier process held, and is left alone.
-fn take_back(job: &OwnedHandle, pid: u32, parent_started: u64) -> bool {
-    let Some(process) = open(
-        pid,
-        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-    ) else {
-        return false;
-    };
-    if started(&process).is_none_or(|child| child < parent_started) {
-        return false;
+/// Process `pid` held, after it is assigned to `job` unless it is in it already, when `parent` (a process the caller
+/// holds, created at `parent_started`) created it. A process that has the id now but that `parent` did not create
+/// (it got the id after the caller's snapshot, from a process that ended) is left alone.
+fn take_back(job: &OwnedHandle, pid: u32, parent: u32, parent_started: u64) -> Option<Held> {
+    let process = open(pid, CANDIDATE)?;
+    if creator(&process)? != parent {
+        return None;
     }
+    let started = started(&process)?;
+    if started < parent_started {
+        return None;
+    }
+    if !in_job(&process, job)? {
+        // SAFETY: both handles are open, the process one with the rights an assignment needs.
+        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
+            tracing::debug!(pid, err = %std::io::Error::last_os_error(), "a process that left its pane's job stays out");
+            return None;
+        }
+    }
+    Some(Held { pid, started, process })
+}
+
+/// Whether `process` is in `job`; `None` when that cannot be read.
+fn in_job(process: &OwnedHandle, job: &OwnedHandle) -> Option<bool> {
     let mut inside = 0;
     // SAFETY: both handles are open; the result goes to a live local.
-    if unsafe { IsProcessInJob(process.as_raw_handle(), job.as_raw_handle(), &raw mut inside) } == 0 {
-        return false;
-    }
-    if inside != 0 {
-        return true;
-    }
-    // SAFETY: both handles are open, the process one with the rights an assignment needs.
-    let assigned = unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } != 0;
-    if !assigned {
-        tracing::debug!(pid, err = %std::io::Error::last_os_error(), "a process that left its pane's job stays out");
-    }
-    assigned
+    let read = unsafe { IsProcessInJob(process.as_raw_handle(), job.as_raw_handle(), &raw mut inside) };
+    (read != 0).then_some(inside != 0)
 }
 
 /// Whether `process` runs with a package's identity (an MSIX package, such as PowerShell from the Microsoft Store):
@@ -140,11 +203,7 @@ pub(super) fn packaged(process: std::os::windows::io::BorrowedHandle<'_>) -> boo
 /// every job watched in this process.
 pub(super) fn watch(job: &Arc<Job>) {
     let watcher = watcher();
-    watcher
-        .jobs
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .push(Arc::downgrade(job));
+    lock(&watcher.jobs).push(Arc::downgrade(job));
     watcher.added.notify_one();
 }
 
@@ -173,7 +232,7 @@ fn watch_forever(watcher: &Watcher) {
         let jobs = live_jobs(watcher);
         let processes = processes();
         for job in &jobs {
-            adopt(&job.handle, &processes);
+            Tree::of(&job.handle).adopt(&job.handle, &processes);
         }
         // the last holder may be this thread: the job's close then runs here, its last pass included
         drop(jobs);
@@ -183,7 +242,7 @@ fn watch_forever(watcher: &Watcher) {
 
 /// The watched jobs still open, once there is one; the closed ones are forgotten.
 fn live_jobs(watcher: &Watcher) -> Vec<Arc<Job>> {
-    let mut jobs = watcher.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut jobs = lock(&watcher.jobs);
     loop {
         jobs.retain(|job| job.strong_count() > 0);
         let live: Vec<Arc<Job>> = jobs.iter().filter_map(Weak::upgrade).collect();
@@ -200,6 +259,28 @@ fn open(pid: u32, access: u32) -> Option<OwnedHandle> {
     let raw = unsafe { OpenProcess(access, 0, pid) };
     // SAFETY: a fresh handle nothing else owns.
     (!raw.is_null()).then(|| unsafe { OwnedHandle::from_raw_handle(raw) })
+}
+
+/// The id of the process that created `process` (`InheritedFromUniqueProcessId`), read through its handle; `None`
+/// when it cannot be read.
+fn creator(process: &OwnedHandle) -> Option<u32> {
+    let mut basic = PROCESS_BASIC_INFORMATION::default();
+    let size = u32::try_from(size_of::<PROCESS_BASIC_INFORMATION>()).ok()?;
+    // SAFETY: the handle is open with `PROCESS_QUERY_LIMITED_INFORMATION`, and `basic` is a live local of exactly
+    // `size` bytes.
+    let status = unsafe {
+        NtQueryInformationProcess(
+            process.as_raw_handle(),
+            ProcessBasicInformation,
+            (&raw mut basic).cast(),
+            size,
+            std::ptr::null_mut(),
+        )
+    };
+    if status < 0 {
+        return None;
+    }
+    u32::try_from(basic.InheritedFromUniqueProcessId).ok()
 }
 
 /// When `process` was created, in 100 ns units since 1601.
