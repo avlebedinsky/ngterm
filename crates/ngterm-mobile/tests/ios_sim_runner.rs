@@ -8,12 +8,13 @@
 //!
 //! Every case runs the real scripts with stub `uname`, `xcode-select`, `xcodebuild` and `xcrun` first on a `PATH` that
 //! holds nothing else but `/usr/bin` and `/bin`, in a cleared environment, so nothing here needs a simulator. The stub
-//! `xcrun` logs each call and keeps the simulators in a file: `simctl create` adds one, and `simctl bootstatus` marks
-//! one booted unless the case says the boot does not take. Its `simctl spawn` prints what the spawned process would
-//! get and exits with the status the case asks for. The real runner on a real simulator is what
-//! `cargo test --target aarch64-apple-ios-sim` uses (Task 2 of the iOS plan). Unix hosts only: the scripts are
-//! macOS-only, and the stub `uname` lets Linux run them too. They use the host's `jq` in `/usr/bin`: macOS has it, and a
-//! Linux host needs it installed (the `unit-coverage` job of `linux.yml` installs it).
+//! `xcrun` logs each call and keeps the simulators in a file (its `-f simctl` names a stub `simctl` that calls it
+//! back): `simctl create` adds one, and `simctl bootstatus` marks one booted unless the case says the boot does not
+//! take. Its `simctl spawn` prints what the spawned process would get and exits with the status the case asks for. The
+//! real runner on a real simulator is what `cargo test --target aarch64-apple-ios-sim` uses (Task 2 of the iOS plan).
+//! Unix hosts only: the scripts are macOS-only, and the stub `uname` lets Linux run them too. They use the host's `jq`
+//! in `/usr/bin`: macOS has it, and a Linux host needs it installed (the `unit-coverage` job of `linux.yml` installs
+//! it).
 #![cfg(unix)]
 
 /// The stubs, the scratch directory and the runs of the scripts.
@@ -91,6 +92,8 @@ mod host {
         pub(super) boots: bool,
         /// The exit status of `simctl spawn`.
         pub(super) status: i32,
+        /// Whether `xcrun -f simctl` prints the path of simctl, as Xcode's xcrun does.
+        pub(super) finds_simctl: bool,
     }
 
     impl World {
@@ -102,6 +105,7 @@ mod host {
                 runtimes: vec![runtime_line(&version)],
                 boots: true,
                 status: 0,
+                finds_simctl: true,
             }
         }
     }
@@ -133,8 +137,14 @@ mod host {
         }
     }
 
-    /// The xcrun stub: it logs each call and keeps the simulators in `$STUB_DIR/devices`.
+    /// The xcrun stub: it logs each call and keeps the simulators in `$STUB_DIR/devices`. Its `-f simctl` names the
+    /// simctl stub in the developer directory, which hands its call back to it as `xcrun simctl`.
     fn xcrun_stub(world: &World) -> String {
+        let find = if world.finds_simctl {
+            r#"echo "$STUB_DEVELOPER_DIR/usr/bin/simctl""#
+        } else {
+            ":"
+        };
         let header = format!("-- iOS {} --", pin("IOS_SIMULATOR_RUNTIME"));
         let boot = if world.boots {
             r#"sed "s/($3) (Shutdown)/($3) (Booted)/" "$STUB_DIR/devices" >"$STUB_DIR/devices.new"
@@ -143,7 +153,11 @@ mod host {
             ":"
         };
         format!(
-            r#"echo "$*" >>"$STUB_DIR/xcrun.log"
+            r#"if [ "$1 $2" = '-f simctl' ]; then
+  {find}
+  exit 0
+fi
+echo "$*" >>"$STUB_DIR/xcrun.log"
 case "$1 $2 $3" in
   'simctl runtime list')
     n=$(($(cat "$STUB_DIR/image-calls") + 1))
@@ -203,6 +217,13 @@ exit 0
             ),
         );
         write_stub(&stubs, "xcrun", &xcrun_stub(world));
+        let simctl_dir = developer_dir.join("usr/bin");
+        fs::create_dir_all(&simctl_dir).unwrap();
+        write_stub(
+            &simctl_dir,
+            "simctl",
+            &format!("exec '{}' simctl \"$@\"\n", stubs.join("xcrun").display()),
+        );
         let mut command = Command::new("bash");
         command
             .arg(repo_root().join("scripts").join(script))
@@ -364,6 +385,24 @@ fn a_simulator_that_is_not_booted_after_its_boot_spawns_nothing() {
     assert!(stderr.contains("is not booted after its boot"), "{stderr}");
     assert!(stderr.contains("is not ready"), "{stderr}");
     assert!(!run.log.contains("spawn"), "{}", run.log);
+}
+
+#[test]
+fn a_simctl_that_xcrun_does_not_find_boots_and_spawns_nothing() {
+    let run = runner(
+        &World {
+            finds_simctl: false,
+            ..World::ready()
+        },
+        "deps/tests",
+        &[],
+        &[],
+    );
+    assert!(!run.output.status.success());
+    let stderr = run.stderr();
+    assert!(stderr.contains("xcrun -f simctl gave no simctl to run"), "{stderr}");
+    assert!(!stderr.contains("command not found"), "{stderr}");
+    assert_eq!(run.changes(), Vec::<String>::new(), "{stderr}");
 }
 
 #[test]

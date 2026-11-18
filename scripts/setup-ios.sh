@@ -196,7 +196,7 @@ print_simulator_state() {
     simulators_on_runtime || true
     echo "the Mac's load:"
     uptime || true
-    vm_stat || true
+    if command -v vm_stat >/dev/null; then vm_stat || true; fi
     echo "the processes with the most CPU:"
     ps -axro pcpu=,rss=,comm= | head -n 12 || true
   } >&2

@@ -67,6 +67,10 @@ simctl_bounded() {
   local limit="$1" simctl
   shift
   simctl="$(xcrun -f simctl)" || return 1
+  if [[ -z "$simctl" || ! -x "$simctl" ]]; then
+    echo "xcrun -f simctl gave no simctl to run: '$simctl'" >&2
+    return 1
+  fi
   bounded "$limit" "$simctl" "$@"
 }
 
