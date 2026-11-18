@@ -406,3 +406,35 @@ fn the_typed_program_stands_in_for_the_foreground_and_the_shell_takes_it_back() 
     wait_for(&pane, "the shell after the ping", &|foreground| foreground == shell);
     Ok(())
 }
+
+/// A program behind Windows' pseudoconsole that pushes the Kitty keyboard flags and `modifyOtherKeys` (Claude Code
+/// pushes the flags) still gets Escape, Shift+Tab, Ctrl+C and Alt+V: the pseudoconsole drops the `CSI u` and `CSI 27`
+/// keys it cannot parse, so a pane there keeps the legacy encodings ([`PaneConfig::legacy_keys`]).
+#[cfg(windows)]
+#[test]
+fn keys_reach_a_program_behind_the_pseudoconsole_that_pushed_the_kitty_flags() -> TestResult {
+    use ngterm_core::ghostty_config::binds::{Mods, PhysicalKey};
+    use ngterm_term::{KeyInput, PaneCommand};
+
+    // each key the console reads shows as `<key>/<modifiers>`: Alt 1, Shift 2, Control 4
+    let script = "[Console]::TreatControlCAsInput = $true; $e = [char]27; \
+        [Console]::Write(\"$e[>1u$e[>4;2mready\"); \
+        for ($i = 0; $i -lt 4; $i++) { $k = [Console]::ReadKey($true); [Console]::Write(' ' + $k.Key + '/' + [int]$k.Modifiers) }; \
+        Start-Sleep 30";
+    let command = PaneCommand::new("powershell.exe").args(["-NoLogo", "-NoProfile", "-Command", script]);
+    let pane = Pane::spawn(&command, &PaneConfig::new(SIZE))?;
+    wait_text(&pane, "ready");
+    let keys = [
+        ("escape", Mods::empty(), "", "Escape/0"),
+        ("tab", Mods::SHIFT, "", "Tab/2"),
+        ("key_c", Mods::CTRL, "c", "C/4"),
+        ("key_v", Mods::ALT, "v", "V/1"),
+    ];
+    // one key at a time: a lone ESC that the console still holds would join the next key's bytes
+    for (name, mods, text, read) in keys {
+        let key = PhysicalKey::new(name).ok_or(name)?;
+        assert!(pane.key(&KeyInput::press(key, mods, text))?, "{name} sent nothing");
+        wait_text(&pane, read);
+    }
+    Ok(())
+}
