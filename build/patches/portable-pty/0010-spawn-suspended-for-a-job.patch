@@ -1,0 +1,100 @@
+A packaged app (an MSIX package, such as PowerShell from the Microsoft Store) whose start carries
+PROC_THREAD_ATTRIBUTE_JOB_LIST (0004) fails with ERROR_ACCESS_DENIED when another process of its package runs:
+Windows then cannot add the new process to the package's Desktop AppX container. ngterm-pty starts such a child
+suspended instead, assigns it to its job and resumes it, which needs the main thread handle that CreateProcessW gives
+and portable-pty closes. `ConPtyMasterPty::spawn_command_suspended` starts the child with CREATE_SUSPENDED and no job
+list, and returns that thread handle with the child. ngterm's own. Remove when portable-pty can start a child
+suspended. Its test: ngterm-pty's `a_store_powershell_pane_starts_and_its_tree_ends_with_it` (a Windows machine with
+that PowerShell) and, on CI, `a_child_started_suspended_prints_to_its_console`.
+
+diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
+--- a/src/win/conpty.rs
++++ b/src/win/conpty.rs
+@@ -100,6 +100,19 @@
+         Ok(Box::new(child))
+     }
+ 
++    /// Spawn `cmd` attached to this pseudoconsole with its main thread
++    /// suspended, for a program whose start a job list refuses (a packaged
++    /// app): the caller assigns the child to a job, then resumes the returned
++    /// thread, or terminates the child.
++    pub fn spawn_command_suspended(
++        &self,
++        cmd: CommandBuilder,
++    ) -> anyhow::Result<(Box<dyn Child + Send + Sync>, std::os::windows::io::OwnedHandle)> {
++        let inner = self.inner.lock().unwrap();
++        let (child, main_thread) = inner.con.spawn_command_suspended(cmd)?;
++        Ok((Box::new(child), main_thread))
++    }
++
+     /// The write end of the console's input pipe and the read end of its
+     /// output pipe, in place of `take_writer` and `try_clone_reader`: the
+     /// caller owns them, and can hand them to another process. Fails once the
+diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
+--- a/src/win/psuedocon.rs
++++ b/src/win/psuedocon.rs
+@@ -16,7 +16,8 @@
+ use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
+ use winapi::um::processthreadsapi::*;
+ use winapi::um::winbase::{
+-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
++    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES,
++    STARTUPINFOEXW,
+ };
+ use winapi::um::wincon::COORD;
+ use winapi::um::winnt::HANDLE;
+@@ -197,6 +198,25 @@
+         cmd: CommandBuilder,
+         job: Option<HANDLE>,
+     ) -> anyhow::Result<WinChild> {
++        self.create_process(cmd, job, 0).map(|(child, _main_thread)| child)
++    }
++
++    /// Spawn `cmd` attached to this console with its main thread suspended,
++    /// and return that thread: the caller assigns the child to a job, then
++    /// resumes the thread (or terminates the child).
++    pub fn spawn_command_suspended(
++        &self,
++        cmd: CommandBuilder,
++    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
++        self.create_process(cmd, None, CREATE_SUSPENDED)
++    }
++
++    fn create_process(
++        &self,
++        cmd: CommandBuilder,
++        job: Option<HANDLE>,
++        flags: DWORD,
++    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
+         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
+         si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
+         // Explicitly set the stdio handles as invalid handles otherwise
+@@ -234,7 +254,7 @@
+                 ptr::null_mut(),
+                 ptr::null_mut(),
+                 0,
+-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
++                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | flags,
+                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
+                 cwd.as_ref()
+                     .map(|c| c.as_slice().as_ptr())
+@@ -256,11 +276,15 @@
+ 
+         // Make sure we close out the thread handle so we don't leak it;
+         // we do this simply by making it owned
+-        let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
++        let main_thread =
++            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(pi.hThread as _) };
+         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
+ 
+-        Ok(WinChild {
+-            proc: Mutex::new(proc),
+-        })
++        Ok((
++            WinChild {
++                proc: Mutex::new(proc),
++            },
++            main_thread,
++        ))
+     }
+ }

@@ -100,6 +100,19 @@ impl ConPtyMasterPty {
         Ok(Box::new(child))
     }
 
+    /// Spawn `cmd` attached to this pseudoconsole with its main thread
+    /// suspended, for a program whose start a job list refuses (a packaged
+    /// app): the caller assigns the child to a job, then resumes the returned
+    /// thread, or terminates the child.
+    pub fn spawn_command_suspended(
+        &self,
+        cmd: CommandBuilder,
+    ) -> anyhow::Result<(Box<dyn Child + Send + Sync>, std::os::windows::io::OwnedHandle)> {
+        let inner = self.inner.lock().unwrap();
+        let (child, main_thread) = inner.con.spawn_command_suspended(cmd)?;
+        Ok((Box::new(child), main_thread))
+    }
+
     /// The write end of the console's input pipe and the read end of its
     /// output pipe, in place of `take_writer` and `try_clone_reader`: the
     /// caller owns them, and can hand them to another process. Fails once the

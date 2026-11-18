@@ -4,8 +4,8 @@
 //!
 //! - [`spawn`] starts a [`Command`] on a new PTY, sized as a [`Size`]: `openpty` on Unix, where the child leads a
 //!   session and process group of its own; Windows' pseudoconsole (`ConPTY`), where the child and every process it
-//!   starts run in a job object that kills them all when it closes. It returns the PTY's [`Master`] and the
-//!   [`Child`].
+//!   starts run in a job object that kills them all when it closes (what a packaged program starts leaves the job,
+//!   and the job takes it back). It returns the PTY's [`Master`] and the [`Child`].
 //! - [`Child::killer`]'s [`Killer`] ends the child's tree: on Windows by terminating the job, at any time; on Unix
 //!   by signalling the process group, which is never signalled once the child is reaped (its id may be reused by
 //!   then), so a caller kills the tree before it waits for the child, or the group's survivors live on. On Windows

@@ -16,7 +16,8 @@ use winapi::um::handleapi::*;
 use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
 use winapi::um::processthreadsapi::*;
 use winapi::um::winbase::{
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW,
 };
 use winapi::um::wincon::COORD;
 use winapi::um::winnt::HANDLE;
@@ -197,6 +198,25 @@ impl PsuedoCon {
         cmd: CommandBuilder,
         job: Option<HANDLE>,
     ) -> anyhow::Result<WinChild> {
+        self.create_process(cmd, job, 0).map(|(child, _main_thread)| child)
+    }
+
+    /// Spawn `cmd` attached to this console with its main thread suspended,
+    /// and return that thread: the caller assigns the child to a job, then
+    /// resumes the thread (or terminates the child).
+    pub fn spawn_command_suspended(
+        &self,
+        cmd: CommandBuilder,
+    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
+        self.create_process(cmd, None, CREATE_SUSPENDED)
+    }
+
+    fn create_process(
+        &self,
+        cmd: CommandBuilder,
+        job: Option<HANDLE>,
+        flags: DWORD,
+    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
         si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
         // Explicitly set the stdio handles as invalid handles otherwise
@@ -234,7 +254,7 @@ impl PsuedoCon {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | flags,
                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                 cwd.as_ref()
                     .map(|c| c.as_slice().as_ptr())
@@ -256,11 +276,15 @@ impl PsuedoCon {
 
         // Make sure we close out the thread handle so we don't leak it;
         // we do this simply by making it owned
-        let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
+        let main_thread =
+            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(pi.hThread as _) };
         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
 
-        Ok(WinChild {
-            proc: Mutex::new(proc),
-        })
+        Ok((
+            WinChild {
+                proc: Mutex::new(proc),
+            },
+            main_thread,
+        ))
     }
 }

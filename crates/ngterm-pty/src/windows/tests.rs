@@ -1,14 +1,18 @@
 //! The Windows child and its job on real pseudoconsoles: a handed-over child killed through its process handle, a
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
-//! list has room for, and the spawn's and the master's refusals. An actor reads each child's output away, so the
-//! console never waits on its pipe.
+//! list has room for, the spawn's and the master's refusals, the suspended start a denied one falls back to, and the
+//! processes that left a job taken back into it. An actor reads each child's output away, so the console never
+//! waits on its pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::process::CommandExt;
 use std::time::{Duration, Instant};
 
 use portable_pty::ChildKiller;
 use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows_sys::Win32::System::Threading::{
+    CREATE_NO_WINDOW, GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+};
 
 use super::*;
 use crate::{Actor, ActorConfig, ActorHandle, Command};
@@ -238,7 +242,7 @@ fn a_retired_killer_still_ends_the_tree() {
 
 #[test]
 fn a_job_view_lists_more_processes_than_a_first_read_has_room_for() {
-    let children = JobView::FIRST_CAPACITY + 8;
+    let children = FIRST_CAPACITY + 8;
     let line =
         format!("(for /l %i in (1,1,{children}) do @start /b ping -n 300 127.0.0.1 >nul) & ping -n 300 127.0.0.1 >nul");
     let running = run("cmd.exe", &["/d", "/c", &line]);
@@ -310,4 +314,329 @@ fn an_oversized_console_is_refused_with_the_requested_size() {
             format!("pseudoconsole size {cols}x{rows} exceeds the maximum 32767x32767")
         );
     }
+}
+
+/// A spawn of `program` with `args` through [`spawn_with`], each start refused as `refuse` says or else made, and
+/// the starts it asked for, in order.
+fn spawn_recording(
+    program: &str,
+    args: &[&str],
+    refuse: impl Fn(Joining) -> Option<Refusal>,
+) -> (io::Result<Spawned>, Vec<Joining>) {
+    let (spawned, made) = spawn_recording_jobs(program, args, refuse);
+    (spawned, made.into_iter().map(|(joining, _)| joining).collect())
+}
+
+/// [`spawn_recording`], with the job each start was given (its handle's value).
+fn spawn_recording_jobs(
+    program: &str,
+    args: &[&str],
+    refuse: impl Fn(Joining) -> Option<Refusal>,
+) -> (io::Result<Spawned>, Vec<(Joining, usize)>) {
+    let made = std::sync::Mutex::new(Vec::new());
+    let spawned = spawn_with(
+        command(program, args).builder(),
+        Size::cells(24, 80),
+        |builder, size, job, joining| {
+            made.lock()
+                .expect("the starts")
+                .push((joining, job.as_raw_handle().addr()));
+            refuse(joining).map_or_else(|| start(builder, size, job, joining), Err)
+        },
+    );
+    (spawned, made.into_inner().expect("the starts"))
+}
+
+/// The refusal of a start in a job that Windows denies (`ERROR_ACCESS_DENIED`), for the start in the job only.
+fn denied_in_job(joining: Joining) -> Option<Refusal> {
+    (joining == Joining::AtCreation).then(|| Refusal {
+        error: io::Error::from_raw_os_error(i32::try_from(ERROR_ACCESS_DENIED).expect("an error code")),
+        denied: true,
+    })
+}
+
+/// The exit code of the process `process` names, once it exits; `None` if it still runs `PATIENCE` from now.
+fn exit_code_of(process: &OwnedHandle) -> Option<u32> {
+    let patience = u32::try_from(PATIENCE.as_millis()).expect("a timeout");
+    // SAFETY: waits on a process handle this test holds open with `SYNCHRONIZE`.
+    if unsafe { WaitForSingleObject(process.as_raw_handle(), patience) } != WAIT_OBJECT_0 {
+        return None;
+    }
+    let mut code = 0_u32;
+    // SAFETY: reads the exit code of a process this test holds open into a live local.
+    (unsafe { GetExitCodeProcess(process.as_raw_handle(), &raw mut code) } != 0).then_some(code)
+}
+
+/// Process `pid` with the rights to wait for it and read its state; `None` once it is gone.
+fn watched(pid: u32) -> Option<OwnedHandle> {
+    // SAFETY: opens a process by id; no memory is passed.
+    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    // SAFETY: a fresh handle nothing else owns.
+    (!raw.is_null()).then(|| unsafe { OwnedHandle::from_raw_handle(raw) })
+}
+
+/// The process running `program` (a file name) that the system lists as started by `pid`, once there is one (a
+/// console program's first child can be its console host).
+fn child_of(pid: u32, program: &str) -> u32 {
+    let mut found = None;
+    wait_until("the process started its child", || {
+        found = escapees::processes()
+            .iter()
+            .filter(|entry| entry.parent == pid)
+            .find(|entry| watched(entry.pid).is_some_and(|process| image_name(&process).eq_ignore_ascii_case(program)))
+            .map(|entry| entry.pid);
+        found.is_some()
+    });
+    found.expect("a child")
+}
+
+/// A child whose start in its job Windows denies (a packaged app's, PowerShell from the Microsoft Store while another
+/// of its processes runs) starts suspended on a new pseudoconsole, in a new job (the denied start's refuses the app's
+/// processes), instead: it joins the job before it runs, so what it starts is in the job too, and the job's end ends
+/// them.
+#[test]
+fn a_denied_start_starts_the_child_suspended_in_a_new_job() {
+    let (spawned, made) = spawn_recording_jobs(
+        "cmd.exe",
+        &["/d", "/c", "cmd /d /c ping -n 300 127.0.0.1 >nul"],
+        denied_in_job,
+    );
+    let [(Joining::AtCreation, denied_job), (Joining::Suspended, job)] = made[..] else {
+        panic!("the starts: {made:?}");
+    };
+    assert_ne!(denied_job, job, "the suspended start got the denied start's job");
+    let Spawned { master, mut child } = spawned.expect("the suspended start");
+    assert_eq!(child.job().as_raw_handle().addr(), job);
+    let _actor = drain(master);
+    assert!(!escapees::packaged(child.process().expect("the process handle")));
+    let view = child.job_view();
+    wait_until("the inner cmd started its ping in the job", || {
+        view.process_ids().is_some_and(|pids| pids.len() >= 3)
+    });
+    assert!(view.process_ids().expect("the job's processes").contains(&child.pid()));
+    child.killer().kill_tree().expect("the kill");
+    assert_eq!(child.wait().expect("the exit").exit_code(), 1);
+    wait_until("the tree ended", || {
+        view.process_ids().is_some_and(|pids| pids.is_empty())
+    });
+}
+
+/// A child started suspended runs on its own pseudoconsole: what it prints reaches the master. The line is not
+/// the one the command names, which the console's title would carry too.
+#[test]
+fn a_child_started_suspended_prints_to_its_console() {
+    let (spawned, _) = spawn_recording("cmd.exe", &["/d", "/c", "echo ngterm-%OS%"], denied_in_job);
+    let Spawned { master, mut child } = spawned.expect("the suspended start");
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let on_read = {
+        let seen = Arc::clone(&seen);
+        Box::new(move |bytes: &[u8]| {
+            seen.lock().expect("the output").extend_from_slice(bytes);
+            if bytes.windows(4).any(|window| window == b"\x1b[6n") {
+                vec![b"\x1b[1;1R".to_vec()]
+            } else {
+                Vec::new()
+            }
+        })
+    };
+    let actor = Actor::spawn(ActorConfig::new("test", master, on_read)).expect("an actor");
+    assert!(child.wait().expect("the exit").success());
+    wait_until("the console printed the line", || {
+        String::from_utf8_lossy(&seen.lock().expect("the output")).contains("ngterm-Windows_NT")
+    });
+    actor.child_exited();
+}
+
+/// Only a denied start is made again: another refusal is the spawn's error, after one start.
+#[test]
+fn a_start_refused_otherwise_is_not_made_again() {
+    let (spawned, made) = spawn_recording("cmd.exe", &["/d", "/c", "exit 0"], |_| {
+        Some(Refusal::other(io::Error::other("no console for the child")))
+    });
+    assert_eq!(made, [Joining::AtCreation]);
+    let err = spawned.expect_err("a refused start");
+    assert_eq!(err.to_string(), "no console for the child");
+}
+
+/// A program Windows denies however it starts (a directory) is refused after both starts, in plain words.
+#[test]
+fn a_program_denied_both_starts_is_refused_naming_it() {
+    let program = std::env::var("SystemRoot").expect("the Windows directory");
+    let (spawned, made) = spawn_recording(&program, &[], |_| None);
+    assert_eq!(made, [Joining::AtCreation, Joining::Suspended]);
+    let err = spawned.expect_err("a directory started");
+    let shown = err.to_string();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{shown}");
+    assert!(
+        shown.starts_with(&format!("{program}: ")) && shown.ends_with("(os error 5)"),
+        "{shown}"
+    );
+}
+
+/// What a packaged shell leaves, made without a package: `line` run by a `cmd.exe` outside any job of the test's
+/// own, and that `cmd.exe` then put alone into a new kill-on-close job once it started `program`, so what it started
+/// is outside the job.
+struct Escaped {
+    job: Arc<Job>,
+    shell: std::process::Child,
+}
+
+impl Escaped {
+    fn new(line: &str, program: &str) -> Self {
+        let shell = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", line])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .expect("a shell");
+        // what the shell starts is in no job of the test's yet
+        child_of(shell.id(), program);
+        let job = kill_on_close_job().expect("a job");
+        // SAFETY: both handles are open, the process one in `shell`.
+        let joined = unsafe { AssignProcessToJobObject(job.as_raw_handle(), shell.as_raw_handle()) };
+        assert_ne!(joined, 0, "{}", io::Error::last_os_error());
+        Self {
+            job: Job::holding(job, false),
+            shell,
+        }
+    }
+
+    fn killer(&self) -> Killer {
+        Killer {
+            job: Arc::clone(&self.job),
+        }
+    }
+
+    fn holds(&self, pid: u32) -> bool {
+        job_process_ids(&self.job.handle).is_some_and(|pids| pids.contains(&pid))
+    }
+}
+
+impl Drop for Escaped {
+    fn drop(&mut self) {
+        drop(self.shell.kill());
+    }
+}
+
+/// The kill of a tree takes back first what escaped its job, and ends it too: only what its processes started.
+#[test]
+fn killing_the_tree_ends_what_escaped_its_job() {
+    let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
+    let ping = child_of(escaped.shell.id(), "ping.exe");
+    assert!(!escaped.holds(ping), "the ping started in the job");
+    let ping = watched(ping).expect("the ping");
+    let mut bystander = std::process::Command::new("ping")
+        .args(["-n", "300", "127.0.0.1"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("a process outside the tree");
+    escaped.killer().kill_tree().expect("the kill");
+    assert_eq!(exit_code_of(&ping), Some(1));
+    assert!(
+        bystander.try_wait().expect("the bystander's state").is_none(),
+        "the kill ended another tree"
+    );
+    bystander.kill().expect("the bystander's end");
+}
+
+/// The close of a job takes back what escaped it first, so the close ends it with the tree.
+#[test]
+fn the_close_of_a_job_ends_what_escaped_it() {
+    let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
+    let ping = watched(child_of(escaped.shell.id(), "ping.exe")).expect("the ping");
+    drop(escaped);
+    // a kill on close ends a process with the exit code 0
+    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
+}
+
+/// A watched job (a packaged program's) takes back what escaped it while the tree runs: the job lists it then.
+#[test]
+fn a_watched_job_takes_back_what_escaped_it() {
+    let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
+    let ping = child_of(escaped.shell.id(), "ping.exe");
+    escapees::watch(&escaped.job);
+    wait_until("the job took the ping back", || escaped.holds(ping));
+}
+
+/// What an escaped process started before it was taken back escaped too, and is taken back with it.
+#[test]
+fn what_an_escaped_process_started_is_taken_back_too() {
+    let escaped = Escaped::new("cmd /d /c ping -n 300 127.0.0.1 >nul", "cmd.exe");
+    let inner = child_of(escaped.shell.id(), "cmd.exe");
+    let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
+    escaped.killer().kill_tree().expect("the kill");
+    assert_eq!(exit_code_of(&ping), Some(1));
+}
+
+/// PowerShell from the Microsoft Store (a packaged app) as a pane's program, the issue's setup: the first pane starts
+/// in its job, the second, while the first runs, only suspended, as Windows then denies the start in a job. What
+/// either starts leaves its job and is taken back: a ping on the console and a detached one end with the pane, by
+/// its kill and by its job's close. Needs that PowerShell (`Microsoft.PowerShell` from the Store or its
+/// msixbundle), which CI does not have.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn a_store_powershell_pane_starts_and_its_tree_ends_with_it() {
+    let local = std::env::var("LOCALAPPDATA").expect("the local app data folder");
+    let alias = format!(r"{local}\Microsoft\WindowsApps\pwsh.exe");
+    let line = "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; ping -n 300 127.0.0.1";
+    let args = ["-NoLogo", "-NoProfile", "-Command", line];
+    let (first, made) = spawn_recording(&alias, &args, |_| None);
+    assert_eq!(made, [Joining::AtCreation], "another Store PowerShell runs");
+    let (second, made) = spawn_recording(&alias, &args, |_| None);
+    assert_eq!(made, [Joining::AtCreation, Joining::Suspended]);
+    let mut pings = Vec::new();
+    let mut panes = Vec::new();
+    for Spawned { master, child } in [first.expect("the first pane"), second.expect("the second pane")] {
+        assert!(escapees::packaged(child.process().expect("the process handle")));
+        let actor = drain(master);
+        pings.push(pings_of(&child));
+        panes.push((child, actor));
+    }
+    let (second, _actor) = panes.pop().expect("the second pane");
+    second.killer().kill_tree().expect("the kill");
+    for ping in pings.pop().expect("the second pane's pings") {
+        assert_eq!(exit_code_of(&ping), Some(1), "a ping outlived the second pane's kill");
+    }
+    drop(panes);
+    for ping in pings.pop().expect("the first pane's pings") {
+        assert_eq!(exit_code_of(&ping), Some(0), "a ping outlived the first pane's close");
+    }
+}
+
+/// The two pings a Store PowerShell pane's line starts, once its job took both back.
+fn pings_of(child: &Child) -> Vec<OwnedHandle> {
+    let view = child.job_view();
+    let mut pings = Vec::new();
+    wait_until("the job took both pings back", || {
+        pings = view
+            .process_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(watched)
+            .filter(|process| image_name(process).eq_ignore_ascii_case("ping.exe"))
+            .collect();
+        pings.len() == 2
+    });
+    pings
+}
+
+/// The file name of the program `process` runs.
+fn image_name(process: &OwnedHandle) -> String {
+    use windows_sys::Win32::System::Threading::{PROCESS_NAME_WIN32, QueryFullProcessImageNameW};
+    let mut path = [0_u16; 1024];
+    let mut length = u32::try_from(path.len()).expect("a length");
+    // SAFETY: `path` is writable for `length` units; the handle is open with `PROCESS_QUERY_LIMITED_INFORMATION`.
+    let read = unsafe {
+        QueryFullProcessImageNameW(
+            process.as_raw_handle(),
+            PROCESS_NAME_WIN32,
+            path.as_mut_ptr(),
+            &raw mut length,
+        )
+    };
+    if read == 0 {
+        return String::new();
+    }
+    let path = String::from_utf16_lossy(&path[..usize::try_from(length).expect("a length")]);
+    path.rsplit('\\').next().unwrap_or_default().to_owned()
 }
