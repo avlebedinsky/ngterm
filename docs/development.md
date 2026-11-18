@@ -41,7 +41,9 @@ Linux build unless it names another OS.
   `agent_end`, and clears to `idle` on `session_shutdown`. It uses the shared wrapper, including the PowerShell form
   on Windows, and does nothing outside ngterm. Each wrapper call starts after the previous call ends. On Windows,
   where a cold `powershell.exe` needs some seconds, a call gets 10 s and the turn does not wait for it; the Pi
-  extension does the same (`build/patches/agent-status/0004-windows-forms.patch`). Upstream waits up to 1 s. OMP runs the extension again in each subagent session (task tool,
+  extension does the same (`build/patches/agent-status/0004-windows-forms.patch`). Upstream waits up to 1 s. On
+  Windows OMP ends its child processes when it exits, and it stops a `session_shutdown` handler after 2 s, so the
+  `idle` report at exit does not arrive there. The key or command that quits OMP resets a `completed` status. OMP runs the extension again in each subagent session (task tool,
   `/tan` clones) with the pane of the parent, so it reports only for the top-level session (`ctx.agent.kind`). The
   Claude adapters recognize `omp` as a parent agent, so a Claude worker cannot reset its status. Restart OMP after installation. The installers preserve unmarked user files;
   custom OMP config directories and named profiles need manual installation into their own `extensions/` and
