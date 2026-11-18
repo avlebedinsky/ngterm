@@ -525,29 +525,7 @@ impl Panes {
         let Some(spec) = PaneSpec::of_token(core, replacement.session, &replacement.token) else {
             return false;
         };
-        let mut env = spec.env(&self.environment);
-        for (name, value) in &replacement.env {
-            match env.iter_mut().find(|(known, _)| known == name) {
-                Some(entry) => entry.1.clone_from(value),
-                None => env.push((name.clone(), value.clone())),
-            }
-        }
-        let launch = Launch {
-            command: Some(replacement.command.clone()),
-            initial_input: None,
-            working_directory: Some(PathBuf::from(
-                replacement.cwd.clone().unwrap_or_else(|| spec.cwd.clone()),
-            )),
-            wait_after_command: replacement.remote,
-            env,
-            env_remove: Vec::new(),
-            live: replacement.attach.clone(),
-            painter: None,
-            status_file: None,
-            remote: replacement.remote,
-            legacy_keys: replacement.legacy_keys,
-            shell_profile: None,
-        };
+        let launch = replacement_launch(replacement, &spec, spec.env(&self.environment));
         let fresh = self.cell(&spec.token);
         let installed = core
             .library_mut()
@@ -614,6 +592,34 @@ impl Panes {
         }
         self.cells.clear();
         self.specs.clear();
+    }
+}
+
+/// The launch of `replacement` in place of `spec`'s pane: its command, cwd (the pane's own when it has none), env over
+/// the pane's `env`, and, for a remote attach, its hold, attach word and key encodings (a Windows origin's attach takes
+/// the legacy keys, [`ngterm_core::remote::origin::needs_legacy_keys`]).
+fn replacement_launch(replacement: &PaneReplacement, spec: &PaneSpec, mut env: Vec<(String, String)>) -> Launch {
+    for (name, value) in &replacement.env {
+        match env.iter_mut().find(|(known, _)| known == name) {
+            Some(entry) => entry.1.clone_from(value),
+            None => env.push((name.clone(), value.clone())),
+        }
+    }
+    Launch {
+        command: Some(replacement.command.clone()),
+        initial_input: None,
+        working_directory: Some(PathBuf::from(
+            replacement.cwd.clone().unwrap_or_else(|| spec.cwd.clone()),
+        )),
+        wait_after_command: replacement.remote,
+        env,
+        env_remove: Vec::new(),
+        live: replacement.attach.clone(),
+        painter: None,
+        status_file: None,
+        remote: replacement.remote,
+        legacy_keys: replacement.legacy_keys,
+        shell_profile: None,
     }
 }
 

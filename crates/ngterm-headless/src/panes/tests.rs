@@ -316,6 +316,31 @@ fn retaining_a_pending_close_keeps_its_surface_until_the_close_is_final() {
     assert!(panes.is_empty());
 }
 
+#[test]
+fn a_remote_replacement_launches_with_its_legacy_keys() {
+    let (core, session, primary, _) = split_core();
+    let spec = PaneSpec::of_token(&core, session, &primary).unwrap();
+    for legacy_keys in [true, false] {
+        let replacement = PaneReplacement {
+            session,
+            token: primary.clone(),
+            command: "ssh -tt origin attach".into(),
+            attach: None,
+            env: vec![("EXTRA".into(), "kept".into())],
+            cwd: None,
+            remote: true,
+            legacy_keys,
+        };
+        let launch = replacement_launch(&replacement, &spec, vec![("EXTRA".into(), "pane".into())]);
+        assert_eq!(launch.command.as_deref(), Some("ssh -tt origin attach"));
+        assert!(launch.remote);
+        assert!(launch.wait_after_command);
+        assert_eq!(launch.legacy_keys, legacy_keys);
+        assert_eq!(launch.env, vec![("EXTRA".to_owned(), "kept".to_owned())]);
+        assert_eq!(launch.working_directory, Some(PathBuf::from(&spec.cwd)));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_replacement_uses_the_current_role_cwd_and_environment_and_reports_exit() {
