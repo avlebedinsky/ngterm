@@ -19,12 +19,20 @@ pub const AFTER: GridSize = GridSize {
 
 // The alternate screen never reflows, so parsing at 80 columns cannot be repaired by a later VT resize.
 // XY occupies columns 99 and 100; the final cursor is also outside the old 80x24 grid.
+//
+// The child blocks SIGWINCH before it writes "ready" and takes it with `sigwait`. A handler with `signal.pause()`
+// loses the signal when it arrives after Python's last check for signals and before pause(2): the C handler only
+// sets a flag, and pause(2) then waits for a next signal that never comes. A blocked signal stays pending until
+// `sigwait` takes it. The empty handler keeps SIGWINCH from its default action, which is to ignore it: a system can
+// discard an ignored signal while it is blocked.
 pub const UNIX: &str = r#"
 import os, signal
-signal.signal(signal.SIGWINCH, lambda *_: os.write(1, b"\x1b[2J\x1b[11;99HXY\x1b[29;100H\x1b]2;redrawn\x07"))
+signal.signal(signal.SIGWINCH, lambda *_: None)
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGWINCH})
 os.write(1, b"\x1b[?1049h\x1b[2J\x1b[H\x1b]2;ready\x07")
 while True:
-    signal.pause()
+    signal.sigwait({signal.SIGWINCH})
+    os.write(1, b"\x1b[2J\x1b[11;99HXY\x1b[29;100H\x1b]2;redrawn\x07")
 "#;
 pub const WINDOWS: &str = concat!(
     "$e=[char]27; $b=[char]7; ",

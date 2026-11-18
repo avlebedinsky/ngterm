@@ -95,15 +95,19 @@ fn an_immediate_resize_redraw_uses_the_new_grid() -> TestResult {
             ),
         ])
     } else {
+        // SIGWINCH is blocked and taken with `sigwait`: a handler with `signal.pause()` loses a signal that arrives
+        // after Python's last check for signals and before pause(2) (as ngterm-term's tests/support/redraw.rs says)
         spec(&[
             "python3",
             "-c",
             r#"
 import os, signal
-signal.signal(signal.SIGWINCH, lambda *_: os.write(1, b"\x1b[2J\x1b[11;99HXY\x1b[29;100H\x1b]2;redrawn\x07"))
+signal.signal(signal.SIGWINCH, lambda *_: None)
+signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGWINCH})
 os.write(1, b"\x1b[?1049h\x1b[2J\x1b[H\x1b]2;ready\x07")
 while True:
-    signal.pause()
+    signal.sigwait({signal.SIGWINCH})
+    os.write(1, b"\x1b[2J\x1b[11;99HXY\x1b[29;100H\x1b]2;redrawn\x07")
 "#,
         ])
     };
