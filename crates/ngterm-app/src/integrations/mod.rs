@@ -76,8 +76,10 @@
 //!   conversation or the one it moved from (`agent.locate`) and runs the hook as that pane; a job no pane started
 //!   does nothing and prints nothing (`build/patches/agent-status/0009-claude-background-job.patch`);
 //! - under Git Bash (MSYS or Cygwin) the Codex adapter starts no screen watcher, since a Codex there was seen waiting
-//!   at "Running hook" while the watcher lived: on Windows a Codex dialog does not set the pane to blocked, and
-//!   lifecycle status, the agent record and mail work as on the other systems
+//!   at "Running hook" while the watcher lived: on Windows a Codex dialog does not set the pane to blocked, so its
+//!   `PermissionRequest` never becomes the agent record's live approval and the chat view does not show or answer it;
+//!   lifecycle status, the rest of the agent record (the conversation and its candidate) and mail work as on the other
+//!   systems
 //!   (`build/patches/agent-status/0011-codex-windows-watcher.patch`);
 //! - the skill speaks of the `live` group and the attach contract's `NGTERM_LIVE_*` variables where upstream's names
 //!   `zmx`, and it is named `ngterm` (frontmatter `name`, a description that also triggers on ngterm and `ngtermctl`),
