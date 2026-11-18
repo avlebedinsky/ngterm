@@ -267,9 +267,12 @@ fn watch_forever(watcher: &Watcher) {
 }
 
 /// Whether `processes` lists a process that one of `pids` (the processes of a job) created, but that is not in the
-/// job: a candidate for a pass. The look costs no handle, so each job is looked at every tick and a pass opens
-/// processes only when there is something to take back. A false candidate (a process that got the id of one that
-/// ended) only costs a pass, which leaves it alone.
+/// job: a candidate for a pass. The look costs no handle, so each job is looked at every tick. A pass opens
+/// processes only when there is a candidate, but a candidate that cannot join the job or must not join it stays one:
+/// a process in another job (a Store PowerShell that a `cmd.exe` pane started), a process that the pass cannot open
+/// (an elevated one), or a process that got the id of one that ended. While such a process runs, a pass occurs on each
+/// tick. The pass leaves the last two alone. It holds the first outside the job for that pass only, to take back
+/// what that process started.
 fn escaped(pids: &[u32], processes: &[Entry]) -> bool {
     processes
         .iter()

@@ -664,7 +664,7 @@ fn the_close_of_a_job_ends_what_escaped_it() {
     assert_ended_by_its_job(&ping, 0, "the ping outlived its job");
 }
 
-/// A watched job (a packaged program's) takes back what escaped it while the tree runs: the job lists it then.
+/// A watched job (each pane's job is watched) takes back what escaped it while the tree runs: the job lists it then.
 #[test]
 fn a_watched_job_takes_back_what_escaped_it() {
     let escaped = Escaped::new("ping -n 300 127.0.0.1 >nul", "ping.exe");
