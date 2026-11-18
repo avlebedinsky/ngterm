@@ -334,6 +334,22 @@ fn exit_code_of(process: &OwnedHandle) -> Option<u32> {
     (unsafe { GetExitCodeProcess(process.as_raw_handle(), &raw mut code) } != 0).then_some(code)
 }
 
+/// `STATUS_PROCESS_IS_TERMINATING`: under load, Windows 11 (build 26100) sometimes gives this exit code to an escaped
+/// ping that the end of its tree terminates, before this change too. The cause is not known
+/// (`docs/backlog/an-escaped-ping-ends-with-process-is-terminating.md`).
+const PROCESS_IS_TERMINATING: u32 = 0xC000_010A;
+
+/// That `process` ended with `code` (the code its tree's end gives), or with [`PROCESS_IS_TERMINATING`]. The test's
+/// pings run for 300 seconds, so one that ends in the wait was ended.
+#[track_caller]
+fn assert_ended_by_its_job(process: &OwnedHandle, code: u32, what: &str) {
+    let ended = exit_code_of(process);
+    assert!(
+        ended.is_some_and(|ended| ended == code || ended == PROCESS_IS_TERMINATING),
+        "{what}: its exit code is {ended:x?}"
+    );
+}
+
 /// Whether the process `process` names still runs.
 fn runs(process: BorrowedHandle<'_>) -> bool {
     // SAFETY: polls a process handle this test holds open with `SYNCHRONIZE`.
@@ -630,7 +646,7 @@ fn killing_the_tree_ends_what_escaped_its_job() {
         .spawn()
         .expect("a process outside the tree");
     escaped.killer().kill_tree().expect("the kill");
-    assert_eq!(exit_code_of(&ping), Some(1));
+    assert_ended_by_its_job(&ping, 1, "the ping outlived the kill");
     assert!(
         bystander.try_wait().expect("the bystander's state").is_none(),
         "the kill ended another tree"
@@ -645,7 +661,7 @@ fn the_close_of_a_job_ends_what_escaped_it() {
     let ping = watched(child_of(escaped.shell.id(), "ping.exe")).expect("the ping");
     drop(escaped);
     // a kill on close ends a process with the exit code 0
-    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
+    assert_ended_by_its_job(&ping, 0, "the ping outlived its job");
 }
 
 /// A watched job (a packaged program's) takes back what escaped it while the tree runs: the job lists it then.
@@ -664,7 +680,7 @@ fn what_an_escaped_process_started_is_taken_back_too() {
     let inner = child_of(escaped.shell.id(), "cmd.exe");
     let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
     escaped.killer().kill_tree().expect("the kill");
-    assert_eq!(exit_code_of(&ping), Some(1));
+    assert_ended_by_its_job(&ping, 1, "the ping outlived the kill");
 }
 
 /// The id of the process `process` names.
@@ -681,7 +697,7 @@ fn escaped_into_another_job(
 ) -> (Escaped, OwnedHandle, OwnedHandle, OwnedHandle) {
     use windows_sys::Win32::System::Threading::{PROCESS_SET_QUOTA, PROCESS_TERMINATE};
     let package = package_job();
-    let mut held = None;
+    let mut found = None;
     let prepare = |inner: u32| {
         let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
         // SAFETY: opens a process by id; no memory is passed.
@@ -698,10 +714,10 @@ fn escaped_into_another_job(
         // SAFETY: both handles are open, the process one with the rights an assignment needs.
         let joined = unsafe { AssignProcessToJobObject(package.as_raw_handle(), inner.as_raw_handle()) };
         assert_ne!(joined, 0, "{}", io::Error::last_os_error());
-        held = Some((inner, ping));
+        found = Some((inner, ping));
     };
     let escaped = Escaped::with("cmd /d /c ping -n 300 127.0.0.1 >nul", "cmd.exe", prepare, hold);
-    let (inner, ping) = held.expect("the inner shell and its ping");
+    let (inner, ping) = found.expect("the inner shell and its ping");
     (escaped, package, inner, ping)
 }
 
@@ -715,8 +731,8 @@ fn a_process_of_the_tree_in_another_job_ends_with_its_kill() {
     assert!(!escaped.holds(pid), "the inner shell joined the job");
     assert!(escaped.holds(pid_of(&ping)), "its ping was not taken back");
     escaped.killer().kill_tree().expect("the kill");
-    assert_eq!(exit_code_of(&inner), Some(1), "the inner shell outlived the kill");
-    assert_eq!(exit_code_of(&ping), Some(1), "its ping outlived the kill");
+    assert_ended_by_its_job(&inner, 1, "the inner shell outlived the kill");
+    assert_ended_by_its_job(&ping, 1, "its ping outlived the kill");
 }
 
 /// The close of a job takes back what a process of the tree in another job started, and ends it with the tree. That
@@ -726,7 +742,7 @@ fn the_close_of_a_job_ends_what_a_process_in_another_job_started() {
     let (escaped, _package, inner, ping) = escaped_into_another_job(|handle| Arc::new(Job { handle }));
     drop(escaped);
     // a kill on close ends a process with the exit code 0
-    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
+    assert_ended_by_its_job(&ping, 0, "the ping outlived its job");
     // the inner shell ends with its ping, or ends here; one that ended already fails harmlessly
     // SAFETY: terminates a process this test holds open with `PROCESS_TERMINATE`.
     unsafe { TerminateProcess(inner.as_raw_handle(), 1) };
@@ -745,7 +761,7 @@ fn a_panes_job_takes_back_what_a_process_in_another_job_started_before_it_ends()
     assert_eq!(exit_code_of(&inner), Some(1));
     drop(escaped);
     // a kill on close ends a process with the exit code 0
-    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
+    assert_ended_by_its_job(&ping, 0, "the ping outlived its job");
 }
 
 /// A process table read before a process ended can name its id as a child of the tree, after another process got
@@ -788,7 +804,7 @@ fn what_a_process_started_as_its_tree_was_killed_is_taken_back() {
     assert_eq!(exit_code_of(&shell), Some(1));
     tree.adopt(job, &escapees::processes());
     terminate(job).expect("the second kill");
-    assert_eq!(exit_code_of(&ping), Some(1), "the ping outlived its tree");
+    assert_ended_by_its_job(&ping, 1, "the ping outlived its tree");
 }
 
 /// A child started suspended that cannot join its job (a job handle without the right to assign) is terminated
@@ -1071,6 +1087,41 @@ fn a_pane_whose_program_started_the_package_ends_its_tree_alone_by_its_kill() {
 #[ignore = "needs PowerShell from the Microsoft Store"]
 fn a_pane_whose_program_started_the_package_ends_its_tree_alone_by_its_close() {
     a_pane_whose_program_started_the_package_ends(false);
+}
+
+/// A Store PowerShell that a `cmd.exe` pane's program starts, which starts a detached ping and ends before the pane:
+/// the pane's job took the ping back while that PowerShell ran, so the pane's close ends it. Once the PowerShell
+/// ended, nothing names the ping as the tree's.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn a_pane_ends_what_its_store_powershell_started_after_that_powershell_ended() {
+    let _store = store_test();
+    assert_eq!(store_powershells(), [], "a Store PowerShell runs before the test");
+    let script = std::env::temp_dir().join(format!("ngterm-pty-store-ended-{}.ps1", std::process::id()));
+    std::fs::write(
+        &script,
+        "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; Start-Sleep 2",
+    )
+    .expect("the script");
+    // `/s`: cmd.exe takes off the outer quotes and keeps the inner ones; its own ping keeps the pane open
+    let line = format!(
+        r#"""{}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{}" & ping -n 300 127.0.0.1 >nul""#,
+        store_powershell(),
+        script.display()
+    );
+    let pane = run_command(&command("cmd.exe", &["/d", "/s", "/c"]).raw_arg(line));
+    let mut started = Vec::new();
+    wait_until("the cmd pane's program started a Store PowerShell", || {
+        started = store_powershells();
+        !started.is_empty()
+    });
+    let powershell = watched(started[0]).expect("the cmd pane's PowerShell");
+    let ping = watched(child_of(started[0], "ping.exe")).expect("its ping");
+    assert!(exit_code_of(&powershell).is_some(), "its PowerShell did not end");
+    assert!(runs(ping.as_handle()), "its ping ended with its PowerShell");
+    drop(pane);
+    assert_eq!(exit_code_of(&ping), Some(0), "its ping outlived the pane's close");
+    drop(std::fs::remove_file(script));
 }
 
 /// The two pings a Store PowerShell pane's line starts, once its job took both back.
