@@ -2,14 +2,16 @@ use std::io::Read as _;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::Trigger;
+
 const TOKEN_LIMIT: usize = 4096;
 const GH_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// The local GitHub token: `GH_TOKEN`, then `GITHUB_TOKEN`, then, only when `cli` is set, `gh auth token`. Only a
-/// check that the user starts sets `cli`, because gh can read its token from an OS keyring, and a locked keyring can
-/// ask the user to unlock it.
-pub(crate) fn local_token(cli: bool) -> Option<String> {
-    resolve(env_var, cli, gh_token)
+/// The local GitHub token: `GH_TOKEN`, then `GITHUB_TOKEN`, then, only for a [`Trigger::Manual`] check, `gh auth
+/// token`. A background check never runs gh, because gh can read its token from an OS keyring, and a locked keyring
+/// can ask the user to unlock it.
+pub(crate) fn local_token(trigger: Trigger) -> Option<String> {
+    resolve(env_var, trigger, gh_token)
 }
 
 fn env_var(name: &str) -> Option<String> {
@@ -28,11 +30,15 @@ fn gh_command() -> Command {
     command
 }
 
-fn resolve(env: impl Fn(&str) -> Option<String>, cli: bool, gh: impl FnOnce() -> Option<String>) -> Option<String> {
+fn resolve(
+    env: impl Fn(&str) -> Option<String>,
+    trigger: Trigger,
+    gh: impl FnOnce() -> Option<String>,
+) -> Option<String> {
     ["GH_TOKEN", "GITHUB_TOKEN"]
         .into_iter()
         .find_map(|name| env(name).as_deref().and_then(valid_token))
-        .or_else(|| cli.then(gh).flatten())
+        .or_else(|| (trigger == Trigger::Manual).then(gh).flatten())
 }
 
 fn valid_token(value: &str) -> Option<String> {
@@ -84,23 +90,28 @@ fn command_token(command: &mut Command, timeout: Duration) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::ffi::OsStr;
 
     #[test]
     fn explicit_tokens_take_precedence_and_invalid_values_are_skipped() {
         assert_eq!(
-            resolve(|_| Some("first".into()), true, || panic!("unneeded CLI")),
+            resolve(|_| Some("first".into()), Trigger::Manual, || panic!("unneeded CLI")),
             Some("first".into())
         );
         assert_eq!(
-            resolve(|key| (key == "GITHUB_TOKEN").then(|| "second".into()), true, || None),
+            resolve(
+                |key| (key == "GITHUB_TOKEN").then(|| "second".into()),
+                Trigger::Manual,
+                || None
+            ),
             Some("second".into())
         );
         assert_eq!(
-            resolve(|_| Some("bad\nheader".into()), true, || Some("cli".into())),
+            resolve(|_| Some("bad\nheader".into()), Trigger::Manual, || Some("cli".into())),
             Some("cli".into())
         );
-        assert_eq!(resolve(|_| None, true, || None), None);
+        assert_eq!(resolve(|_| None, Trigger::Manual, || None), None);
         assert_eq!(valid_token(" token\r\n"), Some("token".into()));
         for value in [
             String::new(),
@@ -113,14 +124,32 @@ mod tests {
         }
     }
 
+    /// The token that `resolve` gives with no env token for `trigger`, and how many times it ran gh.
+    fn gh_calls(trigger: Trigger) -> (Option<String>, usize) {
+        let calls = Cell::new(0);
+        let token = resolve(
+            |_| None,
+            trigger,
+            || {
+                calls.set(calls.get() + 1);
+                Some("cli".into())
+            },
+        );
+        (token, calls.get())
+    }
+
     #[test]
-    fn an_automatic_check_never_runs_the_cli() {
-        assert_eq!(resolve(|_| None, false, || panic!("gh must not run")), None);
+    fn only_a_manual_check_runs_the_cli() {
+        assert_eq!(gh_calls(Trigger::Automatic), (None, 0));
+        assert_eq!(gh_calls(Trigger::Manual), (Some("cli".into()), 1));
         assert_eq!(
-            resolve(|_| Some("env".into()), false, || panic!("gh must not run")),
+            resolve(|_| Some("env".into()), Trigger::Automatic, || panic!("gh must not run")),
             Some("env".into())
         );
-        assert_eq!(local_token(false), resolve(env_var, false, || None));
+        assert_eq!(
+            local_token(Trigger::Automatic),
+            resolve(env_var, Trigger::Automatic, || panic!("gh must not run"))
+        );
     }
 
     fn shell(script: &str) -> Command {

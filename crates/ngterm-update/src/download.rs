@@ -88,7 +88,7 @@ impl Source {
         trigger: Trigger,
     ) -> Result<Option<Release>, Error> {
         self.check_with(installation, current, trust, || {
-            crate::github_auth::local_token(trigger == Trigger::Manual)
+            crate::github_auth::local_token(trigger)
         })
     }
 
