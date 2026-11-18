@@ -102,10 +102,7 @@ class ChatApprovedCommandE2eTest {
         signIn()
         addMachine()
         openANewSession()
-        compose.waitUntil(CONNECT_WAIT_MS) { terminalText().isNotBlank() }
-        type(AGENT_COMMAND)
-        shell("input keyevent KEYCODE_ENTER")
-        compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
+        startTheAgent()
 
         // Yes: Working and Stop at once, and for the whole run
         ask("yes")
@@ -248,6 +245,18 @@ class ChatApprovedCommandE2eTest {
         val title = hasText(text(R.string.notifications_ask_title))
         val asked = runCatching { compose.waitUntil(ASK_WAIT_MS) { nodes(title) > 0 } }.isSuccess
         if (asked) compose.onNodeWithText(text(R.string.notifications_ask_later)).performClick()
+    }
+
+    // the stand-in Claude Code, started in the session's shell: the pane turns into its chat
+    private fun startTheAgent() {
+        compose.waitUntil(CONNECT_WAIT_MS) { terminalText().isNotBlank() }
+        // with no hardware keyboard, only a tap gives the terminal the focus that the typed keys need; the test rule
+        // runs what the tap starts only when the test asks
+        compose.onNode(terminal()).performClick()
+        compose.waitForIdle()
+        type(AGENT_COMMAND)
+        shell("input keyevent KEYCODE_ENTER")
+        compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
     }
 
     // types [word] into the terminal, as a hardware keyboard does

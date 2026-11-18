@@ -64,6 +64,10 @@ class ClipboardSensitiveReadE2eTest {
     private val arguments = InstrumentationRegistry.getArguments()
     private val compose = createAndroidComposeRule<MainActivity>()
 
+    // the test's own keyboard, which passes the keys of `input text` to the app as they come; the device's keyboard
+    // takes the first one as a hardware keyboard's and switches over, and the keys typed meanwhile are lost
+    private val keyboards = QaKeyboards(instrumentation)
+
     private val stack =
         object : ExternalResource() {
             override fun before() {
@@ -104,6 +108,7 @@ class ClipboardSensitiveReadE2eTest {
         RuleChain
             .outerRule(stack)
             .around(freshInstall)
+            .around(keyboards)
             .around(compose)
             .around(evidence)
 
@@ -115,6 +120,9 @@ class ClipboardSensitiveReadE2eTest {
         addMachine()
         openANewSession()
         compose.waitUntil(CONNECT_WAIT_MS) { terminalText().isNotBlank() }
+        // with no hardware keyboard, only a tap gives the terminal the focus that the typed keys need
+        compose.onNode(terminal()).performClick()
+        keyboards.awaitShown(compose::waitForIdle)
         putTheReaderOnTheMachine()
 
         aKittyReadWithAGrantAsksForTheSensitiveClip()

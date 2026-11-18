@@ -105,6 +105,10 @@ class ChatFirstMessageE2eTest {
 
         // Claude Code, started in the session's shell as a person starts it: the pane turns into its chat
         compose.waitUntil(CONNECT_WAIT_MS) { terminalText().isNotBlank() }
+        // with no hardware keyboard, only a tap gives the terminal the focus that the typed keys need; the test rule
+        // runs what the tap starts only when the test asks
+        compose.onNode(terminal()).performClick()
+        compose.waitForIdle()
         type(AGENT_COMMAND)
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
         awaitText(text(R.string.chat_empty_title))

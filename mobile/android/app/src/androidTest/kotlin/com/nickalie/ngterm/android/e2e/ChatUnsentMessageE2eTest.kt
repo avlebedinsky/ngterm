@@ -109,6 +109,10 @@ class ChatUnsentMessageE2eTest {
         addMachine()
         openANewSession()
         compose.waitUntil(CONNECT_WAIT_MS) { terminalText().isNotBlank() }
+        // with no hardware keyboard, only a tap gives the terminal the focus that the typed keys need; the test rule
+        // runs what the tap starts only when the test asks
+        compose.onNode(terminal()).performClick()
+        compose.waitForIdle()
         type(AGENT_COMMAND)
         shell("input keyevent KEYCODE_ENTER")
         compose.waitUntil(CONNECT_WAIT_MS) { nodes(composer()) > 0 }
