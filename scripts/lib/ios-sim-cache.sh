@@ -88,13 +88,15 @@ ios_sim_cache_bound_device() {
 }
 
 # Keep the wallpaper cache of each shut-down simulator named $1 on the runtime $2 (a simctl runtime identifier) at
-# or below $3 MiB, from `simctl list -j devices` on stdin. Only a malformed listing fails it.
+# or below $3 MiB (1 to 9 decimal digits; a leading zero does not make it octal), from `simctl list -j devices` on
+# stdin. Only a malformed bound or listing fails it.
 ios_sim_cache_bound() {
   local name="$1" runtime="$2" bound_mib="$3" devices udid state data
-  [[ "$bound_mib" =~ ^[0-9]+$ ]] || {
+  [[ "$bound_mib" =~ ^[0-9]{1,9}$ ]] || {
     echo "the wallpaper cache bound '$bound_mib' is not a number of MiB" >&2
     return 1
   }
+  bound_mib=$((10#$bound_mib))
   devices="$(IOS_SIM_CACHE_NAME="$name" IOS_SIM_CACHE_RUNTIME="$runtime" python3 -c "$IOS_SIM_CACHE_DEVICES_PY")" ||
     return 1
   while IFS=$'\t' read -r udid state data; do

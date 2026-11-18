@@ -475,6 +475,13 @@ run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 0 <"$work
 check "a data path that is not <udid>/data is left alone" '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
 run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" lots <"$work/devices.json"
 check "a bound that is not a number fails" '((status == 1)) && grep -q "is not a number of MiB" "$err"'
+# 08 is not an octal number: read as 8 MiB, the phone's 0.8 MiB stays
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 08 <"$work/devices.json"
+check "a bound with a leading zero is a decimal number" \
+  '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]] &&
+    grep -q "simulator PHONE: wallpaper cache 0 MiB, bound 8 MiB" "$err"'
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 1234567890 <"$work/devices.json"
+check "a bound of more than 9 digits fails" '((status == 1)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
 
 if ((failures)); then
   echo "$failures check(s) failed" >&2
