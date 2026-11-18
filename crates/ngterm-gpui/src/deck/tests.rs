@@ -1010,6 +1010,7 @@ fn a_replaced_terminals_queued_exit_leaves_the_pane_to_its_successor(cx: &mut Te
         env: Vec::new(),
         cwd: None,
         remote: false,
+        legacy_keys: false,
     };
     let (deck, state) = (h.deck.clone(), &mut h.state);
     let replaced = h.cx.update(|window, cx| {
@@ -1028,6 +1029,41 @@ fn a_replaced_terminals_queued_exit_leaves_the_pane_to_its_successor(cx: &mut Te
     );
     assert_eq!(h.token(session, StatusPane::Left), token);
     assert!(!Rc::ptr_eq(&h.shared(session, &token), &old));
+}
+
+/// A remote replica's reattach to a Windows origin launches with the legacy keys its replacement carries, and one to
+/// any other origin without them.
+#[gpui_kit::test]
+fn a_remote_replacement_launches_with_its_legacy_keys(cx: &mut TestAppContext) {
+    let (library, window, ids) = three_sessions();
+    let mut h = harness(cx, core_of(library), window);
+    let session = ids[0];
+    h.until("the pane to start", |h| h.realized(session, StatusPane::Left));
+    let token = h.token(session, StatusPane::Left);
+    for legacy_keys in [true, false] {
+        let replacement = ngterm_core::PaneReplacement {
+            session,
+            token: token.clone(),
+            command: "ssh -tt origin attach".to_owned(),
+            attach: None,
+            env: Vec::new(),
+            cwd: None,
+            remote: true,
+            legacy_keys,
+        };
+        let (deck, state) = (h.deck.clone(), &mut h.state);
+        let replaced = h.cx.update(|window, cx| {
+            deck.update(cx, |deck, cx| {
+                deck.replace_pane(&mut state.core, &replacement, window, cx)
+            })
+        });
+        assert!(replaced);
+        h.state.core.pane_replaced(&replacement);
+        let launch = h.launches.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(launch.command.as_deref(), Some("ssh -tt origin attach"));
+        assert!(launch.remote);
+        assert_eq!(launch.legacy_keys, legacy_keys);
+    }
 }
 
 #[gpui_kit::test]

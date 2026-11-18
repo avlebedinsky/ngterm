@@ -81,6 +81,9 @@ pub struct PaneReplacement {
     /// A remote replica's ssh attach rather than a live-session client: its terminal holds after the command exits,
     /// as the attach pane's own does, so its last line stays readable.
     pub remote: bool,
+    /// Keys always take their legacy encodings: a remote replica's attach to a Windows origin
+    /// ([`crate::remote::origin::needs_legacy_keys`]).
+    pub legacy_keys: bool,
 }
 
 /// The installed live-session host and what the core keeps about its daemons.

@@ -62,6 +62,10 @@ fn warn_uncarried(session: &Session, pane: StatusPane, dialect: ShellDialect) {
 /// exit holds on the "press any key" prompt (upstream's `LaunchSeed`). `command` and `initial_input` exclude each
 /// other.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one spawn, each read by its own part of the launch"
+)]
 pub struct LaunchSeed {
     pub shell_profile: Option<crate::shell_profiles::ShellProfile>,
     pub command: Option<String>,
@@ -79,6 +83,9 @@ pub struct LaunchSeed {
     /// `command` is a remote session pane's attach, which ends on its own line naming the host and the status, so its
     /// exit is never a failure to launch, however soon it came.
     pub remote: bool,
+    /// Keys always take their legacy encodings: `command` attaches to a Windows origin, whose pseudoconsole drops the
+    /// others ([`crate::remote::origin::needs_legacy_keys`]).
+    pub legacy_keys: bool,
 }
 
 /// The launch-wide inputs a seed is decided against (upstream's `LaunchSeedPolicy`).
@@ -182,8 +189,10 @@ fn resolve_seed_in(
         warn_uncarried(session, pane, dialect);
         plan.wait_after_command = false;
     }
+    let remote = session.remote_host().is_some() && plan.command.is_some();
     LaunchSeed {
-        remote: session.remote_host().is_some() && plan.command.is_some(),
+        remote,
+        legacy_keys: remote && session.remote_origin_needs_legacy_keys(),
         command: plan.command,
         initial_input: plan.initial_input,
         wait_after_command: plan.wait_after_command,
@@ -238,6 +247,7 @@ pub fn resolve_live_seed(
         live: true,
         attach: configuration.in_process(attach),
         remote: false,
+        legacy_keys: false,
     }
 }
 

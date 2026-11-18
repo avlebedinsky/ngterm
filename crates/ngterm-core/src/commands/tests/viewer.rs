@@ -141,12 +141,7 @@ fn agterm_tree_answer(origin: (Uuid, Uuid), split: bool) -> String {
 }
 
 /// [`viewer_built`] attached from `host`, whose listing is `answer`.
-fn viewer_answered(
-    host: &str,
-    split: bool,
-    setup: impl FnOnce(&mut Fixture),
-    answer: fn((Uuid, Uuid), bool) -> String,
-) -> Viewer {
+fn viewer_answered(host: &str, split: bool, setup: impl FnOnce(&mut Fixture), answer: TreeAnswer) -> Viewer {
     let mut fixture = Fixture::new(0);
     setup(&mut fixture);
     let origin = (Uuid::new_v4(), Uuid::new_v4());
@@ -347,6 +342,48 @@ fn attach_creates_a_remote_row_with_both_panes_and_opens_its_stream() {
     );
     assert!(link.0.borrow().argv.last().unwrap().contains(ORIGIN_SESSION));
     assert_eq!(viewer.sent("hello").len(), 1);
+}
+
+/// An origin's listing of its session, from the origin's pane identities and whether it is split.
+type TreeAnswer = fn((Uuid, Uuid), bool) -> String;
+
+/// The same listing from a Windows origin, whose endpoint's paths name the machine's kind.
+fn windows_tree_answer(origin: (Uuid, Uuid), split: bool) -> String {
+    let mut value: Value = serde_json::from_str(&tree_answer(origin, split)).unwrap();
+    value["result"]["remote"]["endpoint"] = json!({
+        "executable": r"C:\Program Files\ngterm\ngterm-session.exe",
+        "socketDirectory": r"C:\Users\u\AppData\Local\ngterm\live"});
+    value.to_string()
+}
+
+/// A Windows origin's sshd runs each pane's attach in a pseudoconsole, which drops `CSI u` keys: the panes' first
+/// attach and a reattach take the legacy key encodings there, and on no other origin.
+#[test]
+fn a_windows_origins_panes_take_legacy_keys_on_their_attach_and_a_reattach() {
+    let answers: [(TreeAnswer, bool); 2] = [(windows_tree_answer, true), (tree_answer, false)];
+    for (answer, windows) in answers {
+        let mut viewer = viewer_answered("origin", true, |_| {}, answer);
+        let session = viewer.session;
+        let panes = [
+            viewer.session().pane_identity,
+            viewer.session().split_pane_identity.unwrap(),
+        ];
+        for pane in panes {
+            let seed = viewer.fixture.core.request_pane_spawn(session, &wire(pane)).unwrap();
+            assert!(seed.remote, "{seed:?}");
+            assert_eq!(seed.legacy_keys, windows, "{seed:?}");
+        }
+        assert!(viewer.fixture.core.reattach_remote_pane(
+            session,
+            panes[0],
+            crate::live::lead::LeadAttachment::new(true),
+            true
+        ));
+        let replacements = viewer.fixture.core.take_pane_replacements();
+        assert_eq!(replacements.len(), 1);
+        assert!(replacements[0].remote);
+        assert_eq!(replacements[0].legacy_keys, windows);
+    }
 }
 
 /// An agterm Mac's session attaches as an ngterm one does: each pane runs that Mac's own zmx under zmx's names, the

@@ -667,7 +667,9 @@ as the menu/settings indicate, rather than silently dropping their options.
 A Windows pane sends each key in its legacy encoding, also when its program pushes the Kitty keyboard flags or
 `modifyOtherKeys` (Claude Code pushes the flags). ConPTY turns the input into console key events and drops the `CSI u`
 and `CSI 27` keys that it cannot parse, so Escape, Shift+Tab, Ctrl+C and Alt+<key> would not reach the program
-(`PaneConfig::legacy_keys`). The pane still reports the pushed flags to a program that queries them.
+(`PaneConfig::legacy_keys`). The pane still reports the pushed flags to a program that queries them. A viewer's pane
+of a session on a Windows origin (a desktop on any OS, Android, iOS) does the same, as the origin's OpenSSH server
+runs the attach in a ConPTY too (`ngterm_core::remote::origin::needs_legacy_keys`).
 
 Live CMD adds an OSC 7 directory report to `PROMPT`, preserving the inherited or profile-defined prompt text.
 Replacing `PROMPT` inside CMD replaces that integration too. This reports the directory at each prompt; it does
@@ -962,7 +964,8 @@ carried out by the origin's `ngtermctl` (`crates/ngterm-core/src/remote/origin.r
 per host: a `live tree` in the POSIX form refused by a Windows shell, then a shell-neutral probe; the endpoint's paths
 say the same to an attach. `ngtermctl` must be on the PATH of that account's ssh logins: the MSI adds it, and a staged
 `ngterm-headless` adds its own folder to the user's PATH (not with a private `NGTERM_STATE_DIR`). A full-screen program
-reaches a viewer through the origin's ConPTY, which re-renders what it draws, as on any ssh login there.
+reaches a viewer through the origin's ConPTY, which re-renders what it draws, as on any ssh login there. The keys go
+through that ConPTY too, so the viewer sends them in their legacy encodings, as a local Windows pane does.
 
 ### An agterm origin
 

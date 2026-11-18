@@ -830,6 +830,48 @@ fn listing_of(session_id: &str, executable: &str) -> Script {
     Script::ok(&serde_json::json!({"ok": true, "result": {"remote": remote}}).to_string())
 }
 
+/// The bytes a shown pane of the session on `executable`'s machine sends for Escape, Shift+Tab and Ctrl+C after its
+/// program pushed the Kitty flags and `modifyOtherKeys` 2, after the answer to the program's `CSI ? u` query.
+fn keys_under_kitty_flags(executable: &str) -> Vec<u8> {
+    let mut fixture = Fixture::connected_with(vec![listing_of(SESSION, executable)]);
+    let pane = fixture.show();
+    let mut opened = fixture.attach();
+    fixture.attached();
+    send(&opened.peer, b"\x1b[>1u\x1b[>4;2m\x1b[?u");
+    let (reply, _) = inputs_until(&mut opened.peer, |bytes, _| contains(bytes, b"u"));
+    assert_eq!(reply, b"\x1b[?1u", "the query gets the flags the program pushed");
+    let key = |name: &str, mods: u8, text: &str| crate::api::PaneKey {
+        action: crate::api::PaneKeyAction::Press,
+        key: name.to_owned(),
+        mods,
+        consumed: 0,
+        composing: false,
+        text: text.to_owned(),
+        unshifted: None,
+    };
+    for pressed in [key("escape", 0, ""), key("tab", 1, ""), key("key_c", 2, "c")] {
+        assert_eq!(pane.key(pressed), Ok(true));
+    }
+    let (bytes, _) = inputs_until(&mut opened.peer, |bytes, _| {
+        bytes.ends_with(b"\x03") || bytes.ends_with(b"99;5u")
+    });
+    bytes
+}
+
+#[test]
+fn a_pane_of_a_windows_origin_sends_legacy_keys_whatever_its_program_pushed() {
+    // the origin's sshd runs the attach in a pseudoconsole, which drops `CSI u` keys
+    assert_eq!(
+        keys_under_kitty_flags(r"C:\Program Files\ngterm\ngterm-session.exe"),
+        b"\x1b\x1b[Z\x03"
+    );
+    // any other origin's program gets the encodings it asked for
+    assert_eq!(
+        keys_under_kitty_flags("/ngterm-session"),
+        b"\x1b[27u\x1b[9;2u\x1b[99;5u"
+    );
+}
+
 #[test]
 fn a_pane_whose_attach_cant_be_named_is_refused_as_unknown() {
     let unknown = Err(crate::api::MobileError::Remote {

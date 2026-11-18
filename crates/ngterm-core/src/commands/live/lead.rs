@@ -260,6 +260,7 @@ impl Core {
             env: configuration.environment.into_iter().collect(),
             cwd: None,
             remote: false,
+            legacy_keys: false,
         });
         true
     }

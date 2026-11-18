@@ -71,6 +71,14 @@ impl OriginShell {
     }
 }
 
+/// Whether a viewer's keys for a pane attached at `endpoint` must take their legacy encodings: a Windows origin's
+/// OpenSSH server runs the attach in a pseudoconsole, whose input parser drops the Kitty keyboard protocol's and
+/// `modifyOtherKeys`' keys, as a local Windows pane's own pseudoconsole does (`ngterm_term::PaneConfig::legacy_keys`).
+#[must_use]
+pub fn needs_legacy_keys(endpoint: &ControlLiveEndpoint) -> bool {
+    OriginShell::of_endpoint(endpoint) == OriginShell::Windows
+}
+
 /// How a host's remote commands are formed: the shell that runs them and the app that answers them. An agterm origin
 /// is a Mac, so its commands always take the POSIX form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

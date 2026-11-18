@@ -341,6 +341,7 @@ fn a_replacement_uses_the_current_role_cwd_and_environment_and_reports_exit() {
         ],
         cwd: Some(dir.path().to_string_lossy().into_owned()),
         remote: true,
+        legacy_keys: false,
     };
     assert!(panes.replace_one(&mut core, &replacement));
     let cell = panes.cells.values().next().unwrap().clone();

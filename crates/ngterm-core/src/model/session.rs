@@ -438,6 +438,16 @@ impl Session {
             .map(|origin| origin.endpoint.peer())
     }
 
+    /// Whether this remote row's origin takes only legacy key encodings, from its binding's endpoint
+    /// ([`crate::remote::origin::needs_legacy_keys`]); false for a local row or one not bound.
+    #[must_use]
+    pub fn remote_origin_needs_legacy_keys(&self) -> bool {
+        self.remote_presentation
+            .as_ref()
+            .and_then(|state| state.binding.origin.as_ref())
+            .is_some_and(|origin| crate::remote::origin::needs_legacy_keys(&origin.endpoint))
+    }
+
     /// The session this one is a companion of; `None` for a top-level session.
     #[must_use]
     pub fn parent_id(&self) -> Option<Uuid> {

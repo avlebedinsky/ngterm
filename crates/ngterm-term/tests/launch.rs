@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 
 use ngterm_core::command_restore::PaneInput;
 use ngterm_core::ghostty_config::GhosttyConfig;
+use ngterm_core::ghostty_config::binds::{Mods, PhysicalKey};
 use ngterm_core::shell_profiles::ShellProfile;
-use ngterm_term::{ExitStatus, Host, Launch, Pane, PaneConfig, PaneEvent, TextRegion};
-use support::{DEADLINE, SIZE, TestResult, wait_events, wait_text};
+use ngterm_term::{ExitStatus, Host, KeyInput, Launch, Pane, PaneConfig, PaneEvent, TextRegion};
+use support::{DEADLINE, SIZE, TestResult, wait_events, wait_file, wait_text};
 
 /// The names of the inherited `NGTERM_*`/`AGTERM_*` variables, which no test pane may see.
 fn isolation() -> Vec<String> {
@@ -79,6 +80,51 @@ fn exit_of(pane: &Pane) -> ExitStatus {
 /// The whole screen's text, scrollback included.
 fn screen(pane: &Pane) -> String {
     pane.read_text(TextRegion::All).unwrap_or_default()
+}
+
+/// A launch with [`Launch::legacy_keys`] (a remote pane's attach to a Windows origin, whose pseudoconsole drops the
+/// other encodings) sends Escape, Ctrl+C and Shift+Tab in their legacy encodings after its program pushed the Kitty
+/// flags and `modifyOtherKeys` 2, though its config's own `legacy_keys` is off; without it they take the pushed modes.
+#[test]
+fn a_launch_of_legacy_keys_sends_them_whatever_its_program_pushed() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let recorded = dir.path().join("in");
+    let script = format!(
+        "stty raw -echo; printf '\\033[>1u\\033[>4;2m'; printf ready; exec cat > '{}'",
+        recorded.display()
+    );
+    let cases: [(bool, &[u8]); 2] = [(true, b"\x1b\x03\x1b[Z"), (false, b"\x1b[27u\x1b[99;5u\x1b[9;2u")];
+    for (legacy_keys, expected) in cases {
+        let _ = std::fs::remove_file(&recorded);
+        let pane = Pane::launch(
+            &Launch {
+                legacy_keys,
+                remote: true,
+                ..launch(Some(&script))
+            },
+            &host("/bin/sh", None),
+            &PaneConfig {
+                legacy_keys: false,
+                ..PaneConfig::new(SIZE)
+            },
+        )?;
+        wait_text(&pane, "ready");
+        for (name, mods, text) in [
+            ("escape", Mods::empty(), ""),
+            ("key_c", Mods::CTRL, "c"),
+            ("tab", Mods::SHIFT, ""),
+        ] {
+            let key = PhysicalKey::new(name).unwrap_or(PhysicalKey::UNIDENTIFIED);
+            assert!(pane.key(&KeyInput::press(key, mods, text))?, "{name}");
+        }
+        let got = wait_file(&recorded, expected.len());
+        assert_eq!(
+            String::from_utf8_lossy(&got),
+            String::from_utf8_lossy(expected),
+            "legacy_keys {legacy_keys}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

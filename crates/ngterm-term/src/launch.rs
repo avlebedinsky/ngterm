@@ -674,6 +674,9 @@ pub struct Launch {
     /// `command` is a remote pane's attach, which ends on its own line naming the host and the status: its exit is
     /// never a failure to launch ([`crate::exit`]).
     pub remote: bool,
+    /// Keys always take their legacy encodings, on top of the pane config's own ([`PaneConfig::legacy_keys`]):
+    /// `command` attaches to a Windows origin, whose pseudoconsole drops the others.
+    pub legacy_keys: bool,
 }
 
 impl Launch {
@@ -700,6 +703,7 @@ impl Launch {
             painter: None,
             status_file: None,
             remote: seed.remote,
+            legacy_keys: seed.legacy_keys,
         }
     }
 }
@@ -775,6 +779,7 @@ impl Pane {
                 .flatten(),
             // the queue is empty: it takes the input whole, even a 10 MB `input = path:` file
             write_limit: config.write_limit.max(input.len()),
+            legacy_keys: config.legacy_keys || launch.legacy_keys,
             ..config.clone()
         };
         let pane = match (&launch.painter, &launch.live) {
@@ -1456,6 +1461,7 @@ mod tests {
             painter: None,
             status_file: None,
             remote: false,
+            legacy_keys: false,
         };
         let prepared = host(None).prepare(&launch, &MapEnv::new());
         // `/bin/sh -c <line>`; on Windows (no `ComSpec` here) `cmd.exe /D /S /C "<line>"`
@@ -1740,7 +1746,17 @@ mod tests {
             ..LaunchSeed::default()
         };
         let launch = Launch::from_seed(&seed, None, &[]);
-        assert!(launch.remote);
+        assert!(launch.remote && !launch.legacy_keys);
+        // an attach to a Windows origin keeps its legacy keys
+        let windows = Launch::from_seed(
+            &LaunchSeed {
+                legacy_keys: true,
+                ..seed.clone()
+            },
+            None,
+            &[],
+        );
+        assert!(windows.legacy_keys);
         let prepared = host(None).prepare(&launch, &MapEnv::new());
         assert!(matches!(
             prepared.exit,
@@ -1775,6 +1791,7 @@ mod tests {
                 argv: Vec::new(),
             }),
             remote: false,
+            legacy_keys: false,
         };
         let pane_env = vec![
             ("NGTERM_PANE_ID".to_owned(), "P".to_owned()),

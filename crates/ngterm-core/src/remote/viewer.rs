@@ -1076,6 +1076,7 @@ impl Core {
                 )]
             })
             .unwrap_or_default();
+        let legacy_keys = super::origin::needs_legacy_keys(&origin.endpoint);
         // An absent decision removes the inherited variable in Host::prepare before applying these variables.
         // kept until the frontend reports the replacement installed or dropped, as a live pane's reattach
         self.begin_replacement_lead(&token, pane, lead, cover);
@@ -1088,6 +1089,7 @@ impl Core {
             env,
             cwd: None,
             remote: true,
+            legacy_keys,
         });
         true
     }

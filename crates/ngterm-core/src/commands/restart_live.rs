@@ -323,6 +323,7 @@ fn rebuild(core: &mut Core, job: Job, ending: &Ending) -> Dispatched {
             .map(|launch| launch.working_directory.clone())
             .or(cwd),
         remote: false,
+        legacy_keys: false,
     });
     let replayed = ending.replay.as_ref().map(|launch| launch.argv.clone());
     let deadline = Instant::now() + RESTART_WAIT;

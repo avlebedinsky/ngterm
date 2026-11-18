@@ -145,7 +145,8 @@ impl From<Vec<MobileEvent>> for Handled {
     }
 }
 
-/// The terminal a shown pane's channel feeds: Kitty images off, its wake noting news for the actor.
+/// The terminal a shown pane's channel feeds: Kitty images off, its wake noting news for the actor. Its keys take the
+/// program's key modes: an attach to a Windows origin turns [`PaneConfig::legacy_keys`] on ([`Panes::attach`]).
 pub(crate) fn config(size: GridSize, wake: Wake) -> PaneConfig {
     let mut config = PaneConfig::new(size);
     config.kitty_image_limit = 0;
@@ -658,6 +659,8 @@ impl<C: Connection> Panes<C> {
         });
         let mut config = config(built, wake);
         config.attach_bridge = ngterm_core::attach_bridge::launch_nonce(&shown.endpoint, &lead).map(str::to_owned);
+        // a Windows origin's sshd runs the attach in a pseudoconsole, which drops the other encodings
+        config.legacy_keys = ngterm_core::remote::origin::needs_legacy_keys(&shown.endpoint);
         let (terminal, feed, out) = match ngterm_term::Pane::stream(&config) {
             Ok(made) => made,
             Err(error) => {

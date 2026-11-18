@@ -545,6 +545,7 @@ impl Panes {
             painter: None,
             status_file: None,
             remote: replacement.remote,
+            legacy_keys: replacement.legacy_keys,
             shell_profile: None,
         };
         let fresh = self.cell(&spec.token);

@@ -2320,6 +2320,7 @@ fn dropping_an_uninstalled_replacement_restores_its_previous_lead() {
         env: Vec::new(),
         cwd: None,
         remote: false,
+        legacy_keys: false,
     };
     let left = live.left;
     live.core()
