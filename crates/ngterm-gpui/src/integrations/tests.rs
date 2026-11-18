@@ -189,6 +189,15 @@ fn labels(spec: &AlertSpec) -> Vec<&str> {
     spec.buttons.iter().map(|button| button.label.as_ref()).collect()
 }
 
+/// The alert's text holds `line`, compared with one path separator.
+fn says(alert: &AlertSpec, line: &str) {
+    assert!(
+        slashed(&alert.body).contains(&slashed(line)),
+        "{line:?} not in:\n{}",
+        alert.body
+    );
+}
+
 /// Clicks the front alert's button `label` and lets what it starts run.
 fn press(cx: &mut VisualTestContext, label: &str) {
     assert!(
@@ -324,12 +333,17 @@ fn the_skill_installs_for_omp_only_when_its_config_exists(cx: &mut TestAppContex
     start(cx, run_hooks);
     let absent_hooks = shown(cx);
     assert_eq!(absent_hooks.heading, "Agent Status Hooks Installed");
+    says(
+        &absent_hooks,
+        "No ~/.omp/agent found, so OMP's lifecycle extension was skipped. Start OMP once, then run this again.",
+    );
     assert!(!home.path(".omp").exists(), "hooks do not seed OMP config");
     press(cx, "OK");
 
     start(cx, run_skill);
     let absent = shown(cx);
     assert_eq!(absent.heading, "Agent Skill Installed");
+    assert!(!absent.body.contains("Oh My Pi"), "{}", absent.body);
     assert!(!home.path(".omp").exists(), "skills do not seed OMP config");
     assert!(home.path(".claude/skills/ngterm/SKILL.md").is_file());
     press(cx, "OK");
@@ -337,8 +351,11 @@ fn the_skill_installs_for_omp_only_when_its_config_exists(cx: &mut TestAppContex
     home.mkdir(".omp/agent");
     let skill = ".omp/agent/skills/ngterm/SKILL.md";
     let bundled = fs::read_to_string(resources().join("skills/ngterm/SKILL.md")).unwrap();
+    let omp_line = format!("  • Oh My Pi: {}", home.path(".omp/agent/skills/ngterm").display());
     start(cx, run_skill);
-    assert_eq!(shown(cx).heading, "Agent Skill Installed");
+    let installed = shown(cx);
+    assert_eq!(installed.heading, "Agent Skill Installed");
+    says(&installed, &omp_line);
     assert_eq!(home.read(skill), bundled);
     press(cx, "OK");
 
@@ -358,6 +375,10 @@ fn the_skill_installs_for_omp_only_when_its_config_exists(cx: &mut TestAppContex
     start(cx, run_skill);
     let user_owned = shown(cx);
     assert_eq!(user_owned.heading, "Agent Skill Installed");
+    says(
+        &user_owned,
+        "Skipped:\n  • Oh My Pi: a different 'ngterm' skill is already there — left untouched",
+    );
     assert_eq!(home.read(skill), user_skill);
     press(cx, "OK");
 }
@@ -378,12 +399,21 @@ fn omp_hooks_install_idempotently_update_owned_extension_and_preserve_user_files
     start(cx, run_hooks);
     let installed = shown(cx);
     assert_eq!(installed.heading, "Agent Status Hooks Installed");
+    says(
+        &installed,
+        "OMP lifecycle extension installed to ~/.omp/agent/extensions/ngterm-status.ts. Restart OMP to load it.",
+    );
     assert_eq!(home.read(omp), bundled_omp);
     assert_eq!(home.read(pi), bundled_pi);
     press(cx, "OK");
 
     start(cx, run_hooks);
-    assert_eq!(shown(cx).heading, "Agent Status Hooks Installed");
+    let current = shown(cx);
+    assert_eq!(current.heading, "Agent Status Hooks Installed");
+    says(
+        &current,
+        "OMP lifecycle extension is already current at ~/.omp/agent/extensions/ngterm-status.ts.",
+    );
     assert_eq!(home.read(omp), bundled_omp, "a repeated install remains current");
     assert_eq!(home.read(pi), bundled_pi);
     press(cx, "OK");
@@ -400,6 +430,10 @@ fn omp_hooks_install_idempotently_update_owned_extension_and_preserve_user_files
     start(cx, run_hooks);
     let user_owned = shown(cx);
     assert_eq!(user_owned.heading, "Agent Status Hooks Installed — with a warning");
+    says(
+        &user_owned,
+        "~/.omp/agent/extensions/ngterm-status.ts is user-owned, so ngterm left it untouched.",
+    );
     assert_eq!(home.read(omp), user_extension);
     assert_eq!(home.read(pi), bundled_pi, "an OMP conflict does not change Pi");
     press(cx, "OK");
