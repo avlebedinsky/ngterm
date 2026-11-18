@@ -67,11 +67,20 @@ fn filter(env: &dyn Env) -> EnvFilter {
         .unwrap_or_else(|| EnvFilter::new(DEFAULT_FILTER))
 }
 
-/// stderr and, when given, `file` (without ANSI colors), both behind `filter`.
+/// The `log` target of ureq's wire dump: at trace it writes each request unredacted, the updater's GitHub token too.
+const WIRE_DUMP_TARGET: &str = "ureq_proto";
+
+/// Whether an event may reach the sinks at any level [`LOG_ENV`] asks for: never the wire dump of ureq.
+fn may_log(metadata: &tracing::Metadata<'_>) -> bool {
+    *metadata.level() != tracing::Level::TRACE || !metadata.target().starts_with(WIRE_DUMP_TARGET)
+}
+
+/// stderr and, when given, `file` (without ANSI colors), both behind `filter` and [`may_log`].
 fn subscriber(filter: EnvFilter, file: Option<Arc<File>>) -> impl Subscriber + Send + Sync {
     let file_layer = file.map(|file| fmt::layer().with_ansi(false).with_writer(file));
     tracing_subscriber::registry()
         .with(filter)
+        .with(tracing_subscriber::filter::filter_fn(may_log))
         .with(fmt::layer().with_writer(io::stderr))
         .with(file_layer)
 }
@@ -294,6 +303,24 @@ mod tests {
         assert!(written.contains("hello from the log test"), "{written}");
         assert!(!written.contains("below the default level"), "{written}");
         assert!(!written.contains('\x1b'), "the file has no ANSI colors: {written:?}");
+    }
+
+    #[test]
+    fn trace_never_writes_the_http_wire_dump() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = MapEnv::new().with(LOG_ENV, "trace,ureq_proto=trace");
+
+        let file = open_log_file(tmp.path(), ROTATE_BYTES).unwrap();
+        tracing::subscriber::with_default(subscriber(filter(&env), Some(file)), || {
+            tracing::trace!(target: "ureq_proto::util", "Authorization: Bearer wire-token");
+            tracing::debug!(target: "ureq_proto::client", "wire debug line");
+            tracing::trace!(target: "ureq", "ureq trace line");
+        });
+
+        let written = fs::read_to_string(tmp.path().join(LOG_FILE_NAME)).unwrap();
+        assert!(!written.contains("wire-token"), "{written}");
+        assert!(written.contains("wire debug line"), "{written}");
+        assert!(written.contains("ureq trace line"), "{written}");
     }
 
     #[test]

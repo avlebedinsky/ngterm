@@ -785,7 +785,8 @@ it reads or writes the state dir (it only appends its refusal to `ngterm.log` th
 is already running on <dir>; control it with ngtermctl" on stderr. The control socket's own lock (`<socket>.lock`) stays for instances on different state dirs
 that share one socket.
 
-`NGTERM_LOG` sets the log level (`tracing` filter syntax); the log is `ngterm.log` in the state dir.
+`NGTERM_LOG` sets the log level (`tracing` filter syntax); the log is `ngterm.log` in the state dir. At `trace` too,
+the log leaves out ureq's wire dump (`ureq_proto`), which holds request headers such as the updater's GitHub token.
 
 ### The selection clipboard
 
