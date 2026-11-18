@@ -1374,6 +1374,52 @@ mod tests {
         assert_eq!(status(cx), Status::Idle, "an answered failure is over");
     }
 
+    /// The wait in GitHub's rate-limit text, or a panic naming the text that is not it.
+    #[cfg(target_os = "linux")]
+    fn rate_limit_wait(text: &str) -> u64 {
+        text.strip_prefix("GitHub's API rate limit was reached. Retry in ")
+            .and_then(|rest| rest.strip_suffix(" seconds. Check local GitHub authentication or use Release Downloads."))
+            .and_then(|seconds| seconds.parse().ok())
+            .unwrap_or_else(|| panic!("not the rate limit's text: {text:?}"))
+    }
+
+    #[gpui_kit::test]
+    #[cfg(target_os = "linux")]
+    fn a_check_that_meets_githubs_rate_limit_says_when_to_retry(cx: &mut TestAppContext) {
+        let fixture = Fixture::new();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        fixture.server.route(
+            "/latest",
+            &format!(
+                "403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: {}",
+                now + 600
+            ),
+            "{}",
+        );
+        let cx = host(cx);
+        let _state = cx.update(|_, cx| fixture.start(false, cx));
+
+        cx.update(check);
+        cx.run_until_parked();
+        let alert = front(cx).expect("a rate-limited check says why");
+        assert_eq!(alert.heading.as_str(), "Update needs attention");
+        assert!((590..=600).contains(&rate_limit_wait(&alert.body)), "{}", alert.body);
+        assert_eq!(labels(&alert), ["OK", "Release Downloads"]);
+        press(cx, "OK");
+
+        cx.update(|_, cx| start_check(None, cx));
+        cx.run_until_parked();
+        assert!(front(cx).is_none(), "a background check opens no alert");
+        let Status::Failed(reason) = status(cx) else {
+            panic!("a rate-limited background check fails: {:?}", status(cx));
+        };
+        assert!((590..=600).contains(&rate_limit_wait(&reason)), "{reason}");
+        assert_eq!(fixture.server.requests(), ["/latest", "/latest"]);
+    }
+
     #[gpui_kit::test]
     #[cfg(target_os = "linux")]
     fn quitting_hands_a_staged_update_to_the_installer_unless_a_live_reset_relaunches(cx: &mut TestAppContext) {
