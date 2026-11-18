@@ -32,6 +32,10 @@ pytestmark = [
         reason="a Rust-only extension: the spawner guard of the installed Codex hook (upstream's has none)",
     ),
     pytest.mark.requires("posix-shell", reason="the pane's /bin/sh runs the stand-in agents' chain"),
+    pytest.mark.requires(
+        "posix-command-line",
+        reason="the hooks run as POSIX lines, and their ancestor walk reads `ps -o ppid=,command=`, missing on Windows",
+    ),
 ]
 
 HOOK_TIMEOUT = 60.0
