@@ -6,8 +6,8 @@ import XCTest
 /// back on the test's cues, once it has seen the card and the drop), and the session's Chat view holds as set.
 internal final class ChatTests: XCTestCase {
     private static let wait: TimeInterval = 15
-    // how long a view that should stay is watched for
-    private static let steady: TimeInterval = 3
+    // how many reads, a beat apart, a view that should stay is watched for: some seconds at the least
+    private static let steadyReads = 12
     private static let beat: TimeInterval = 0.25
 
     @MainActor
@@ -28,11 +28,6 @@ internal final class ChatTests: XCTestCase {
         field.tap()
         field.typeText(text)
         app.buttons["chat-send"].tap()
-    }
-
-    @MainActor
-    private static func expectGone(_ element: XCUIElement, _ what: String) {
-        XCTAssertTrue(element.waitForNonExistence(timeout: wait), "\(what) stayed")
     }
 
     @MainActor
@@ -105,7 +100,7 @@ internal final class ChatTests: XCTestCase {
         Self.option("fish", in: app).tap()
         send.tap()
         FakeApp.expect(FakeApp.element(containing: "Going with fish.", in: app), "the reply to the answer")
-        Self.expectGone(send, "the answered card")
+        FakeApp.expectGone(send, "the answered card")
 
         // the same question again gets its card, though the answered one asked the same
         Self.send("ask me", in: app)
@@ -113,7 +108,7 @@ internal final class ChatTests: XCTestCase {
         Self.option("bash", in: app).tap()
         send.tap()
         FakeApp.expect(FakeApp.element(containing: "Going with bash.", in: app), "the reply to the second answer")
-        Self.expectGone(send, "the second answered card")
+        FakeApp.expectGone(send, "the second answered card")
     }
 
     @MainActor
@@ -125,7 +120,7 @@ internal final class ChatTests: XCTestCase {
         FakeApp.expect(yes, "the dialog's Yes")
         yes.tap()
         FakeApp.expect(FakeApp.element(containing: "The build passed.", in: app), "the reply after the build")
-        Self.expectGone(FakeApp.element(containing: "Allow Bash?", in: app), "the allowed card")
+        FakeApp.expectGone(FakeApp.element(containing: "Allow Bash?", in: app), "the allowed card")
     }
 
     @MainActor
@@ -137,8 +132,8 @@ internal final class ChatTests: XCTestCase {
         FakeApp.cue("chat-drop")
         FakeApp.expect(FakeApp.element(containing: "Reconnecting to", in: app), "the reconnecting strip")
         FakeApp.cue("chat-back")
-        Self.expectGone(send, "the card answered in the terminal")
-        Self.expectGone(FakeApp.element(containing: "Reconnecting to", in: app), "the reconnecting strip")
+        FakeApp.expectGone(send, "the card answered in the terminal")
+        FakeApp.expectGone(FakeApp.element(containing: "Reconnecting to", in: app), "the reconnecting strip")
         Self.send("carry on", in: app)
         FakeApp.expect(FakeApp.element(containing: "Done: carry on.", in: app), "the reply after the reconnect")
     }
@@ -151,7 +146,7 @@ internal final class ChatTests: XCTestCase {
         let toggle = app.descendants(matching: .any)["session-chat-view"].firstMatch
         FakeApp.expect(toggle, "Chat view in the session's menu")
         toggle.tap()
-        Self.expectGone(chat, "the chat with Chat view off")
+        FakeApp.expectGone(chat, "the chat with Chat view off")
         FakeApp.expect(
             app.textViews.matching(NSPredicate(format: "value CONTAINS 'P1 ready'")).firstMatch,
             "the first pane's terminal"
@@ -160,8 +155,15 @@ internal final class ChatTests: XCTestCase {
         FakeApp.expect(toggle, "Chat view in the session's menu again")
         toggle.tap()
         FakeApp.expect(chat, "the chat with Chat view on again")
-        let stays = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: chat)
-        XCTAssertEqual(XCTWaiter.wait(for: [stays], timeout: Self.steady), .timedOut, "the chat flipped back")
+        // each read looks at the screen again: one slow read on a loaded runner is still only one of the reads
+        for _ in 0..<Self.steadyReads {
+            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: Self.beat)
+            guard chat.exists else {
+                FakeApp.attachScreen("the chat flipped back")
+                XCTFail("the chat flipped back")
+                return
+            }
+        }
     }
 
     deinit {
