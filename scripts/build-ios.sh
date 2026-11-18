@@ -63,18 +63,30 @@
 #                    order, dealt out one by one). The last share is told what the others run and skips it, so a
 #                    class this script doesn't find still runs there, and the N shares are the whole plan.
 #
+# For the shared Mac (scripts/ios-mac-run.sh sets them):
+#   --only CLASS[/METHOD]  the ui action runs only these UI tests (repeat the option for more), as a fix round does;
+#   BUILD_IOS_TREE_STAMP   a checksum of the whole source tree: a plan that was built from the same stamp, profile and
+#                    Xcode keeps its build, and its runs only test it (test-without-building), so a repeat run and the
+#                    other simulator's run rebuild nothing;
+#   BUILD_IOS_CORE_CACHE   a directory of prebuilt cores (lib/ios-core-cache.sh), keyed by the core's inputs: a core
+#                    found there skips steps 3 to 6, and a core built here is stored there, in at most
+#                    BUILD_IOS_CORE_CACHE_MB MiB (default 2048) and only while BUILD_IOS_CORE_CACHE_MIN_FREE_MB
+#                    (default 8192) of the disk stay free.
+#
 # Usage: scripts/build-ios.sh [--profile release|debug] [--no-xcode] [--prebuilt-core] [--device phone|tablet]
-#                             [--ui-shard K/N] [lint|build|test|coverage|ui|archive...]
+#                             [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|archive...]
 #   --profile   the cargo profile of the archives (default: release)
 #   --no-xcode  stop after step 7, the outputs
 set -euo pipefail
 
 # shellcheck source=lib/native.sh
 source "$(dirname "$0")/lib/native.sh" # sources build/pins.env too
+# shellcheck source=lib/ios-core-cache.sh
+source "$(dirname "$0")/lib/ios-core-cache.sh"
 
 usage() {
   die "usage: scripts/build-ios.sh [--profile release|debug] [--no-xcode] [--prebuilt-core] [--device phone|tablet]
-                            [--ui-shard K/N] [lint|build|test|coverage|ui|archive...]"
+                            [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|archive...]"
 }
 
 ARGS=("$@") # for the re-run under the build lock
@@ -83,6 +95,7 @@ XCODE=1
 PREBUILT_CORE=0
 DEVICE=""
 UI_SHARD=""
+ONLY=()
 ACTIONS=()
 while (($#)); do
   case "$1" in
@@ -110,6 +123,11 @@ while (($#)); do
       UI_SHARD="$2"
       shift 2
       ;;
+    --only)
+      (($# >= 2)) && [[ "$2" =~ ^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*)?$ ]] || usage
+      ONLY+=("-only-testing:NgTermUITests/$2")
+      shift 2
+      ;;
     lint | build | test | coverage | ui | archive)
       ACTIONS+=("$1")
       shift
@@ -120,6 +138,9 @@ done
 ((${#ACTIONS[@]})) || ACTIONS=(build)
 if [[ -n "$DEVICE" && " ${ACTIONS[*]} " == *" coverage "* ]]; then
   die "build-ios.sh: coverage takes no --device: the floors are for both simulators' profiles"
+fi
+if ((${#ONLY[@]})) && [[ -n "$UI_SHARD" || " ${ACTIONS[*]} " != " ui " ]]; then
+  die "build-ios.sh: --only is for the ui action alone, with no --ui-shard"
 fi
 
 [[ "$(uname -s)" == Darwin ]] || die "scripts/build-ios.sh: the iOS build needs macOS (Xcode); this host is $(uname -s)"
@@ -137,13 +158,9 @@ IOS_TARGETS=(aarch64-apple-ios aarch64-apple-ios-sim)
 
 # A flock(2) lock, which the kernel drops when its holder dies, so a killed build leaves no stale lock to take over:
 # the script runs itself again under lockf(1), which holds the lock (its child doesn't inherit the descriptor) until
-# that run ends. BUILD_IOS_LOCK_HELD marks the run under the lock.
-LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/ngterm/build-ios.flock"
-if [[ "${BUILD_IOS_LOCK_HELD:-}" != "$LOCK" ]]; then
-  mkdir -p "$(dirname "$LOCK")"
-  lockf -ks -t 0 "$LOCK" true || echo "build-ios.sh: waiting for the build lock ($LOCK)" >&2
-  BUILD_IOS_LOCK_HELD="$LOCK" exec lockf -k "$LOCK" "$BASH" "$0" ${ARGS[@]+"${ARGS[@]}"}
-fi
+# that run ends. BUILD_IOS_LOCK_HELD marks the run under the lock; under an outer `lockf -k <lock> ...` the script
+# runs on under that hold (take_ios_build_lock, lib/native.sh).
+take_ios_build_lock build-ios.sh "$0" ${ARGS[@]+"${ARGS[@]}"}
 
 # --- 2. the toolchain ------------------------------------------------------------------------------------------------
 
@@ -221,10 +238,38 @@ build_core() {
   xcodebuild -create-xcframework "${xcframework_args[@]}" -output "$STAGING/NgtermCoreFFI.xcframework" >/dev/null
 }
 
+# What step 7 writes into Generated/: the outputs of steps 3 to 6, or a cached core's.
+CORE_XCFRAMEWORK="$STAGING/NgtermCoreFFI.xcframework"
+CORE_BINDINGS="$STAGING/bindings/NgtermCoreBindings.swift"
+
+# Steps 3 to 6, or a core of BUILD_IOS_CORE_CACHE with the same inputs; a core built here goes into the cache.
+cached_core() {
+  local cache="$BUILD_IOS_CORE_CACHE" toolchain key entry
+  [[ "$cache" == /* ]] || die "build-ios.sh: BUILD_IOS_CORE_CACHE=$cache is not an absolute path"
+  toolchain="$(rustc -vV && cargo -V && xcodebuild -version)" || toolchain=""
+  if [[ -z "$toolchain" ]] || ! key="$(ios_core_cache_key "$NATIVE_ROOT" ngterm-mobile "$PROFILE" "$toolchain")"; then
+    echo "build-ios.sh: no key for the core cache (cargo metadata failed): building the core" >&2
+    build_core
+    return
+  fi
+  if entry="$(ios_core_cache_entry "$cache" "$key")"; then
+    echo "build-ios.sh: the core comes from the cache ($key)" >&2
+    CORE_XCFRAMEWORK="$entry/NgtermCoreFFI.xcframework"
+    CORE_BINDINGS="$entry/NgtermCoreBindings.swift"
+    return
+  fi
+  echo "build-ios.sh: no cached core for $key: building it" >&2
+  build_core
+  ios_core_cache_store "$cache" "$key" "$CORE_XCFRAMEWORK" "$CORE_BINDINGS" "${BUILD_IOS_CORE_CACHE_MB:-2048}" \
+    "${BUILD_IOS_CORE_CACHE_MIN_FREE_MB:-8192}"
+}
+
 if ((PREBUILT_CORE)); then
   [[ -d "$CORE_GENERATED/NgtermCoreFFI.xcframework" &&
     -f "$CORE_GENERATED/NgtermCoreBindings/NgtermCoreBindings.swift" ]] ||
     die "build-ios.sh: --prebuilt-core, but $CORE_GENERATED holds no XCFramework and bindings"
+elif [[ -n "${BUILD_IOS_CORE_CACHE:-}" ]]; then
+  cached_core
 else
   build_core
 fi
@@ -239,9 +284,10 @@ sync_dir() {
 }
 
 if ((!PREBUILT_CORE)); then
-  sync_dir "$STAGING/NgtermCoreFFI.xcframework" "$CORE_GENERATED/NgtermCoreFFI.xcframework"
+  sync_dir "$CORE_XCFRAMEWORK" "$CORE_GENERATED/NgtermCoreFFI.xcframework"
+  rm -rf "${STAGING:?}/swift"
   mkdir -p "$STAGING/swift"
-  cp "$STAGING/bindings/NgtermCoreBindings.swift" "$STAGING/swift/"
+  cp "$CORE_BINDINGS" "$STAGING/swift/"
   sync_dir "$STAGING/swift" "$CORE_GENERATED/NgtermCoreBindings"
 fi
 mkdir -p "$STAGING/fixtures"
@@ -380,14 +426,7 @@ run_test_plan() {
   # the profiles of this plan's runs only: each simulator's are in Build/ProfileData/<its UDID>/, and a later run
   # leaves an earlier one's in place
   rm -rf "${BUILD_DIR:?}/$plan.xcresult" "${BUILD_DIR:?}/$plan-"*.xcresult "${DERIVED_DATA:?}/Build/ProfileData"
-  start=$SECONDS
-  echo "build-ios.sh: building the $plan plan" >&2
-  project_xcodebuild build-for-testing "${SIMULATOR_BUILD[@]}" -testPlan "$plan" -quiet || {
-    status=$?
-    echo "build-ios.sh: the $plan plan's build failed" >&2
-    return "$status"
-  }
-  echo "build-ios.sh: the $plan plan built in $((SECONDS - start)) s" >&2
+  build_test_plan "$plan" || return
   for name in "$IOS_SIM_PHONE_NAME" "$IOS_SIM_TABLET_NAME"; do
     case "$DEVICE" in
       phone) [[ "$name" == "$IOS_SIM_PHONE_NAME" ]] || continue ;;
@@ -426,6 +465,28 @@ run_test_plan() {
   return "$status"
 }
 
+# Builds test plan $1 for testing, unless it was built from this tree already: BUILD_IOS_TREE_STAMP, the profile and
+# the Xcode are those of its last build, and that build's test run file is still in the derived data.
+build_test_plan() {
+  local plan="$1" built="$BUILD_DIR/$1.built-tree" stamp="" start status=0
+  [[ -z "${BUILD_IOS_TREE_STAMP:-}" ]] || stamp="$BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-}"
+  if [[ -n "$stamp" && -f "$built" && "$(cat "$built")" == "$stamp" ]] &&
+    compgen -G "$DERIVED_DATA/Build/Products/NgTerm_${plan}_iphonesimulator*.xctestrun" >/dev/null; then
+    echo "build-ios.sh: the $plan plan was built from this tree already (BUILD_IOS_TREE_STAMP): no new build" >&2
+    return 0
+  fi
+  rm -f "$built"
+  start=$SECONDS
+  echo "build-ios.sh: building the $plan plan" >&2
+  project_xcodebuild build-for-testing "${SIMULATOR_BUILD[@]}" -testPlan "$plan" -quiet || {
+    status=$?
+    echo "build-ios.sh: the $plan plan's build failed" >&2
+    return "$status"
+  }
+  echo "build-ios.sh: the $plan plan built in $((SECONDS - start)) s" >&2
+  [[ -z "$stamp" ]] || echo "$stamp" >"$built"
+}
+
 # The UI test classes, in name order: the XCTestCase subclasses of mobile/ios/NgTermUITests.
 ui_test_classes() {
   sed -nE 's/^[a-z ]*class ([A-Za-z0-9_]+): XCTestCase.*/\1/p' "$IOS_DIR"/NgTermUITests/*.swift | LC_ALL=C sort -u
@@ -458,7 +519,8 @@ run_ui_plan() {
   while IFS= read -r option; do
     [[ -z "$option" ]] || shard+=("$option")
   done <<<"$options"
-  run_test_plan UI -retry-tests-on-failure -test-iterations 2 ${shard[@]+"${shard[@]}"} || status=$?
+  run_test_plan UI -retry-tests-on-failure -test-iterations 2 ${shard[@]+"${shard[@]}"} ${ONLY[@]+"${ONLY[@]}"} ||
+    status=$?
   report_retried_tests "$BUILD_DIR/UI.xcresult" "$BUILD_DIR/retried-tests.txt" || status=1
   return "$status"
 }

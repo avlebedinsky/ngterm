@@ -19,3 +19,6 @@ DerivedData/
 
 # Machine-specific values for the sync skills (test machines): private, never committed
 .claude/skills/agterm-upstream-sync/references/machines.local.md
+
+# The Mac of scripts/ios-mac-run.sh (IOS_MAC_HOST=<ssh destination>): private, never committed
+scripts/ios-mac-run.local.env

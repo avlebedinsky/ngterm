@@ -74,6 +74,59 @@ simctl_bounded() {
   bounded "$limit" "$simctl" "$@"
 }
 
+# The iOS build lock: a per-user flock(2) file, so one xcodebuild at a time runs on a Mac (build-ios.sh's header says
+# why). BUILD_IOS_LOCK_HELD names it in the environment of a run that holds it.
+IOS_BUILD_LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/ngterm/build-ios.flock"
+
+# Whether an ancestor of this shell is lockf(1) of the lock file $1 (`lockf [-kns] [-t <seconds>] <file> <command>`):
+# lockf starts its command only once it holds the lock, so the lock is this shell's already.
+lock_held_by_ancestor() {
+  local lock="$1" pid="$PPID" depth=0 command word state
+  while ((pid > 1 && depth < 64)); do
+    command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+    state=""
+    for word in $command; do
+      case "$state" in
+        "") [[ "${word##*/}" != lockf ]] || state=options ;;
+        timeout) state=options ;;
+        options)
+          case "$word" in
+            -t) state=timeout ;;
+            -*) ;;
+            *)
+              [[ "$word" != "$lock" ]] || return 0
+              state=""
+              ;;
+          esac
+          ;;
+      esac
+    done
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')" || return 1
+    [[ -n "$pid" ]] || return 1
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# Takes the iOS build lock for the script $2 (named $1 in messages), run again under lockf(1) with the arguments $3...,
+# unless it is held already: BUILD_IOS_LOCK_HELD names it, or an ancestor lockf holds it (an outer `lockf -k <lock>
+# <script>` whose child would else wait for its own parent for ever). Returns only in the run that holds the lock, with
+# BUILD_IOS_LOCK_HELD exported.
+take_ios_build_lock() {
+  local name="$1" script="$2"
+  shift 2
+  if [[ "${BUILD_IOS_LOCK_HELD:-}" != "$IOS_BUILD_LOCK" ]]; then
+    if lock_held_by_ancestor "$IOS_BUILD_LOCK"; then
+      echo "$name: an outer lockf holds the build lock ($IOS_BUILD_LOCK): this run goes on under its hold" >&2
+    else
+      mkdir -p "$(dirname "$IOS_BUILD_LOCK")"
+      lockf -ks -t 0 "$IOS_BUILD_LOCK" true || echo "$name: waiting for the build lock ($IOS_BUILD_LOCK)" >&2
+      BUILD_IOS_LOCK_HELD="$IOS_BUILD_LOCK" exec lockf -k "$IOS_BUILD_LOCK" "$BASH" "$script" "$@"
+    fi
+  fi
+  export BUILD_IOS_LOCK_HELD="$IOS_BUILD_LOCK"
+}
+
 # The host OS as Zig and ziglang.org's archives name it: linux, macos or windows (Git Bash, MSYS2, Cygwin).
 host_os() {
   case "$(uname -s)" in

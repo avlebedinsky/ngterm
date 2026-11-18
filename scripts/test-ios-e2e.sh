@@ -76,13 +76,7 @@ fi
 
 # The build lock, as build-ios.sh takes it (its header says why); build-ios.sh, run below with BUILD_IOS_LOCK_HELD
 # set, then runs under this run's hold.
-LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/ngterm/build-ios.flock"
-if [[ "${BUILD_IOS_LOCK_HELD:-}" != "$LOCK" ]]; then
-  mkdir -p "$(dirname "$LOCK")"
-  lockf -ks -t 0 "$LOCK" true || echo "test-ios-e2e.sh: waiting for the build lock ($LOCK)" >&2
-  BUILD_IOS_LOCK_HELD="$LOCK" exec lockf -k "$LOCK" "$BASH" "$0" ${ARGS[@]+"${ARGS[@]}"}
-fi
-export BUILD_IOS_LOCK_HELD
+take_ios_build_lock test-ios-e2e.sh "$0" ${ARGS[@]+"${ARGS[@]}"}
 
 cd "$NATIVE_ROOT"
 SSHD=/usr/sbin/sshd

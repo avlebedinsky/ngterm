@@ -1133,6 +1133,7 @@ scripts/build-ios.sh [--profile release|debug] [--no-xcode] [lint|build|test|cov
 scripts/build-ios.sh lint test    # the lint gate, then the Unit and UI test plans on both simulators, as CI checks them
 scripts/build-ios.sh coverage     # the Unit plan alone, its line coverage summary and floor check, as test measures it
 scripts/build-ios.sh --device tablet --ui-shard 1/2 ui   # the UI plan alone: one simulator, a share of its classes
+scripts/build-ios.sh --device phone --only LogsTests ui   # only these UI tests (a class or Class/method; repeat --only)
 eval "$(scripts/setup-ios.sh --check)"   # then, after test or coverage, a source file's lines no Unit test ran:
 scripts/ios-coverage.py uncovered mobile/ios/Packages/NgtermCore/Sources/NgtermCore/CoreInfo.swift
 scripts/build-ios.sh archive      # a Release archive for devices (unsigned without the release secrets), checked
@@ -1183,6 +1184,56 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   `TEST_RUNNER_SNAPSHOT_TESTING_RECORD=failed scripts/build-ios.sh test` (that run fails too), check the new images
   and run `test` again. A failed snapshot's image is in `mobile/ios/build/snapshot-failures/`, its diff in the
   result bundle.
+
+### The shared Mac
+
+`scripts/ios-mac-run.sh` runs one command for the iOS app on a Mac from a Linux host. Use it for all iOS work on a
+Mac that other people or agents also use. Its header has the full contract. A run does these steps:
+
+1. It copies the whole working tree (uncommitted changes and untracked files that git does not ignore) into a
+   scratch directory of the run's name on the Mac, `~/.cache/ngterm/run/<name>/tree`. The default name is the
+   branch. Build output in the scratch stays, so the next run of that name builds only what changed.
+2. It compares a checksum of each file on the two sides. It copies a file that differs again, and it stops when the
+   trees still differ. Thus the Mac never tests a tree that is not yours.
+3. It waits for the iOS build lock. Then it runs the command under that lock, with `BUILD_IOS_LOCK_HELD` set, so
+   `build-ios.sh` and `test-ios-e2e.sh` take no second lock. Do not put a `lockf` around them yourself.
+4. It runs the command for at most `--timeout` seconds (default 2 hours). After that time it stops the command's
+   whole process group. The lock wait has its own limit, `--queue-timeout` (default 3 hours).
+5. It shows the command's output while the command runs. It copies the log, and each `--fetch` path, into
+   `target/ios-mac-run/<name>/`. Its exit status is the command's: 124 when the time ran out, 75 when the lock wait
+   ran out, 1 when the runner failed (its messages start with `ios-mac-run.sh:`), 2 for a usage error.
+
+The run continues on the Mac when the ssh connection or the runner stops. `wait` waits for it again, and `cancel`
+stops it. The command gets two values that make a queue turn short:
+
+- `BUILD_IOS_TREE_STAMP`, the checksum of the tree. `build-ios.sh` builds a test plan once for each tree. The run
+  on the second simulator and a repeat run with no change only test that build (`test-without-building`).
+- `BUILD_IOS_CORE_CACHE`, a cache of prebuilt Rust cores on the Mac (`scripts/lib/ios-core-cache.sh`). The key
+  covers the inputs of the core: the files of the local crates that `ngterm-mobile` builds from, the lock file, the
+  pins, the build scripts, the profile and the toolchain versions. Thus all workers with the same core inputs use
+  one build of the core. The cache keeps to 2 GiB and removes the core that was not used for the longest time. It
+  stores no core when less than 8 GiB of the disk would stay free.
+
+```sh
+scripts/ios-mac-run.sh run -- scripts/build-ios.sh --device phone --only LogsTests ui   # one UI test class
+scripts/ios-mac-run.sh run -- scripts/build-ios.sh coverage   # the full coverage plan: one time for each task
+scripts/ios-mac-run.sh run --fetch mobile/ios/build/UI.xcresult -- scripts/build-ios.sh ui   # and its result bundle
+scripts/ios-mac-run.sh wait      # wait again for the last run of this branch; cancel stops it
+scripts/ios-mac-run.sh list      # the Mac's scratch directories, the core cache and the free disk
+scripts/ios-mac-run.sh clean     # remove this branch's scratch when its Mac work is done (or add --clean to a run)
+```
+
+- The Mac is the ssh destination in `IOS_MAC_HOST`. Alternatively, write the line `IOS_MAC_HOST=<destination>` in
+  `scripts/ios-mac-run.local.env` in the main checkout. Git ignores that file. Do not write the destination in a
+  tracked file.
+- Run the full coverage plan (`coverage`, or `test`) one time for each task. A fix round runs only the tests that
+  are related to the fix: `--only <Class>` for UI tests.
+- `test-ios-e2e.sh` puts its control socket below the scratch, and a socket path has a length limit. If it says
+  that the path is too long, give the run a shorter `--name`.
+- A scratch directory with its build output takes some GB. Remove yours when the task's Mac work is done. The
+  runner does not start when the Mac has less than `IOS_MAC_MIN_FREE_GB` (default 8) GB free.
+- `scripts/test-ios-mac-run.sh` tests the runner, the build lock and the core cache on Linux against a local
+  stand-in Mac. `scripts/lint.sh` runs it.
 
 ## Windows
 

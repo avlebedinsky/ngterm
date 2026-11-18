@@ -4,8 +4,8 @@
 # - actionlint over .github/workflows/ (settings: .github/actionlint.yaml), with the pinned shellcheck checking every
 #   `run:` block;
 # - shellcheck over scripts/*.sh, scripts/lib/*.sh and the Git hooks in .githooks/ (settings: .shellcheckrc);
-# - the self-test of every scripts/*.py that has one (`--self-test`), and the pre-commit hook's test (it needs cargo and
-#   rustfmt).
+# - the self-test of every scripts/*.py that has one (`--self-test`), the pre-commit hook's test (it needs cargo and
+#   rustfmt) and the Mac runner's test (scripts/test-ios-mac-run.sh: rsync, flock, perl and cargo).
 #
 # Both are the versions packaging/release/pins.env pins: each release archive is downloaded once into the vendor root
 # and unpacked only after its sha256 matches (scripts/lib/fetch-tool.sh). Runs on Linux, x86_64 or aarch64.
@@ -53,4 +53,6 @@ for script in scripts/*.py; do
 done
 echo "test: .githooks/pre-commit"
 scripts/test-pre-commit-hook.sh || status=1
+echo "test: scripts/ios-mac-run.sh"
+scripts/test-ios-mac-run.sh || status=1
 exit "$status"
