@@ -8,14 +8,18 @@ Kitty encodings (Ghostty's key encoder, upstream's too). On Windows the pseudoco
 program: it reads the pane's bytes and gives the program console key events (`ReadConsoleInputW`, the form `console`),
 and its input parser drops the Kitty and `modifyOtherKeys` encodings, so there a pane always sends the legacy ones
 (`PaneConfig::legacy_keys`). The Mac's Option is a text key by default (Ghostty's `macos-option-as-alt`), so Alt+V
-is not pressed there. The command line is the probe's words alone, unquoted, as `kitty_clipboard.probe_command`'s."""
+is not pressed there. The command line is the probe's words alone, unquoted, as `kitty_clipboard.probe_command`'s.
+
+The same keys reach the probe in a session that a viewer attached from a POSIX origin (`remote_origin`, the staged
+`ngterm-headless`): the viewer sends the Kitty encodings there too."""
 
 import os
 import re
 import sys
 
 import pytest
-from agterm_conformance.match import assert_ok
+from agterm_conformance.match import assert_ok, find_session
+from agterm_conformance.plugin import Ctl
 
 WINDOWS = sys.platform == "win32"
 CHORDS = ("escape", "shift+tab", "ctrl+c") + (() if sys.platform == "darwin" else ("alt+v",))
@@ -101,3 +105,39 @@ def test_keys_reach_a_program_that_pushed_the_kitty_keyboard_flags(ctl, ui, tmp_
         assert forms == dict.fromkeys(CHORDS, expected), assert_ok(ctl.request("session.text", sid, all=True))["text"]
     finally:
         ctl.request("session.close", sid)
+
+
+@pytest.mark.requires(
+    "posix-command-line",
+    reason="the remote origin's sshd is POSIX only, and a Windows viewer runs a remote pane through viewer-run",
+)
+@pytest.mark.requires("live-any-shell", reason="the origin's session must be Live in any login shell")
+@pytest.mark.parametrize("remote_origin", ["headless"], indirect=True)
+@pytest.mark.covers("behavior:pane.typing")
+def test_keys_reach_a_program_in_a_session_attached_from_a_posix_origin(remote_origin, remote_viewer, ui_for):
+    """A viewer of a POSIX origin sends the Kitty encodings the program asked for: only a Windows origin's
+    pseudoconsole needs the legacy ones."""
+    origin = Ctl(remote_origin.instance)
+    probe = remote_origin.instance.home / "keys_probe.py"
+    probe.write_text(PROBE, encoding="utf-8")
+    words = [sys.executable, "-I", os.fspath(probe)]
+    if any(" " in word for word in words):
+        pytest.fail(f"the probe's words go unquoted to every pane shell, so none may hold a space: {words}")
+    sid = assert_ok(origin.request("session.new", command=" ".join(words)))["id"]
+    origin.wait_mounted(sid, "left")
+    local = None
+    try:
+        origin.wait_text(sid, "keys-ready")
+        local = assert_ok(remote_viewer.request("live.attach", sid, host=remote_origin.host))["id"]
+        remote_viewer.wait_tree(lambda tree: find_session(tree, local).get("realized"))
+        remote_viewer.wait_text(local, "keys-ready")
+        ui = ui_for(remote_viewer)
+        forms = {}
+        for chord in CHORDS:
+            ui.press(chord)
+            forms[chord] = origin.wait_text(sid, rf"key {re.escape(chord)} (\w+)")[1]
+        assert forms == dict.fromkeys(CHORDS, "kitty"), assert_ok(origin.request("session.text", sid, all=True))["text"]
+    finally:
+        if local is not None:
+            remote_viewer.request("session.close", local)
+        origin.request("session.close", sid)
