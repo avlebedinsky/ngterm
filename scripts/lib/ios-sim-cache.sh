@@ -2,7 +2,7 @@
 # A size bound on the wallpaper cache of the pinned iOS simulators, for scripts/build-ios.sh. Sourced after
 # lib/native.sh, not run. Portable shell (stock macOS's bash 3.2, Linux's bash), as lib/native.sh is.
 #
-# PosterBoard on the iOS 27 simulator writes a snapshot of each system wallpaper at each boot, about 350 MB, into
+# PosterBoard on the iOS 27 simulator writes a snapshot of each system wallpaper at each boot, up to about 350 MB, into
 # SnapshotCache.cachedb dirs below the device's PRBPosterExtensionDataStore, and never removes the old ones. Many
 # short test runs (many boots) thus filled a shared Mac's disk: about 46 GB on the two pinned simulators in 3 days.
 # PosterBoard makes these caches again when they are gone.

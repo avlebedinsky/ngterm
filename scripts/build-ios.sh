@@ -407,9 +407,9 @@ quiet_keyboard_introduction() {
 }
 
 # Keeps the wallpaper cache of the pinned simulator $1 to BUILD_IOS_SIM_CACHE_MB MiB while it is shut down
-# (lib/ios-sim-cache.sh). Each boot adds about 350 MB, so the default of 1024 removes it about every third boot, and
-# the two simulators keep less than 3 GB of it. PosterBoard writes it again at each boot, so a removal costs no boot
-# time. A failure here only warns: the run goes on.
+# (lib/ios-sim-cache.sh). Each boot adds up to about 350 MB, so with the default of 1024 the two simulators keep less
+# than 3 GB of it. PosterBoard writes it again at each boot: a boot after a removal took 11 s on the shared Mac. A
+# failure here only warns: the run goes on.
 bound_wallpaper_cache() {
   local devices
   if ! devices="$(simctl_bounded "$SIMCTL_SECONDS" list -j devices)" ||

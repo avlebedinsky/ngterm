@@ -1186,7 +1186,7 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   build beside a simulator that has just booted. It prints how long the build and each run took. A plan whose build
   fails boots no simulator and counts no tests. Before a simulator boots, a wallpaper cache over
   `BUILD_IOS_SIM_CACHE_MB` (default 1024) is removed while that simulator is shut down (`scripts/lib/ios-sim-cache.sh`):
-  the iOS 27 simulator adds about 350 MB of it at each boot and never removes it. The UI
+  the iOS 27 simulator adds up to about 350 MB of it at each boot and never removes it. The UI
   tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI
   test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
   terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry
