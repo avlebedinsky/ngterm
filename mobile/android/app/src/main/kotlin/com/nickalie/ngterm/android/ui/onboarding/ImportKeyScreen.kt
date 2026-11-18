@@ -31,6 +31,7 @@ import com.nickalie.ngterm.android.R
 import com.nickalie.ngterm.android.data.readAtMost
 import com.nickalie.ngterm.android.ui.components.ScreenExit
 import com.nickalie.ngterm.android.ui.components.ScreenFrame
+import com.nickalie.ngterm.android.ui.components.notAutofilled
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import java.io.IOException
 
@@ -84,7 +85,7 @@ fun ImportKeyScreen(
             supportingText = keyFieldNote(keyProblem, fileChosen = chosen.bytes != null),
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.notAutofilled().fillMaxWidth(),
         )
         TextButton(onClick = chooseFile, enabled = !busy) {
             Text(stringResource(R.string.import_choose_file))
@@ -212,7 +213,7 @@ private fun PassphraseField(
             }
         },
         enabled = enabled,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.notAutofilled().fillMaxWidth(),
     )
 }
 

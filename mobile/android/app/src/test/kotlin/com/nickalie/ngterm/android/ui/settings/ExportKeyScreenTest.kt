@@ -5,7 +5,11 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.autofill.ContentDataType
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
@@ -80,6 +84,16 @@ class ExportKeyScreenTest {
             .assertIsDisplayed()
         val flags = compose.activity.window.attributes.flags
         assertTrue(flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+    }
+
+    @Test
+    fun thePassphrasesAreNotAutofilledSoNoServiceOffersToSaveThem() {
+        show()
+        val notAutofilled = SemanticsMatcher.expectValue(SemanticsProperties.ContentDataType, ContentDataType.None)
+        for (label in listOf("Passphrase", "Passphrase again")) {
+            field(label).performScrollTo().assert(notAutofilled)
+            field(label).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
+        }
     }
 
     @Test

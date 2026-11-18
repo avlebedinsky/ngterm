@@ -28,6 +28,7 @@ import com.nickalie.ngterm.android.ui.components.ConfirmDialog
 import com.nickalie.ngterm.android.ui.components.KeyPlate
 import com.nickalie.ngterm.android.ui.components.ScreenExit
 import com.nickalie.ngterm.android.ui.components.ScreenFrame
+import com.nickalie.ngterm.android.ui.components.notAutofilled
 import com.nickalie.ngterm.android.ui.onboarding.BusyButton
 import com.nickalie.ngterm.android.ui.onboarding.Problem
 import com.nickalie.ngterm.android.ui.onboarding.SecureWindow
@@ -212,7 +213,7 @@ private fun SecretField(
                 }
             },
         enabled = enabled,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.notAutofilled().fillMaxWidth(),
     )
 }
 

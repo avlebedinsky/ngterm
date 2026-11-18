@@ -264,7 +264,8 @@ reading, not a poster), the mark on top of the welcome.
 - **Import:** the private key pasted into a mono field or read from a chosen file, and the passphrase (hidden, with a
   Show toggle). What went wrong shows under the field it is about: no passphrase or the wrong one under the
   passphrase, anything else under the key, and the text stays for another try. The key's text lives in memory only,
-  never in saved state.
+  never in saved state. The key and passphrase fields, and the export's passphrases, are not autofillable
+  (`notAutofilled`), so no autofill service fills them or offers to save them as a password.
 - **Public key:** the three steps, numbered because they are a sequence; the `authorized_keys` line on a `KeyPlate`
   with Copy and Share; its fingerprint; the one command that appends it, with Copy; Done. The machine form opens the
   same screen with Back.

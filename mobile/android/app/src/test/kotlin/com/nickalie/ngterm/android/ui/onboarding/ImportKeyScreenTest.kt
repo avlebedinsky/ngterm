@@ -14,6 +14,7 @@ import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.autofill.ContentDataType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -134,6 +135,15 @@ class ImportKeyScreenTest {
         compose.onNodeWithText("Choose file").assertIsNotEnabled()
         compose.onNodeWithText("Import key").performScrollTo().performClick()
         assertEquals(1, imports.size)
+    }
+
+    @Test
+    fun theKeyAndItsPassphraseAreNotAutofilledSoNoServiceOffersToSaveThem() {
+        show()
+        val notAutofilled = SemanticsMatcher.expectValue(SemanticsProperties.ContentDataType, ContentDataType.None)
+        field("Private key").assert(notAutofilled)
+        field("Passphrase").performScrollTo().assert(notAutofilled)
+        field("Passphrase").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
     }
 
     @Test
