@@ -72,6 +72,10 @@ pub const CASES: &[(&str, Case)] = &[
         crate::text::narrow_bar,
     ),
     (
+        "text_page_search_leaves_no_trace_of_an_earlier_match_on_escaped_text",
+        crate::text::search_leaves_no_trace,
+    ),
+    (
         "a_clicked_document_loads_nothing_from_the_network_behind_its_filter",
         crate::document::silent,
     ),

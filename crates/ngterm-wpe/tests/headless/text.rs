@@ -1,7 +1,7 @@
 //! The shipped text page renderer (upstream's `TextPageRenderingTests`) in a real isolated `WebKit` world, with
-//! authored scripts disabled: highlight.js and `text.js` over the document `ngterm_core::html::text_page::html`
-//! builds, worn with the stylesheet the app gives it (`page.css` with `text.css` and ngterm's `text-narrow.css` over
-//! it).
+//! authored scripts disabled: highlight.js, ngterm's `text-repaint.js` and `text.js` over the document
+//! `ngterm_core::html::text_page::html` builds, worn with the stylesheet the app gives it (`page.css` with `text.css`
+//! and ngterm's `text-narrow.css` over it).
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -29,10 +29,12 @@ const PROBE: &str = "document.addEventListener('securitypolicyviolation', e => {
   document.documentElement.dataset.blocked = (document.documentElement.dataset.blocked || '') + e.blockedURI + ' ';
 });";
 
-/// The renderer the app injects for a text page (`documents::text_script`).
+/// The renderer the app injects for a text page (`documents::text_script`), with ngterm's `text-repaint.js` before
+/// `text.js`.
 fn script() -> String {
     [
         include_str!("../../../../resources/markdown/highlight-11.11.1.min.js"),
+        include_str!("../../../../resources/html/text-repaint.js"),
         include_str!("../../../../resources/markdown/text.js"),
     ]
     .join(";\n")
@@ -428,6 +430,92 @@ pub fn narrow_bar(h: &Harness, _: &Context) -> Outcome {
         let expected = format!("{label}|true|true|true|true");
         ensure(fits == expected, || {
             format!("{width}px, following {following}{note}: {fits:?}, not {expected:?}")
+        })?;
+        h.host.close_view(view);
+        h.forget(view);
+    }
+    Ok(())
+}
+
+/// Upstream's escape text (`agents.log` in `TextPageRenderingTests`): SGR colors, and other sequences dropped
+/// between the characters a search finds.
+const ESCAPED: &str = concat!(
+    "\x1b[36mbugs+impl\x1b[39m started\n\x1b[1;38;5;196mfail\x1b[22m red\x1b[0m \x1b(B\x1b[2Kplain\n",
+    "\x1b[1;38:2::0:128:0mgreen\x1b[0m\n",
+    "\x1b[32mok\x1b[>4;1m still\x1b[0m \x1b_Gf=1;AA\x1b\\x\x1bPtmux;\x1b\x1b[31mhidden\x1b\\y",
+    "\x1bPtmux;\x1b\x1b]8;;http://x\x1b\x1b\\label\x1b\x1b]8;;\x1b\x1b\\\x1b\\\nend\x1bP1+r6b",
+);
+/// The same shown text with SGR colors only.
+const SGR_ONLY: &str = concat!(
+    "\x1b[36mbugs+impl\x1b[39m started\n\x1b[1;38;5;196mfail\x1b[22m red\x1b[0m plain\n\x1b[32mgreen\x1b[0m\n",
+    "\x1b[33mok still\x1b[0m xy\nend",
+);
+/// `::highlight(ngterm-current)` with no theme palette (`text.css`).
+const CURRENT: (u8, u8, u8) = (0xd9, 0xb4, 0x5a);
+
+/// The pixels the first `word` in the page's text covers, as `[left, top, right, bottom]`, rounded outward.
+fn word_rect(h: &Harness, view: ViewId, word: &str) -> Result<[u32; 4], String> {
+    let script = format!(
+        "(() => {{
+          const code = document.querySelector('pre code');
+          const begin = code.textContent.indexOf({word}), end = begin + {word}.length;
+          const range = document.createRange();
+          const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+          let at = 0;
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {{
+            if (begin >= at && begin < at + node.data.length) range.setStart(node, begin - at);
+            if (end > at && end <= at + node.data.length) range.setEnd(node, end - at);
+            at += node.data.length;
+          }}
+          const rect = range.getBoundingClientRect();
+          return JSON.stringify([Math.floor(rect.left), Math.floor(rect.top), Math.ceil(rect.right), Math.ceil(rect.bottom)]);
+        }})()",
+        word = json(word)?
+    );
+    serde_json::from_str(&reading(h, view, &script, None)?).map_err(|error| error.to_string())
+}
+
+/// The line gap above `rect`, where `WebKit` paints a highlight down from the line before: four rows at its middle.
+fn gap(rect: [u32; 4]) -> Vec<(u32, u32)> {
+    let x = u32::midpoint(rect[0], rect[2]);
+    (rect[1] - 4..rect[1]).map(|y| (x, y)).collect()
+}
+
+/// A search that moves on leaves no color of its earlier match: on text that escape sequences split into many text
+/// nodes, `WebKit` repaints only the text boxes of a changed highlight, so ngterm's `text-repaint.js` repaints the
+/// text block (a fix over upstream). The page searches "impl started", "plain", "xy" and "end" in turn, each step's
+/// current match drawn; then the line gaps above "plain" and "xy" show what they showed before the first search.
+pub fn search_leaves_no_trace(h: &Harness, _: &Context) -> Outcome {
+    for (name, text) in [("escape text", ESCAPED), ("SGR text", SGR_ONLY)] {
+        let view = view_of(h, 400, Vec::new(), Vec::new());
+        h.load(view, document(text, None, None))?;
+        let gaps: Vec<_> = [word_rect(h, view, "plain")?, word_rect(h, view, "xy")?]
+            .into_iter()
+            .flat_map(gap)
+            .collect();
+        let (x, y) = gaps[0];
+        h.showing(view, x, y, (0xff, 0xff, 0xff))?;
+        let before = gaps
+            .iter()
+            .map(|&(x, y)| h.shown(view, x, y))
+            .collect::<Result<Vec<_>, _>>()?;
+        for (revision, query) in ["impl started", "plain", "xy", "end"].into_iter().enumerate() {
+            h.evaluate(
+                view,
+                &format!("ngtermTextSearchSet({}, {}, false); null", json(query)?, revision + 1),
+                Some(WORLD),
+            )?;
+            let rect = word_rect(h, view, query)?;
+            h.showing(view, rect[0] + 1, rect[1] + 2, CURRENT)
+                .map_err(|err| format!("{name}, {query:?} as the current match: {err}"))?;
+        }
+        h.idle(Duration::from_millis(300), |_| None)?;
+        let after = gaps
+            .iter()
+            .map(|&(x, y)| h.shown(view, x, y))
+            .collect::<Result<Vec<_>, _>>()?;
+        ensure(after == before, || {
+            format!("{name}: the gaps above \"plain\" and \"xy\" at {gaps:?} show {after:02x?}, not {before:02x?}")
         })?;
         h.host.close_view(view);
         h.forget(view);

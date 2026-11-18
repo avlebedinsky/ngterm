@@ -36,6 +36,8 @@ pub struct Harness {
     pages: RefCell<HashMap<ViewId, PageState>>,
     /// Each page's latest frame.
     frames: RefCell<HashMap<ViewId, Frame>>,
+    /// What each SHM page shows: its frames' damaged regions laid over one another, as a consumer keeps them.
+    canvases: RefCell<HashMap<ViewId, Canvas>>,
     /// Events that arrived while a script ran, kept for the next wait.
     pending: RefCell<VecDeque<Event>>,
 }
@@ -67,6 +69,7 @@ impl Harness {
             shm,
             pages: RefCell::default(),
             frames: RefCell::default(),
+            canvases: RefCell::default(),
             pending: RefCell::default(),
         })
     }
@@ -89,6 +92,11 @@ impl Harness {
             }
             Event::Frame(frame) => {
                 self.frames.borrow_mut().insert(frame.view, frame.clone());
+                if let FrameContent::Shm(regions) = &frame.content {
+                    let mut canvases = self.canvases.borrow_mut();
+                    let canvas = canvases.entry(frame.view).or_default();
+                    canvas.paint(frame.width, frame.height, regions);
+                }
             }
             _ => {}
         }
@@ -99,6 +107,7 @@ impl Harness {
     pub fn forget(&self, view: ViewId) {
         self.pages.borrow_mut().remove(&view);
         self.frames.borrow_mut().remove(&view);
+        self.canvases.borrow_mut().remove(&view);
         self.pending
             .borrow_mut()
             .retain(|event| !matches!(event, Event::Frame(frame) if frame.view == view));
@@ -345,8 +354,74 @@ impl Harness {
         }
     }
 
+    /// The color `view` shows at (`x`, `y`): its SHM frames laid over one another, or its latest dmabuf.
+    pub fn shown(&self, view: ViewId, x: u32, y: u32) -> Result<(u8, u8, u8), String> {
+        if let Some(canvas) = self.canvases.borrow().get(&view) {
+            return canvas.pixel(x, y);
+        }
+        let frames = self.frames.borrow();
+        let frame = frames.get(&view).ok_or("the page drew no frame")?;
+        Self::pixel(frame, x, y)
+    }
+
+    /// Waits until `view` shows `color` at (`x`, `y`) ([`Harness::shown`]), presenting every frame on the way.
+    pub fn showing(&self, view: ViewId, x: u32, y: u32, color: (u8, u8, u8)) -> Outcome {
+        if self.shown(view, x, y).as_ref() == Ok(&color) {
+            return Ok(());
+        }
+        self.wait_for(&format!("the page showing {color:02x?} at ({x}, {y})"), |event| {
+            let Event::Frame(frame) = event else { return None };
+            self.host.frame_presented(frame.view, frame.buffer);
+            (frame.view == view && self.shown(view, x, y).as_ref() == Ok(&color)).then_some(())
+        })
+        .map_err(|err| format!("{err} (it shows {:02x?})", self.shown(view, x, y)))
+    }
+
     pub fn shutdown(self) {
         self.host.shutdown();
+    }
+}
+
+/// A page's picture built from SHM frames, each of which carries only what changed.
+#[derive(Default)]
+struct Canvas {
+    width: u32,
+    height: u32,
+    rgb: Vec<u8>,
+}
+
+impl Canvas {
+    fn paint(&mut self, width: u32, height: u32, regions: &[ngterm_wpe::ShmRegion]) {
+        if (width, height) != (self.width, self.height) {
+            *self = Self {
+                width,
+                height,
+                rgb: vec![0; (width * height * 3) as usize],
+            };
+        }
+        for region in regions {
+            let rect = region.rect;
+            for row in 0..rect.height.min(height.saturating_sub(rect.y)) {
+                let from = (row * rect.width * 4) as usize;
+                let to = (((rect.y + row) * width + rect.x) * 3) as usize;
+                let columns = rect.width.min(width.saturating_sub(rect.x)) as usize;
+                let Some(source) = region.pixels.get(from..from + columns * 4) else {
+                    continue;
+                };
+                let target = &mut self.rgb[to..to + columns * 3];
+                for (rgb, bgra) in target.as_chunks_mut::<3>().0.iter_mut().zip(source.as_chunks::<4>().0) {
+                    *rgb = [bgra[2], bgra[1], bgra[0]];
+                }
+            }
+        }
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> Result<(u8, u8, u8), String> {
+        if x >= self.width || y >= self.height {
+            return Err("the pixel lies outside the page".to_owned());
+        }
+        let at = ((y * self.width + x) * 3) as usize;
+        Ok((self.rgb[at], self.rgb[at + 1], self.rgb[at + 2]))
     }
 }
 

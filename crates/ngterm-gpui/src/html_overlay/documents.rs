@@ -17,6 +17,9 @@ const TEXT: &str = include_str!("../../../../resources/markdown/text.js");
 const TEXT_STYLE: &str = include_str!("../../../../resources/markdown/text.css");
 /// ngterm's narrow-page rules over `text.css` (a fix over upstream, kept out of the vendored copy).
 const TEXT_NARROW_STYLE: &str = include_str!("../../../../resources/html/text-narrow.css");
+/// ngterm's repaint of the text block after a search highlight changes (a fix over upstream, kept out of the vendored
+/// copy).
+const TEXT_REPAINT: &str = include_str!("../../../../resources/html/text-repaint.js");
 
 /// The Markdown renderer: markdown-it, highlight.js and `render.js`.
 pub(super) fn script() -> String {
@@ -30,10 +33,15 @@ pub(super) fn script() -> String {
 /// report: the wrapper reads it before `text.js` takes the source element away, and once `text.js` ran and posted its
 /// own `{ready}`, posts `{ready, load}`, the report a log page's follower takes, so an older document's late report
 /// cannot release a newer build (a fix over upstream).
+///
+/// ngterm's `text-repaint.js` runs before `text.js`: `WebKit` leaves a strip of an earlier search match in the line gap
+/// when escape sequences split the text into many text nodes, and the script repaints the text block after each
+/// highlight change (a fix over upstream).
 pub(super) fn text_script() -> String {
     let handler = super::text_page::HANDLER;
     format!(
-        "{HIGHLIGHT};\n(() => {{ const load = Number(document.getElementById('ngterm-text')?.dataset.load);\n{TEXT};\n\
+        "{HIGHLIGHT};\n{TEXT_REPAINT};\n\
+         (() => {{ const load = Number(document.getElementById('ngterm-text')?.dataset.load);\n{TEXT};\n\
          if (Number.isSafeInteger(load)) {{ try {{ window.webkit.messageHandlers.{handler}.postMessage({{ ready: true, \
          load }}); }} catch (_) {{}} }} }})();"
     )
@@ -203,6 +211,12 @@ mod tests {
         };
         assert_eq!(browser_refusal(&source), Some(errors::TEXT_IN_OVERLAY));
         assert_eq!(renderer(&source), Some(text_script()));
+        let script = text_script();
+        let repaint = script.find(TEXT_REPAINT).expect("the repaint fix");
+        assert!(
+            repaint < script.find(TEXT).expect("text.js"),
+            "the fix patches Highlight before text.js runs"
+        );
         let style = text_style();
         assert!(style.contains(STYLE) && style.contains(TEXT_STYLE) && style.ends_with(TEXT_NARROW_STYLE));
     }
