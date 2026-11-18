@@ -18,9 +18,9 @@ another computer or your phone.
 
 ## What you get
 
-**See who needs you.** Claude Code, Codex, Pi, Oh My Pi and OpenCode report their status, right on
-their row in the sidebar. Jump straight to whatever needs attention, or watch several sessions at once in the
-dashboard.
+**See who needs you.** Claude Code, Codex, Pi, Oh My Pi and OpenCode report whether they are working, blocked or
+done, right on their row in the sidebar. Jump straight to whatever needs attention, or watch several sessions at once
+in the dashboard.
 
 **Sessions that outlive the app.** With Live sessions on, you can quit, update or relaunch ngterm while your programs
 keep running, an agent in the middle of a task included. The next launch brings them back exactly as they were. Works
