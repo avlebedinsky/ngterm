@@ -53,15 +53,15 @@ def _presented(tree, sid):
     return True
 
 
-def _ask_from_the_pane(remote_origin, origin, sid, home):
-    """`ngtermctl ask` typed into the session's pane, aimed at its own session as an agent there aims it: its answer
-    goes to a file in the origin's home."""
+def _ask_from_the_pane(remote_origin, origin, sid, home, style="terminal", pane=None):
+    """`ngtermctl ask` typed into the session's pane (`pane`: `right` for its split), aimed at its own session as an
+    agent there aims it: its answer goes to a file in the origin's home."""
     (home / ANSWER_FILE).unlink(missing_ok=True)
     command = (
-        f"{remote_origin.adapter.ctl_name} ask {shlex.quote('Proceed?')} --button yes --button no "
+        f"{remote_origin.adapter.ctl_name} ask {shlex.quote('Proceed?')} --button yes --button no --style {style} "
         f'--target "${origin.instance.variable("SESSION_ID")}" > {shlex.quote(ANSWER_FILE)} 2>&1\n'
     )
-    assert_ok(origin.request("session.type", sid, text=command))
+    assert_ok(origin.request("session.type", sid, text=command, **({"pane": pane} if pane else {})))
 
     def opened(tree):
         ask = find_session(tree, sid).get("ask")
@@ -113,6 +113,50 @@ def test_an_ask_from_an_attached_pane_shows_on_the_viewer(remote_origin, remote_
         assert "remote" not in ask, f"a desktop origin that leads draws the ask itself: {ask}"
     assert_ok(origin.request("ask.cancel", ask["id"]))
     assert _answer(home) == {"result": "cancelled"}
+
+    assert_ok(remote_viewer.request("session.close", local))
+    assert_ok(origin.request("session.close", sid))
+
+
+@pytest.mark.parametrize(
+    ("remote_origin", "style"),
+    [("instance", "terminal"), ("headless", "terminal"), ("headless", "gui")],
+    indirect=["remote_origin"],
+)
+@pytest.mark.covers("ask.open", "ask.cancel", "session.split", "field:tree.session.ask")
+def test_an_ask_from_an_attached_pane_while_a_new_split_on_the_origin_leads(remote_origin, remote_viewer, style):
+    """A split made on the origin leads there while the first pane follows the viewer. A headless origin still hands
+    the ask over, a terminal or a GUI one, from either pane; a desktop origin keeps it, since the session's panes do
+    not all follow (upstream rule)."""
+    origin = Ctl(remote_origin.instance)
+    home = remote_origin.instance.home
+    before = set(session_ids(origin.tree()))
+    sid = _origin_session(origin)
+    assert_ok(origin.request("session.select", sorted(before)[0]))
+    local = _attach(remote_viewer, remote_origin.host, sid)
+    origin.wait_tree(lambda tree: _presented(tree, sid))
+    origin.wait_tree(_lead(sid, "follower"))
+    assert_ok(origin.request("session.split", sid, mode="on"))
+    origin.wait_mounted(sid, "left", "right")
+
+    def split_leads(tree):
+        roles = {surface["kind"]: surface.get("lead") for surface in find_session(tree, sid)["surfaces"]}
+        assert roles == {"left": "follower", "right": "leader"}, roles
+        return True
+
+    origin.wait_tree(split_leads)
+    for pane in ("left", "right"):
+        ask = _ask_from_the_pane(remote_origin, origin, sid, home, style=style, pane=pane)
+        if remote_origin.kind == "headless":
+            assert ask.get("remote") is True, f"a headless origin keeps the ask from the {pane} pane: {ask}"
+            remote_viewer.wait_tree(
+                lambda tree, ask=ask: find_session(tree, local).get("ask") == {"id": ask["id"], "replica": True}
+            )
+        else:
+            assert "remote" not in ask, f"a desktop origin with a leading split draws the ask itself: {ask}"
+        assert_ok(origin.request("ask.cancel", ask["id"]))
+        assert _answer(home) == {"result": "cancelled"}
+        remote_viewer.wait_tree(lambda tree: "ask" not in find_session(tree, local))
 
     assert_ok(remote_viewer.request("session.close", local))
     assert_ok(origin.request("session.close", sid))
