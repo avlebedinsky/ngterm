@@ -1194,25 +1194,38 @@ Mac that other people or agents also use. Its header has the full contract. A ru
    scratch directory of the run's name on the Mac, `~/.cache/ngterm/run/<name>/tree`. The default name is the
    branch. Build output in the scratch stays, so the next run of that name builds only what changed.
 2. It compares a checksum of each file on the two sides. It copies a file that differs again, and it stops when the
-   trees still differ. Thus the Mac never tests a tree that is not yours.
+   trees still differ. Thus the Mac never tests a tree that is not yours. If a copy does not complete, the next copy
+   removes the files that it brought and that the tree does not have.
+   The launch claims the scratch from the copy until it has the results, so the runner refuses a second launch of
+   the same name. If a launch stops without a cleanup, its claim holds for one hour after its last call, or until
+   `cancel`.
 3. It waits for the iOS build lock. Then it runs the command under that lock, with `BUILD_IOS_LOCK_HELD` set, so
    `build-ios.sh` and `test-ios-e2e.sh` take no second lock. Do not put a `lockf` around them yourself.
 4. It runs the command for at most `--timeout` seconds (default 2 hours). After that time it stops the command's
    whole process group. The lock wait has its own limit, `--queue-timeout` (default 3 hours).
 5. It shows the command's output while the command runs. It copies the log, and each `--fetch` path, into
-   `target/ios-mac-run/<name>/`. Its exit status is the command's: 124 when the time ran out, 75 when the lock wait
-   ran out, 1 when the runner failed (its messages start with `ios-mac-run.sh:`), 2 for a usage error.
+   `target/ios-mac-run/<name>/`. Its exit status is the command's, or one of these:
+   - 124: the time ran out. 75: the lock wait ran out.
+   - 143: the run was cancelled. 130: the runner stopped on a signal and cancelled the run.
+   - 1: the runner failed (its messages start with `ios-mac-run.sh:`). 2: a usage error.
+   - `cancel`, `clean` and `list` give the status of the Mac: 3 when a run or a different launch holds the scratch,
+     255 when ssh failed.
 
-The run continues on the Mac when the ssh connection or the runner stops. `wait` waits for it again, and `cancel`
-stops it. The command gets two values that make a queue turn short:
+The run continues on the Mac when the ssh connection stops or the runner is killed (SIGKILL). `wait` waits for it
+again, with the limits of the run, and `cancel` stops it. A runner that gets INT (Ctrl-C), TERM or HUP cancels the
+run, so the Mac is not busy for a run that nobody waits for. The command gets these values:
 
 - `BUILD_IOS_TREE_STAMP`, the checksum of the tree. `build-ios.sh` builds a test plan once for each tree. The run
-  on the second simulator and a repeat run with no change only test that build (`test-without-building`).
+  on the second simulator and a repeat run with no change only test that build (`test-without-building`). A
+  different build into the same products (the other plan, `build`, `lint`, `test-ios-e2e.sh`) makes it build again.
 - `BUILD_IOS_CORE_CACHE`, a cache of prebuilt Rust cores on the Mac (`scripts/lib/ios-core-cache.sh`). The key
-  covers the inputs of the core: the files of the local crates that `ngterm-mobile` builds from, the lock file, the
-  pins, the build scripts, the profile and the toolchain versions. Thus all workers with the same core inputs use
-  one build of the core. The cache keeps to 2 GiB and removes the core that was not used for the longest time. It
+  covers the inputs of the core: the files of the local crates that `ngterm-mobile` builds from, the files that
+  their sources include from outside them (`include_str!`, `include_bytes!`), the lock file, the pins, the build
+  scripts, the profile and the toolchain versions. Thus all workers with the same core inputs use one build of the
+  core. The cache keeps to 2 GiB and removes the core that was not used for the longest time. It
   stores no core when less than 8 GiB of the disk would stay free.
+- `BUILD_IOS_BUILD_NUMBER`, the commit count of your checkout. The scratch copy has no Git history, and the
+  `archive` action uses this value as the build number.
 
 ```sh
 scripts/ios-mac-run.sh run -- scripts/build-ios.sh --device phone --only LogsTests ui   # one UI test class

@@ -50,6 +50,19 @@ shift
 cd "$FAKE_MAC_HOME"
 export HOME="$FAKE_MAC_HOME"
 unset XDG_CACHE_HOME
+# FAKE_MAC_FAIL_OP=<op>: that operation fails (1) and does nothing. FAKE_MAC_LOSE_OP=<op>: the first call of it runs,
+# then the connection is lost (255).
+if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}" ]]; then
+  script="$(cat)"
+  op="${script##*$'\n'op_}"
+  [[ "$op" != "${FAKE_MAC_FAIL_OP:-}" ]] || exit 1
+  if [[ "$op" == "${FAKE_MAC_LOSE_OP:-}" && ! -e "$FAKE_MAC_HOME/.lost-$op" ]]; then
+    : >"$FAKE_MAC_HOME/.lost-$op"
+    bash -c "$script" >/dev/null 2>&1 || true
+    exit 255
+  fi
+  exec bash -c "$script"
+fi
 exec bash -c "$*"
 EOF
 cat >"$bin/lockf" <<'EOF'
@@ -127,7 +140,8 @@ printf 'scripts/ios-mac-run.local.env\n' >>"$repo/.git/info/exclude"
 # --- a run: copy, lock, environment, exit status, logs ---------------------------------------------------------------
 
 run env -u IOS_MAC_HOST "$runner" run -- bash -c \
-  'cat src/a.txt; echo "lock=$BUILD_IOS_LOCK_HELD stamp=$BUILD_IOS_TREE_STAMP cache=$BUILD_IOS_CORE_CACHE"; exit 3'
+  'cat src/a.txt; echo "lock=$BUILD_IOS_LOCK_HELD stamp=$BUILD_IOS_TREE_STAMP cache=$BUILD_IOS_CORE_CACHE"
+  echo "build=$BUILD_IOS_BUILD_NUMBER"; exit 3'
 check "the command's exit status is the runner's" '((status == 3))'
 check "the command ran in the copied tree" 'grep -qx one "$out"'
 check "the command holds the build lock (BUILD_IOS_LOCK_HELD)" 'grep -qF "lock=$mac_lock " "$out"'
@@ -139,6 +153,8 @@ check "an executable stays executable and a link a link" \
   '[[ -x "$scratch/tree/src/tool.sh" && -L "$scratch/tree/src/link" ]]'
 check "the log is copied back" 'grep -qx one "$logs/command.log" && grep -qx "exit: 3" "$logs/run.txt"'
 check "the summary says the exit status" 'grep -q "exit 3; copy" "$err"'
+check "the command gets the checkout's commit count as the build number" 'grep -qx "build=1" "$out"'
+check "the launch frees its claim of the scratch" '[[ ! -e "$scratch/claim" ]]'
 stamp1="$(sed -n 's/.*stamp=\([0-9a-f]*\).*/\1/p' "$out")"
 
 # --- the next run: removal, build output kept, drift -----------------------------------------------------------------
@@ -158,12 +174,43 @@ check "the tree's checksum changes with the tree" '[[ -n "$stamp2" && "$stamp1" 
 run "$runner" run -- bash -c 'echo "stamp=$BUILD_IOS_TREE_STAMP"'
 check "an unchanged tree keeps its checksum" 'grep -qx "stamp=$stamp2" "$out"'
 
+# --- a copy that did not end, the claim of the scratch, a start whose connection was lost ----------------------------
+
+printf 'experiment\n' >"$repo/src/experiment.txt"
+run env FAKE_MAC_FAIL_OP=verify "$runner" run -- true
+check "a copy whose check failed stops the run" \
+  '((status == 1)) && [[ -f "$scratch/tree/src/experiment.txt" && ! -e "$scratch/claim" ]]'
+rm "$repo/src/experiment.txt"
+run "$runner" run -- true
+check "the next copy removes a file that only the copy that did not end brought" \
+  '((status == 0)) && [[ ! -e "$scratch/tree/src/experiment.txt" ]]'
+
+printf 'other-launch %s\n' "$(date +%s)" >"$scratch/claim"
+run "$runner" run -- true
+check "a launch is refused while another launch claims the scratch" \
+  '((status == 1)) && grep -q "another launch (other-launch)" "$err" && grep -q other-launch "$scratch/claim"'
+run "$runner" clean
+check "clean refuses while another launch claims the scratch" '((status == 3)) && [[ -d "$scratch" ]]'
+printf 'other-launch %s\n' "$(($(date +%s) - 4000))" >"$scratch/claim"
+run "$runner" run -- true
+check "a claim that was not renewed for an hour is taken over" '((status == 0)) && [[ ! -e "$scratch/claim" ]]'
+printf 'other-launch %s\n' "$(date +%s)" >"$scratch/claim"
+run "$runner" cancel
+check "cancel frees the claim" '((status == 0)) && [[ ! -e "$scratch/claim" ]]'
+
+rm -f "$mac/.lost-start"
+run env FAKE_MAC_LOSE_OP=start "$runner" run -- bash -c 'echo started >>"$HOME/starts"'
+check "a start whose connection was lost is tried again and does not start a second run" \
+  '((status == 0)) && [[ -e "$mac/.lost-start" && "$(grep -c started "$mac/starts")" == 1 ]]'
+
 # --- the time limit, the lock wait, one run per name, cancel ---------------------------------------------------------
 
 run "$runner" run --timeout 2 -- bash -c 'echo $$ >sleeper.pid; sleep 60 & wait'
 sleeper="$(cat "$scratch/tree/sleeper.pid" 2>/dev/null || echo 0)"
 check "a command past its time limit gives 124" '((status == 124)) && grep -q "stopping it" "$logs/command.log"'
-check "the stopped command's process group is gone" '! kill -0 "$sleeper" 2>/dev/null && ! pgrep -x -P "$sleeper" sleep >/dev/null'
+check "the stopped command's process group is gone" \
+  '! kill -0 "$sleeper" 2>/dev/null && ! pgrep -g "$sleeper" >/dev/null'
+check "the Mac keeps the run's limits for wait" '[[ "$(cat "$scratch/run/limits")" == "2 10800" ]]'
 
 mkdir -p "$(dirname "$mac_lock")"
 flock "$mac_lock" sleep 30 &
@@ -191,6 +238,17 @@ wait "$background" || status_bg=$?
 check "cancel stops the run, whose runner gives 143" '((status == 0 && status_bg == 143))' || cat "$work/bg.err" >&2
 run "$runner" wait
 check "wait on an ended run gives its exit status at once" '((status == 143))'
+setsid sleep 30 &
+stranger=$!
+sleep 0.5
+echo "$stranger" >"$scratch/run/cmdpid"
+echo "$stranger" >"$scratch/run/pid"
+run "$runner" cancel
+check "cancel sends no signal to the stored pids of an ended run" '((status == 0)) && kill -0 "$stranger" 2>/dev/null'
+run "$runner" clean
+check "clean does not take a stored pid of an ended run for a live run" '((status == 0)) && [[ ! -e "$scratch" ]]'
+kill "$stranger" 2>/dev/null || true
+wait "$stranger" 2>/dev/null || true
 run "$runner" run --clean -- true
 check "--clean removes the scratch after the run" '((status == 0)) && [[ ! -e "$scratch" ]]'
 run "$runner" list
@@ -221,6 +279,10 @@ for crate in core dep other devonly; do
   printf 'pub fn f() {}\n' >"$ws/crates/$crate/src/lib.rs"
 done
 printf '[workspace]\nresolver = "3"\nmembers = ["crates/*"]\n' >"$ws/Cargo.toml"
+mkdir -p "$ws/shared"
+printf 'one\n' >"$ws/shared/included.txt"
+printf 'one\n' >"$ws/shared/unused.txt"
+printf 'pub const TEXT: &str = include_str!("../../../shared/included.txt");\n' >>"$ws/crates/dep/src/lib.rs"
 for crate in dep other devonly; do
   printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2024"\n' "$crate" >"$ws/crates/$crate/Cargo.toml"
 done
@@ -241,6 +303,12 @@ check "a change outside of the core's dependencies keeps the key" '[[ "$(key)" =
 check "another profile is another key" '[[ "$(key debug)" != "$key1" ]]'
 printf '// more\n' >>"$ws/crates/dep/src/lib.rs"
 check "a change in a dependency of the core is another key" '[[ "$(key)" != "$key1" ]]'
+key2="$(key)"
+printf 'two\n' >"$ws/shared/unused.txt"
+check "a change to a file that no source of the core includes keeps the key" '[[ "$(key)" == "$key2" ]]'
+printf 'two\n' >"$ws/shared/included.txt"
+check "a change to a file that a source of the core includes from outside its package is another key" \
+  '[[ "$(key)" != "$key2" ]]'
 
 cache="$work/cache-dir"
 core_out="$work/core"

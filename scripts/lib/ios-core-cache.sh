@@ -5,7 +5,8 @@
 # run. Portable shell (stock macOS's bash 3.2, Linux's bash), as lib/native.sh is.
 #
 # The key covers what the core's build reads: every file of the local packages the core package depends on (its
-# normal and build dependencies, all features, from `cargo metadata`), the workspace manifest and lock, the toolchain
+# normal and build dependencies, all features, from `cargo metadata`), each file outside of them that their Rust
+# sources take in with include_str! or include_bytes! of a literal path, the workspace manifest and lock, the toolchain
 # files, the libghostty-vt pins and patches, the build scripts, the cargo profile, the toolchain's versions and the
 # environment that changes a cargo build. A change outside of these (the Swift app, a desktop crate) keeps the key.
 #
@@ -17,8 +18,9 @@
 IOS_CORE_CACHE_FILES=(Cargo.toml Cargo.lock rust-toolchain.toml .cargo/config.toml build/pins.env scripts/build-ios.sh
   scripts/build-ghostty-vt.sh scripts/lib/native.sh scripts/lib/ios-core-cache.sh)
 
-# The environment variables that change what a cargo build makes.
-IOS_CORE_CACHE_ENV='^(RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]+|CARGO_BUILD_[A-Z0-9_]+|CARGO_TARGET_AARCH64_APPLE_IOS[A-Z0-9_]*|IPHONEOS_DEPLOYMENT_TARGET|NGTERM_GHOSTTY_VT_PREFIX)='
+# The environment variables that change what a cargo build makes (the build inputs of
+# crates/ngterm-ghostty-vt-sys/zig_build.rs's RERUN_ENV that an iOS build reads among them).
+IOS_CORE_CACHE_ENV='^(RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]+|CARGO_BUILD_[A-Z0-9_]+|CARGO_TARGET_AARCH64_APPLE_IOS[A-Z0-9_]*|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET|ZIG_LIBC|NGTERM_VENDOR|NGTERM_GHOSTTY_VT_PREFIX)='
 
 # Reads `cargo metadata` on stdin and prints the directories (relative to the workspace root) of the local packages
 # that the package $IOS_CORE_PACKAGE needs to build, itself included: dev-dependencies are not followed.
@@ -53,6 +55,37 @@ for current in seen:
 print("\n".join(sorted(dirs)))
 '
 
+# Reads the package directories of IOS_CORE_CLOSURE_PY on stdin and prints the files (relative to the workspace root
+# $1) that the Rust sources below them take in with include_str! or include_bytes! of a literal path and that are
+# outside of those directories: a change to them changes the core too.
+IOS_CORE_INCLUDES_PY='
+import os
+import re
+import sys
+
+root = os.path.realpath(sys.argv[1])
+dirs = [line for line in sys.stdin.read().splitlines() if line]
+inside = [os.path.join(root, directory) + os.sep for directory in dirs]
+include = re.compile(r"include_(?:str|bytes)!\(\s*\"([^\"\\]+)\"\s*\)")
+found = set()
+for directory in dirs:
+    for top, subdirs, files in os.walk(os.path.join(root, directory)):
+        subdirs[:] = [name for name in subdirs if name != "target"]
+        for name in files:
+            if not name.endswith(".rs"):
+                continue
+            source = os.path.join(top, name)
+            with open(source, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+            for path in include.findall(text):
+                full = os.path.realpath(os.path.join(os.path.dirname(source), path))
+                if os.path.isfile(full) and full.startswith(root + os.sep) and not any(
+                    full.startswith(prefix) for prefix in inside
+                ):
+                    found.add(os.path.relpath(full, root))
+print("\n".join(sorted(found)))
+'
+
 # `<sha256>  <path>` for each NUL-separated path on stdin: coreutils' sha256sum, else shasum (stock macOS).
 sha256_files() {
   if command -v sha256sum >/dev/null; then
@@ -66,10 +99,11 @@ sha256_files() {
 # toolchain text $4 (the versions of rustc and Xcode). Fails when cargo can't read the workspace offline: the caller
 # then builds without the cache.
 ios_core_cache_key() {
-  local root="$1" package="$2" profile="$3" toolchain="$4" dirs file listing
+  local root="$1" package="$2" profile="$3" toolchain="$4" dirs includes file listing
   dirs="$(cd "$root" && cargo metadata --offline --all-features --format-version 1 2>/dev/null |
     IOS_CORE_PACKAGE="$package" python3 -c "$IOS_CORE_CLOSURE_PY")" || return 1
   [[ -n "$dirs" ]] || return 1
+  includes="$(python3 -c "$IOS_CORE_INCLUDES_PY" "$root" <<<"$dirs")" || return 1
   listing="$(
     cd "$root" || exit 1
     {
@@ -77,6 +111,9 @@ ios_core_cache_key() {
         [[ ! -f "$file" ]] || printf '%s\0' "$file"
       done
       [[ ! -d build/patches ]] || find build/patches -type f -print0
+      while IFS= read -r file; do
+        [[ -z "$file" ]] || printf '%s\0' "$file"
+      done <<<"$includes"
       while IFS= read -r file; do
         find "$file" -name target -prune -o -name .DS_Store -prune -o -type f -print0
       done <<<"$dirs"

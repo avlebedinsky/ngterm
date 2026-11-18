@@ -66,8 +66,10 @@
 # For the shared Mac (scripts/ios-mac-run.sh sets them):
 #   --only CLASS[/METHOD]  the ui action runs only these UI tests (repeat the option for more), as a fix round does;
 #   BUILD_IOS_TREE_STAMP   a checksum of the whole source tree: a plan that was built from the same stamp, profile and
-#                    Xcode keeps its build, and its runs only test it (test-without-building), so a repeat run and the
-#                    other simulator's run rebuild nothing;
+#                    Xcode, with no other build after it, keeps its build, and its runs only test it
+#                    (test-without-building), so a repeat run and the other simulator's run rebuild nothing;
+#   BUILD_IOS_BUILD_NUMBER the archive's build number (CURRENT_PROJECT_VERSION; default: the commit count of HEAD),
+#                    for a copy of the tree with no Git history;
 #   BUILD_IOS_CORE_CACHE   a directory of prebuilt cores (lib/ios-core-cache.sh), keyed by the core's inputs: a core
 #                    found there skips steps 3 to 6, and a core built here is stored there, in at most
 #                    BUILD_IOS_CORE_CACHE_MB MiB (default 2048) and only while BUILD_IOS_CORE_CACHE_MIN_FREE_MB
@@ -317,8 +319,10 @@ xcodebuild_clean_env() {
 }
 
 # xcodebuild over the project, with its derived data under mobile/ios/build/ and the packages at the versions
-# NgTerm.xcodeproj's Package.resolved pins
+# NgTerm.xcodeproj's Package.resolved pins. Every action but test-without-building can build into the shared
+# products, so it removes the record of the last test plan build (build_test_plan).
 project_xcodebuild() {
+  [[ "$1" == test-without-building ]] || rm -f "${BUILD_DIR:?}/built-tree"
   xcodebuild_clean_env -project "$IOS_DIR/NgTerm.xcodeproj" -derivedDataPath "$DERIVED_DATA" \
     -onlyUsePackageVersionsFromResolvedFile "$@"
 }
@@ -465,17 +469,18 @@ run_test_plan() {
   return "$status"
 }
 
-# Builds test plan $1 for testing, unless it was built from this tree already: BUILD_IOS_TREE_STAMP, the profile and
-# the Xcode are those of its last build, and that build's test run file is still in the derived data.
+# Builds test plan $1 for testing, unless the products are its build from this tree already. The plans build into one
+# set of products with other settings (Unit has code coverage, UI has not), so one record, $BUILD_DIR/built-tree, names
+# the plan, BUILD_IOS_TREE_STAMP, the profile and the Xcode of the last build, and each other build removes it
+# (project_xcodebuild, test-ios-e2e.sh). The plan's test run file must still be in the derived data.
 build_test_plan() {
-  local plan="$1" built="$BUILD_DIR/$1.built-tree" stamp="" start status=0
-  [[ -z "${BUILD_IOS_TREE_STAMP:-}" ]] || stamp="$BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-}"
+  local plan="$1" built="$BUILD_DIR/built-tree" stamp="" start status=0
+  [[ -z "${BUILD_IOS_TREE_STAMP:-}" ]] || stamp="$plan $BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-}"
   if [[ -n "$stamp" && -f "$built" && "$(cat "$built")" == "$stamp" ]] &&
     compgen -G "$DERIVED_DATA/Build/Products/NgTerm_${plan}_iphonesimulator*.xctestrun" >/dev/null; then
     echo "build-ios.sh: the $plan plan was built from this tree already (BUILD_IOS_TREE_STAMP): no new build" >&2
     return 0
   fi
-  rm -f "$built"
   start=$SECONDS
   echo "build-ios.sh: building the $plan plan" >&2
   project_xcodebuild build-for-testing "${SIMULATOR_BUILD[@]}" -testPlan "$plan" -quiet || {
@@ -713,7 +718,9 @@ action_archive() {
   local archive="$BUILD_DIR/NgTerm.xcarchive" signing=() version build app
   version="$(workspace_version)"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "build-ios.sh: no MAJOR.MINOR.PATCH workspace version in Cargo.toml"
-  build="$(git -C "$NATIVE_ROOT" rev-list --count HEAD)"
+  build="${BUILD_IOS_BUILD_NUMBER:-}"
+  [[ -n "$build" ]] || build="$(git -C "$NATIVE_ROOT" rev-list --count HEAD)"
+  [[ "$build" =~ ^[0-9]+$ ]] || die "build-ios.sh: the build number '$build' is not a number"
   if [[ -n "${APP_STORE_CONNECT_KEY_PATH:-}" && -n "${APP_STORE_CONNECT_KEY_ID:-}" &&
     -n "${APP_STORE_CONNECT_ISSUER_ID:-}" && -n "${IOS_DEVELOPMENT_TEAM:-}" ]]; then
     signing=(-allowProvisioningUpdates -authenticationKeyPath "$APP_STORE_CONNECT_KEY_PATH"

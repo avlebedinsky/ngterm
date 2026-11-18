@@ -336,6 +336,8 @@ for device in (d for ds in json.load(sys.stdin)["devices"].values() for d in ds)
   pasteboard_allow
   bundle="$BUILD_DIR/e2e-${test//\//-}-$DEVICE.xcresult"
   rm -rf "$bundle"
+  # this build goes into the products that build-ios.sh's test plans share: its record of their last build is void
+  rm -f "${BUILD_DIR:?}/built-tree"
   env ${UNSET_NGTERM[@]+"${UNSET_NGTERM[@]}"} "${MACHINE[@]}" caffeinate -is xcodebuild test \
     -project mobile/ios/NgTerm.xcodeproj -derivedDataPath "$BUILD_DIR/DerivedData" \
     -onlyUsePackageVersionsFromResolvedFile -scheme NgTerm -configuration Debug -testPlan UI \
