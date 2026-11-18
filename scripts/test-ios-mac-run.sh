@@ -3,8 +3,9 @@
 # that runs the command locally (rsync's too) and a `lockf` over flock(1). It checks the arguments, the copy and its
 # checksum (a file that drifted on the Mac is copied again), the removal of what the tree lost, the lock (held for
 # the command, its wait bounded), the time limit, the exit status, the logs and the cleanup. It also tests the iOS
-# build lock under an outer lockf (lib/native.sh), the core cache (lib/ios-core-cache.sh) and the record of a test-plan
-# build (lib/native.sh). Needs rsync, flock, perl, python3, git and cargo.
+# build lock under an outer lockf (lib/native.sh), the core cache (lib/ios-core-cache.sh), the record of a test-plan
+# build (lib/native.sh) and the wallpaper cache bound (lib/ios-sim-cache.sh). Needs rsync, flock, perl, python3, git
+# and cargo.
 #
 # Usage: scripts/test-ios-mac-run.sh
 # shellcheck disable=SC2016,SC2034 # check() takes its condition as text and evaluates it later, with the variables it reads
@@ -404,6 +405,74 @@ native_call sync_dir "$work/core-b" "$generated"
 check "a test build with a different core has a different record" '[[ -n "$(record)" && "$(record)" != "$record1" ]]'
 check "a test build with no tree stamp has no record" '[[ -z "$(record "")" ]]'
 check "a test build whose Generated/ is missing has no record" '[[ -z "$(record tree "$work/none" 2>/dev/null)" ]]'
+
+# --- the wallpaper cache bound (lib/ios-sim-cache.sh) ----------------------------------------------------------------
+
+sims="$work/Devices"
+runtime=com.apple.CoreSimulator.SimRuntime.iOS-27-0
+# A simulator $1 with $2 cache dirs of 400 KiB each, one more file of 400 KiB in its wallpaper store outside them, and
+# one in its data outside the store.
+make_sim() {
+  local store="$sims/$1/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster" i
+  for ((i = 0; i < $2; i++)); do
+    mkdir -p "$store/configurations/$i/versions/1/scratch/SnapshotCache.cachedb/Snapshot.pks"
+    head -c 409600 /dev/zero >"$store/configurations/$i/versions/1/scratch/SnapshotCache.cachedb/Snapshot.pks/a.atx"
+  done
+  head -c 409600 /dev/zero >"$store/configurations/descriptor.plist"
+  head -c 409600 /dev/zero >"$sims/$1/data/app.bin"
+}
+cache_dirs_of() {
+  find "$sims/$1/data" -type d -name 'SnapshotCache.cachedb*' | wc -l | tr -d ' '
+}
+make_sim PHONE 4
+make_sim BOOTED 4
+make_sim OTHERNAME 4
+make_sim OTHERRUNTIME 4
+make_sim LEFTOVER 2
+make_sim SMALL 1
+leftover="$sims/LEFTOVER/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster"
+leftover="$leftover/descriptors/0/versions/1/scratch/SnapshotCache.cachedb.ngterm-removed"
+mkdir -p "$leftover"
+head -c 409600 /dev/zero >"$leftover/b.atx"
+device() { printf '{"name": "%s", "udid": "%s", "state": "%s", "dataPath": "%s"}' "$1" "$2" "$3" "$sims/$2/data"; }
+cat >"$work/devices.json" <<EOF
+{"devices": {
+  "$runtime": [$(device ngterm-phone PHONE Shutdown), $(device ngterm-phone BOOTED Booted),
+    $(device ngterm-other OTHERNAME Shutdown), $(device ngterm-phone LEFTOVER Shutdown),
+    $(device ngterm-phone SMALL Shutdown)],
+  "com.apple.CoreSimulator.SimRuntime.iOS-26-0": [$(device ngterm-phone OTHERRUNTIME Shutdown)]
+}}
+EOF
+# a script, not a function: run starts it under timeout(1)
+sim_cache_call="$work/sim-cache.sh"
+printf 'source %q\nsource %q\n"$@"\n' "$native" "$source_root/scripts/lib/ios-sim-cache.sh" >"$sim_cache_call"
+check "the cache dirs are found below the wallpaper store" \
+  '[[ "$(bash "$sim_cache_call" ios_sim_cache_dirs "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore" |
+    wc -l | tr -d " ")" == 4 ]]'
+# 1 MiB: the phone (1.6 MiB) and the leftover simulator (1.2 MiB with its renamed dir) are over it, SMALL is not
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 1 <"$work/devices.json"
+check "the bound runs" '((status == 0))' || cat "$err" >&2
+check "a shut-down pinned simulator over the bound loses its cache dirs" \
+  '[[ "$(cache_dirs_of PHONE)" == 0 ]] && grep -q "simulator PHONE: wallpaper cache 1 MiB, over the bound of 1 MiB: removed 4 dirs, 0 MiB left" "$err"'
+check "the rest of its wallpaper store and its data stay" \
+  '[[ -f "$sims/PHONE/data/app.bin" && -f "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster/configurations/descriptor.plist" &&
+    -d "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster/configurations/0/versions/1/scratch" ]]'
+check "a booted simulator keeps its cache" \
+  '[[ "$(cache_dirs_of BOOTED)" == 4 ]] && grep -q "simulator BOOTED is Booted: its wallpaper cache stays" "$err"'
+check "a simulator of another name keeps its cache" '[[ "$(cache_dirs_of OTHERNAME)" == 4 ]]'
+check "a simulator of the pinned name on another runtime keeps its cache" '[[ "$(cache_dirs_of OTHERRUNTIME)" == 4 ]]'
+check "a renamed dir that an earlier delete left is deleted with the rest" '[[ "$(cache_dirs_of LEFTOVER)" == 0 ]]'
+check "a simulator under the bound keeps its cache" \
+  '[[ "$(cache_dirs_of SMALL)" == 1 ]] && grep -q "simulator SMALL: wallpaper cache 0 MiB, bound 1 MiB" "$err"'
+make_sim PHONE 2
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 1 <"$work/devices.json"
+check "a cache at the bound stays" '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
+printf '{"devices": {"%s": [%s]}}' "$runtime" "$(device ngterm-phone PHONE Shutdown | sed "s#$sims/PHONE/data#$sims/PHONE#")" \
+  >"$work/odd.json"
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 0 <"$work/odd.json"
+check "a data path that is not <udid>/data is left alone" '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
+run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" lots <"$work/devices.json"
+check "a bound that is not a number fails" '((status == 1)) && grep -q "is not a number of MiB" "$err"'
 
 if ((failures)); then
   echo "$failures check(s) failed" >&2

@@ -1184,7 +1184,9 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   `ngterm-phone` and `ngterm-tablet` simulators, one after the other (`test-without-building`): each boots right
   before its run and shuts down before the next one boots, so a CI Mac (3 CPUs, 7 GB) never has two booted, nor a
   build beside a simulator that has just booted. It prints how long the build and each run took. A plan whose build
-  fails boots no simulator and counts no tests. The UI
+  fails boots no simulator and counts no tests. Before a simulator boots, a wallpaper cache over
+  `BUILD_IOS_SIM_CACHE_MB` (default 1024) is removed while that simulator is shut down (`scripts/lib/ios-sim-cache.sh`):
+  the iOS 27 simulator adds about 350 MB of it at each boot and never removes it. The UI
   tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI
   test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
   terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry
@@ -1276,8 +1278,8 @@ scripts/ios-mac-run.sh clean     # remove this branch's scratch when its Mac wor
   that the path is too long, give the run a shorter `--name`.
 - A scratch directory with its build output takes some GB. Remove yours when the task's Mac work is done. The
   runner does not start when the Mac has less than `IOS_MAC_MIN_FREE_GB` (default 8) GB free.
-- `scripts/test-ios-mac-run.sh` tests the runner, the build lock and the core cache on Linux against a local
-  stand-in Mac. `scripts/lint.sh` runs it.
+- `scripts/test-ios-mac-run.sh` tests the runner, the build lock, the core cache and the wallpaper cache bound on
+  Linux against a local stand-in Mac. `scripts/lint.sh` runs it.
 
 ## Windows
 

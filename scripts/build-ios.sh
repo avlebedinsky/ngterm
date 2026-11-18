@@ -30,7 +30,9 @@
 #    - test: the Unit and then the UI test plan on the pinned phone and tablet simulators (IOS_SIM_PHONE_NAME and
 #      IOS_SIM_TABLET_NAME, made by setup-ios.sh), one at a time (each plan is built once before any boots; each
 #      simulator boots right before its run, and shuts down before the next one boots), each with its keyboard's
-#      slide-to-type introduction marked as shown (it would cover the keys the UI tests tap); result bundles in
+#      slide-to-type introduction marked as shown (it would cover the keys the UI tests tap) and, while it is shut
+#      down before its boot, its wallpaper cache kept to BUILD_IOS_SIM_CACHE_MB MiB (default 1024,
+#      lib/ios-sim-cache.sh); result bundles in
 #      mobile/ios/build/, and a failed snapshot's image in mobile/ios/build/snapshot-failures/ (its diff is in the
 #      result bundle). The Unit plan measures line coverage of the app's own code (Unit.xctestplan names the
 #      targets): scripts/ios-coverage.py writes its summary beside the result bundle (Unit.coverage.txt and
@@ -85,6 +87,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib/native.sh" # sources build/pins.env too
 # shellcheck source=lib/ios-core-cache.sh
 source "$(dirname "$0")/lib/ios-core-cache.sh"
+# shellcheck source=lib/ios-sim-cache.sh
+source "$(dirname "$0")/lib/ios-sim-cache.sh"
 
 usage() {
   die "usage: scripts/build-ios.sh [--profile release|debug] [--no-xcode] [--prebuilt-core] [--device phone|tablet]
@@ -402,6 +406,19 @@ quiet_keyboard_introduction() {
     DidShowContinuousPathIntroduction -bool true || die "couldn't set simulator $1's keyboard preferences"
 }
 
+# Keeps the wallpaper cache of the pinned simulator $1 to BUILD_IOS_SIM_CACHE_MB MiB while it is shut down
+# (lib/ios-sim-cache.sh). Each boot adds about 350 MB, so the default of 1024 removes it about every third boot, and
+# the two simulators keep less than 3 GB of it. PosterBoard writes it again at each boot, so a removal costs no boot
+# time. A failure here only warns: the run goes on.
+bound_wallpaper_cache() {
+  local devices
+  if ! devices="$(simctl_bounded "$SIMCTL_SECONDS" list -j devices)" ||
+    ! ios_sim_cache_bound "$1" "com.apple.CoreSimulator.SimRuntime.iOS-${IOS_SIMULATOR_RUNTIME//./-}" \
+      "${BUILD_IOS_SIM_CACHE_MB:-1024}" <<<"$devices"; then
+    echo "build-ios.sh: couldn't bound the wallpaper cache of simulator $1" >&2
+  fi
+}
+
 # Run test plan $1 on the phone and tablet simulators, one after the other (or on --device's alone), into
 # mobile/ios/build/$1.xcresult, with xcodebuild's options $2... (the UI plan's retry and shard), then count its tests
 # (report_test_counts); its status is that of the runs. When the plan's build fails, no simulator boots, nothing is
@@ -434,6 +451,7 @@ run_test_plan() {
       simctl_bounded "$SIMCTL_SECONDS" shutdown "$booted" ||
         die "couldn't shut down simulator $booted before the next one boots"
     fi
+    bound_wallpaper_cache "$name"
     # found, made again when it is gone, and booted right before the run: a CI Mac's simulators can still come and go
     udid="$("$NATIVE_ROOT/scripts/setup-ios.sh" --simulator "$name")" ||
       die "the $name simulator on iOS $IOS_SIMULATOR_RUNTIME is not ready (see above)"
