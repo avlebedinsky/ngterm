@@ -2,8 +2,10 @@
 //! output to its end before it goes on, so the events that start the screen watcher must hand that output back when
 //! the adapter exits, while the watcher keeps going. Under Git Bash on Windows a Codex session was seen waiting at
 //! "Running hook" while the watcher lived, so there the adapter starts no watcher
-//! (`build/patches/agent-status/0011-codex-windows-watcher.patch`); elsewhere it starts one as before. The adapter runs for real, with recording stand-ins for the status wrapper
-//! (`NGTERM_STATUS_WRAPPER`) and `ngtermctl` (`NGTERMCTL`), and no `NGTERM_*` of this process reaches it.
+//! (`build/patches/agent-status/0011-codex-windows-watcher.patch`); elsewhere it starts one as before. The adapter
+//! runs for real, with recording stand-ins for the status wrapper (`NGTERM_STATUS_WRAPPER`) and `ngtermctl`
+//! (`NGTERMCTL`), and no `NGTERM_*` of this process reaches it. The stand-ins read their record files from
+//! `CODEX_HOOK_TEST_STATUSES` and `CODEX_HOOK_TEST_CONTROLS`, so no path goes into a shell literal.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,16 +66,13 @@ fn run(action: &str) -> TestResult<Option<HookRun>> {
     let status_wrapper = dir.path().join("status-wrapper");
     write_executable(
         &status_wrapper,
-        &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", posix(&statuses)?),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CODEX_HOOK_TEST_STATUSES\"\n",
     )?;
     let ngtermctl = dir.path().join("ngtermctl");
     write_executable(
         &ngtermctl,
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n\
-             [ \"$1 $2\" = 'agent mail' ] && printf '%s\\n' '{{\"additionalContext\":\"mail\"}}'\nexit 0\n",
-            posix(&controls)?
-        ),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CODEX_HOOK_TEST_CONTROLS\"\n\
+         [ \"$1 $2\" = 'agent mail' ] && printf '%s\\n' '{\"additionalContext\":\"mail\"}'\nexit 0\n",
     )?;
 
     let mut command = Command::new(bash);
@@ -84,6 +83,8 @@ fn run(action: &str) -> TestResult<Option<HookRun>> {
         }
     }
     let mut child = command
+        .env("CODEX_HOOK_TEST_STATUSES", posix(&statuses)?)
+        .env("CODEX_HOOK_TEST_CONTROLS", posix(&controls)?)
         .env("NGTERMCTL", posix(&ngtermctl)?)
         .env("NGTERM_STATUS_WRAPPER", posix(&status_wrapper)?)
         .env("NGTERM_SESSION_ID", "sid")
