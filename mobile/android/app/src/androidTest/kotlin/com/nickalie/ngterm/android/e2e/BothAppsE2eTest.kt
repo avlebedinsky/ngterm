@@ -147,7 +147,7 @@ class BothAppsE2eTest {
 
         // the agterm session attaches through agterm's zmx, and typing reaches its shell
         compose.onNodeWithText(AGTERM_SESSION).performClick()
-        awaitTerminal()
+        awaitTerminalOrCover()
         takeControlWhenOffered()
         val attached =
             runCatching {
@@ -322,6 +322,12 @@ class BothAppsE2eTest {
     }
 
     private fun awaitTerminal() = compose.waitUntil(CONNECT_WAIT_MS) { nodes(terminal()) > 0 }
+
+    // a pane can open under the cover at once, which hides the terminal from the test until control is taken
+    private fun awaitTerminalOrCover() =
+        compose.waitUntil(CONNECT_WAIT_MS) {
+            nodes(terminal()) > 0 || nodes(hasText(text(R.string.session_take_control))) > 0
+        }
 
     private fun nodes(matcher: SemanticsMatcher): Int = compose.onAllNodes(matcher).fetchSemanticsNodes().size
 
