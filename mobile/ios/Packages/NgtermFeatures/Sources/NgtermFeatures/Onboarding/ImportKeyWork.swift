@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// What the import screen (``ImportKeyView``) works through: the first run's model, or Settings'.
 @MainActor
@@ -9,4 +10,6 @@ internal struct ImportKeyWork {
     internal let importKey: @MainActor (inout Data, String) async -> Void
     /// The chosen file could not be read.
     internal let unreadable: @MainActor () -> Void
+    /// The passphrase typed, which the model keeps: leaving the screen empties it before the screen goes.
+    internal let passphrase: Binding<String>
 }

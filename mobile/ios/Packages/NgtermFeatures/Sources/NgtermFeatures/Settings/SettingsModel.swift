@@ -17,6 +17,12 @@ import Observation
 public final class SettingsModel {
     /// Where making or bringing a key stands.
     public private(set) var work = KeyWork()
+    /// The passphrase typed on the import.
+    ///
+    /// The model keeps it, not the screen, so that leaving the import empties it before the screen goes
+    /// (``closeImport()``): it is empty while an import runs, and a refused one comes back into it while the import
+    /// shows.
+    public var importPassphrase = ""
     /// The id of a key just made or brought, until ``newKeyShown()``.
     public private(set) var newKey: String?
     /// Why the last change couldn't be kept, until ``dismissFailure()``.
@@ -26,6 +32,8 @@ public final class SettingsModel {
     /// The export of a private key, which Settings starts and its export screen works through.
     @ObservationIgnored public let export: ExportKeyModel
     @ObservationIgnored private let graph: AppGraph
+    // the import shows: from startImport() until closeImport()
+    @ObservationIgnored private var isImportShown = false
 
     /// The app's settings.
     public var settings: AppSettings {
@@ -142,6 +150,13 @@ public final class SettingsModel {
     /// Opens the import afresh: no problem from an earlier attempt; an import still under way goes on.
     public func startImport() {
         work.importProblem = nil
+        isImportShown = true
+    }
+
+    /// The import no longer shows: its passphrase is emptied, and an import under way goes on without it.
+    public func closeImport() {
+        importPassphrase = ""
+        isImportShown = false
     }
 
     /// The chosen file could not be read.
@@ -151,6 +166,9 @@ public final class SettingsModel {
 
     /// Imports the key in `privateKey` (zeroed once read), opened with `passphrase`; while one runs, a second is
     /// dropped (its bytes zeroed).
+    ///
+    /// ``importPassphrase`` is empty while it runs; if it fails while the import shows, `passphrase` comes back into
+    /// it.
     public func importKey(privateKey: inout Data, passphrase: String) async {
         guard !work.isImporting else {
             privateKey.resetBytes(in: privateKey.startIndex..<privateKey.endIndex)
@@ -163,6 +181,7 @@ public final class SettingsModel {
         }
         work.isImporting = true
         work.importProblem = nil
+        importPassphrase = ""
         do {
             newKey = try await graph.keys.importKey(privateKey: &privateKey, passphrase: passphrase).id
         } catch let error as KeyError {
@@ -171,6 +190,9 @@ public final class SettingsModel {
             work.importProblem = .notStored(reason: ErrorWords.of(error))
         }
         work.isImporting = false
+        if work.importProblem != nil, isImportShown {
+            importPassphrase = passphrase
+        }
     }
 
     /// The new key's public half is on screen.

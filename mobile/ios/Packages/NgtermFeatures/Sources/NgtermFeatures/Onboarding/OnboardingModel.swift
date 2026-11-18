@@ -15,6 +15,11 @@ public final class OnboardingModel {
     public private(set) var step: OnboardingStep
     /// An import is under way, whichever step shows: it goes on through Back, and the welcome says so.
     public private(set) var isImporting = false
+    /// The passphrase typed on the import.
+    ///
+    /// The model keeps it, not the screen, so that Back empties it before the screen goes (``ImportKeyView``): it is
+    /// empty while an import runs, and a refused one comes back into it.
+    public var importPassphrase = ""
     @ObservationIgnored private let keys: AppKeys
 
     /// The first run over `keys`.
@@ -68,6 +73,7 @@ public final class OnboardingModel {
     /// Back from the import to the welcome; an import under way goes on: its key shows wherever the user is, and what
     /// was wrong with it only on the import.
     public func back() {
+        importPassphrase = ""
         if case .importing = step {
             step = .start
         }
@@ -80,6 +86,9 @@ public final class OnboardingModel {
 
     /// Imports the key in `privateKey` (zeroed once read, or at once while another import runs, which this one leaves
     /// alone), opened with `passphrase`.
+    ///
+    /// ``importPassphrase`` is empty while it runs; if it fails while the import shows, `passphrase` comes back into
+    /// it.
     public func importKey(privateKey: inout Data, passphrase: String) async {
         guard !isImporting else {
             privateKey.resetBytes(in: privateKey.startIndex..<privateKey.endIndex)
@@ -91,6 +100,7 @@ public final class OnboardingModel {
             return
         }
         isImporting = true
+        importPassphrase = ""
         step = .importing(isBusy: true, problem: nil)
         let problem: ImportProblem
         do {
@@ -106,6 +116,7 @@ public final class OnboardingModel {
         isImporting = false
         if case .importing = step {
             step = .importing(isBusy: false, problem: problem)
+            importPassphrase = passphrase
         }
     }
 

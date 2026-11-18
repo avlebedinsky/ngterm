@@ -37,19 +37,28 @@ public struct OnboardingView: View {
     // the import over the first run's model
     private var importWork: ImportKeyWork {
         let onboarding = model
-        return ImportKeyWork {
-            if case .importing(let isBusy, let problem) = onboarding.step {
-                return (isBusy, problem)
+        return ImportKeyWork(
+            state: {
+                if case .importing(let isBusy, let problem) = onboarding.step {
+                    return (isBusy, problem)
+                }
+                return (false, nil)
+            },
+            importKey: { bytes, passphrase in
+                await onboarding.importKey(privateKey: &bytes, passphrase: passphrase)
+            },
+            unreadable: {
+                onboarding.unreadable()
+            },
+            passphrase: Binding {
+                onboarding.importPassphrase
+            } set: { text in
+                onboarding.importPassphrase = text
             }
-            return (false, nil)
-        } importKey: { bytes, passphrase in
-            await onboarding.importKey(privateKey: &bytes, passphrase: passphrase)
-        } unreadable: {
-            onboarding.unreadable()
-        }
+        )
     }
 
-    // the import is pushed over the welcome: Back pops it
+    // the import is pushed over the welcome: Back pops it, and empties its passphrase before it goes
     private var isImporting: Binding<Bool> {
         Binding {
             if case .importing = model.step {

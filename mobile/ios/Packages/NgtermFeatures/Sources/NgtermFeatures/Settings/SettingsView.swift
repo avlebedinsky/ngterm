@@ -92,6 +92,7 @@ public struct SettingsView: View {
         }
         .onDisappear {
             model.export.close()
+            model.closeImport()
         }
         .onChange(of: model.newKey) { _, keyId in
             if let keyId {
@@ -100,7 +101,8 @@ public struct SettingsView: View {
         }
     }
 
-    // the pushed pages, as the stack changes them: leaving the export locks it
+    // the pushed pages, as the stack changes them: leaving the export locks it, and leaving the import empties its
+    // passphrase before the page goes
     private var pages: Binding<[SettingsPage]> {
         Binding {
             navigation.path
@@ -109,19 +111,31 @@ public struct SettingsView: View {
             if !pages.contains(where: \.isExport) {
                 model.export.close()
             }
+            if !pages.contains(.importKey) {
+                model.closeImport()
+            }
         }
     }
 
     // the import over Settings' model
     private var importWork: ImportKeyWork {
         let settings = model
-        return ImportKeyWork {
-            (settings.work.isImporting, settings.work.importProblem)
-        } importKey: { bytes, passphrase in
-            await settings.importKey(privateKey: &bytes, passphrase: passphrase)
-        } unreadable: {
-            settings.unreadable()
-        }
+        return ImportKeyWork(
+            state: {
+                (settings.work.isImporting, settings.work.importProblem)
+            },
+            importKey: { bytes, passphrase in
+                await settings.importKey(privateKey: &bytes, passphrase: passphrase)
+            },
+            unreadable: {
+                settings.unreadable()
+            },
+            passphrase: Binding {
+                settings.importPassphrase
+            } set: { text in
+                settings.importPassphrase = text
+            }
+        )
     }
 
     /// Settings over `graph`, saying `coreVersion` is the loaded core's.
@@ -140,6 +154,7 @@ public struct SettingsView: View {
     private func showNewKey(_ keyId: String) {
         let heldExport = navigation.path.contains(where: \.isExport)
         navigation.path = [.publicKey(keyId)]
+        model.closeImport()
         if heldExport {
             model.export.close()
         }

@@ -6,8 +6,9 @@ import SwiftUI
 /// `.newPassword`) tells Password AutoFill that the field holds one, so the field has no content type. Apple's
 /// documentation gives no content type for a secret that is not a login, and no content type alone stops the offer
 /// to keep what was typed: iOS makes that offer when a screen goes while a secure field holds text (`.password`, no
-/// content type and `.oneTimeCode` all got it on the iOS 27 simulator). Each screen therefore empties its passphrase
-/// fields before it goes.
+/// content type and `.oneTimeCode` all got it on the iOS 27 simulator). So each screen's model empties the passphrase
+/// before the screen goes: the import's on Back and while an import runs (``ImportKeyView``), the export's when its
+/// page closes (``ExportKeyModel/close()``).
 internal enum PassphraseEntry {
     /// The content type of a passphrase's field: none, as a passphrase is not a login.
     internal static let contentType: UITextContentType? = nil

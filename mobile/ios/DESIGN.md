@@ -403,10 +403,11 @@ A full-screen cover while the app has no key (or can't read its keys), in a `Nav
 - **Import a key** (pushed): a scroll view of grouped fields, not a `Form` (a list lets go of the rows larger text
   pushes off the screen, which the accessibility audit reads as text that doesn't scale). The private key in a mono `TextEditor`, Choose file (the system's file importer,
   64 KB at most), the passphrase (`SecureField` with Show and Hide), and **Import key**. A problem shows under the field
-  it is about: the key's under the key, the passphrase's under the passphrase. The key and the passphrase live in the
-  screen's state only. A passphrase is not a login: its fields here and on the export have no login content type
-  (`PassphraseEntry`), and the passphrase field is empty while the import runs (a refused passphrase comes back): when
-  a screen goes, iOS offers to keep the text of its secure fields in Passwords.
+  it is about: the key's under the key, the passphrase's under the passphrase. The key lives in the screen's state
+  only, the passphrase in the model's (`importPassphrase`). A passphrase is not a login: its fields here and on the
+  export have no login content type (`PassphraseEntry`). The passphrase field is empty while the import runs (a refused
+  passphrase comes back), and Back, or any other way off the screen, empties it before the screen goes: when a screen
+  goes, iOS offers to keep the text of its secure fields in Passwords.
 - **Add this key to your machines:** the three numbered steps, the public key's plate with Copy and Share
   (`ShareLink`), the fingerprint, the plate of the command that appends it, and **Done**, which ends the first run.
   The machine form pushes the same screen without Done.

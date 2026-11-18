@@ -105,6 +105,48 @@ internal struct SettingsKeysTests {
         #expect(model.keys.count == 2)
     }
 
+    @Test("the import's passphrase is empty while the import runs, a refused one comes back, and leaving empties it")
+    internal func importPassphrase() async throws {
+        defer { test.remove() }
+        _ = try await test.seedKey()
+        let held = test.maker.holdImports()
+        let model = SettingsModel(graph: test.graph)
+        model.startImport()
+        model.importPassphrase = "wrong"
+        let first = Task {
+            var key = Data(FakeKeyMaker.encryptedKey.utf8)
+            await model.importKey(privateKey: &key, passphrase: "wrong")
+        }
+        await Wait.until { model.work.isImporting }
+        #expect(model.importPassphrase.isEmpty)
+        held.signal()
+        await first.value
+        #expect(model.work.importProblem == .wrongPassphrase)
+        #expect(model.importPassphrase == "wrong")
+        // leaving the import empties it before the page goes
+        model.closeImport()
+        #expect(model.importPassphrase.isEmpty)
+    }
+
+    @Test("an import refused after its page closed does not put its passphrase back")
+    internal func importPassphraseAfterClose() async throws {
+        defer { test.remove() }
+        _ = try await test.seedKey()
+        let held = test.maker.holdImports()
+        let model = SettingsModel(graph: test.graph)
+        model.startImport()
+        let first = Task {
+            var key = Data(FakeKeyMaker.encryptedKey.utf8)
+            await model.importKey(privateKey: &key, passphrase: "wrong")
+        }
+        await Wait.until { model.work.isImporting }
+        model.closeImport()
+        held.signal()
+        await first.value
+        #expect(model.work.importProblem == .wrongPassphrase)
+        #expect(model.importPassphrase.isEmpty)
+    }
+
     @Test("switching keys reaches a connected machine's record and keeps its connection and sessions")
     internal func switchConnected() async throws {
         defer { test.remove() }

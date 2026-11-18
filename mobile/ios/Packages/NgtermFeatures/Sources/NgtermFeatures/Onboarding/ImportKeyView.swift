@@ -6,9 +6,14 @@ import UniformTypeIdentifiers
 /// Importing a key the user already has: pasted, or read from a file they choose, and its passphrase.
 ///
 /// What was wrong with the last attempt shows under the field it is about, and the key (typed, or the chosen file's)
-/// stays for another try. The key and the passphrase live only in this screen's state and go when it does; a chosen
-/// file's bytes are zeroed when they are replaced or the screen goes. The first run and Settings both push it, each
-/// over its own model (``ImportKeyWork``).
+/// stays for another try. The key lives only in this screen's state and goes when it does; a chosen file's bytes are
+/// zeroed when they are replaced or the screen goes. The first run and Settings both push it, each over its own model
+/// (``ImportKeyWork``).
+///
+/// The passphrase is the model's: when a screen goes while a secure field holds text, iOS offers to keep that text in
+/// Passwords, whatever the field's content type, and a passphrase is not a password to keep. So the model empties it
+/// while an import runs, and Back (or any other way off the screen) empties it before the screen goes. A refused
+/// passphrase comes back into the field, for another try.
 internal struct ImportKeyView: View {
     // a private key file is a few kilobytes; anything far bigger is not one
     private static let maxKeyBytes = 65_536
@@ -17,7 +22,6 @@ internal struct ImportKeyView: View {
 
     internal let work: ImportKeyWork
     @State private var keyText = ""
-    @State private var passphrase = ""
     @State private var isPassphraseShown = false
     @State private var chosen: Data?
     @State private var isChoosingFile = false
@@ -111,9 +115,9 @@ internal struct ImportKeyView: View {
             HStack {
                 Group {
                     if isPassphraseShown {
-                        TextField(String(localized: "Passphrase"), text: $passphrase)
+                        TextField(String(localized: "Passphrase"), text: work.passphrase)
                     } else {
-                        SecureField(String(localized: "Passphrase"), text: $passphrase)
+                        SecureField(String(localized: "Passphrase"), text: work.passphrase)
                     }
                 }
                 .passphraseEntry()
@@ -140,23 +144,15 @@ internal struct ImportKeyView: View {
         }
     }
 
-    // imports the chosen file's key (a copy of its own: the import zeroes what it is handed), or the text.
-    //
-    // The passphrase field is empty while the import runs, and gets the passphrase back if the import fails. When a
-    // screen goes while a secure field holds text, iOS offers to keep that text in Passwords, whatever the field's
-    // content type: a passphrase is not a password to keep. A successful import replaces this screen, so the field is
-    // empty when it goes.
+    // imports the chosen file's key (a copy of its own: the import zeroes what it is handed), or the text, with the
+    // passphrase typed (the model empties the field while the import runs)
     private func importKey() {
         let file = chosen
         let text = keyText
-        let typed = passphrase
-        passphrase = ""
+        let typed = work.passphrase.wrappedValue
         Task {
             var bytes = file.map { Data([UInt8]($0)) } ?? Data(text.utf8)
             await work.importKey(&bytes, typed)
-            if work.state().problem != nil {
-                passphrase = typed
-            }
         }
     }
 

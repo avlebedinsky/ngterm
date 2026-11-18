@@ -53,7 +53,8 @@ internal struct PassphraseEntryTests {
             },
             unreadable: {
                 // no file is chosen here
-            }
+            },
+            passphrase: .constant("")
         )
         Self.expectPassphraseTraits(try Self.secureFields(of: ImportKeyView(work: work)), count: 1)
     }

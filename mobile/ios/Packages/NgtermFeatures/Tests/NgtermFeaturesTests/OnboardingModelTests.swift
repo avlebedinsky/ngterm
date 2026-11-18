@@ -250,6 +250,46 @@ internal struct OnboardingModelTests {
         #expect(test.maker.generated == 1)
     }
 
+    @Test("the import's passphrase is empty while the import runs, a refused one comes back, and Back empties it")
+    internal func importPassphrase() async {
+        defer { test.remove() }
+        let held = test.maker.holdImports()
+        let model = OnboardingModel(keys: test.graph.keys)
+        model.startImport()
+        model.importPassphrase = "wrong"
+        let first = Task {
+            var key = Data(FakeKeyMaker.encryptedKey.utf8)
+            await model.importKey(privateKey: &key, passphrase: "wrong")
+        }
+        await Wait.until { model.isImporting }
+        #expect(model.importPassphrase.isEmpty)
+        held.signal()
+        await first.value
+        #expect(model.step == .importing(isBusy: false, problem: .wrongPassphrase))
+        #expect(model.importPassphrase == "wrong")
+        // Back empties it before the import goes
+        model.back()
+        #expect(model.importPassphrase.isEmpty)
+    }
+
+    @Test("an import refused after Back does not put its passphrase back")
+    internal func importPassphraseAfterBack() async {
+        defer { test.remove() }
+        let held = test.maker.holdImports()
+        let model = OnboardingModel(keys: test.graph.keys)
+        model.startImport()
+        let first = Task {
+            var key = Data(FakeKeyMaker.encryptedKey.utf8)
+            await model.importKey(privateKey: &key, passphrase: "wrong")
+        }
+        await Wait.until { model.isImporting }
+        model.back()
+        held.signal()
+        await first.value
+        #expect(model.step == .start)
+        #expect(model.importPassphrase.isEmpty)
+    }
+
     @Test("the import doesn't open past the welcome")
     internal func importOnlyFromWelcome() async {
         defer { test.remove() }
