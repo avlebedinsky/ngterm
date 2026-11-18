@@ -276,9 +276,19 @@ class BothAppsE2eTest {
         }
     }
 
+    /**
+     * System Back closes the open menu. A Back that comes before the menu's window has the focus reaches no window, so
+     * a menu still open after the wait gets one more Back.
+     */
     private fun closeTheMenu() {
-        device.pressBack()
-        compose.waitUntil(MENU_WAIT_MS) { nodes(hasText(text(R.string.session_chat_view))) == 0 }
+        val open = hasText(text(R.string.session_chat_view))
+        repeat(MENU_BACKS) {
+            if (nodes(open) > 0) {
+                device.pressBack()
+                runCatching { compose.waitUntil(MENU_WAIT_MS) { nodes(open) == 0 } }
+            }
+        }
+        assertEquals("the menu stays open after $MENU_BACKS presses of Back", 0, nodes(open))
     }
 
     /**
@@ -387,5 +397,6 @@ class BothAppsE2eTest {
         const val COVER_WAIT_MS = 8_000L
         const val ASK_WAIT_MS = 5_000L
         const val SYSTEM_BACKS = 2
+        const val MENU_BACKS = 3
     }
 }
