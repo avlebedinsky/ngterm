@@ -95,7 +95,9 @@ the reference gate excuses them; an unsupported capability is a recorded diverge
 - `--must-pass CAPABILITY` fails the run unless every collected test requiring it ran and passed, and at least one
   did (reference-macos uses it for `live-sessions`). A test skipped as unsupported for lacking only other
   capabilities it requires is excused: the reference's skip of a Rust-only extension's Live tests is that divergence.
-  So is the reference's expected failure under an `upstream_bug` allowance, and no other xfail.
+  So is a test whose `since` is above the build's parity level, as the build does not claim it yet; a build with
+  no level gets no such excuse. So is the reference's expected failure under an `upstream_bug` allowance, and no
+  other xfail.
 - `--nodeid-report PATH` writes one JSON line per run test with its outcome merged over setup, call and teardown,
   plus the run's collection errors and `--must-pass` problems; `tools/check_ratchet.py` reads it.
   A run pytest refuses (a usage error, a path or node id that matches nothing) or that breaks internally writes none.

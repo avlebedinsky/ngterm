@@ -21,7 +21,8 @@ Rust build reports, and no other key (`assert_version_result` in `agterm_conform
   (`launch(private_install=True)`, `Adapter.write_installed`).
 - `conformance.parityLevel`: the upstream version whose behavior the build claims, a dotted version with an optional
   `v` (no suffix such as `-beta`).
-  A test marked `since(V)` above it skips as `not-yet-at-level`.
+  A test marked `since(V)` above it skips as `not-yet-at-level`, and `--must-pass` excuses that skip
+  (conformance/README.md > Markers).
   The Rust build claims `0.41.1` (`PARITY_LEVEL` in `ngterm-proto`), raised after the release's feature ports.
   The catalog independently names the reference release: a mechanical catalog bump does not raise the Rust claim.
   Tests through v0.41.1 are eligible at this level; capabilities and host requirements still govern execution.

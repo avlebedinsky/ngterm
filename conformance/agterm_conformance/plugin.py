@@ -105,6 +105,8 @@ _GATE_KEY = pytest.StashKey[coverage.Report]()
 _COLLECTED_KEY = pytest.StashKey[list[pytest.Item]]()
 # By node id: every capability of a test's unmet `requires` markers on the build, for a test skipped as unsupported.
 _UNMET_KEY = pytest.StashKey[dict[str, frozenset[str]]]()
+# The node ids skipped because their `since` is above the build's parity level.
+_ABOVE_LEVEL_KEY = pytest.StashKey[set[str]]()
 
 
 def get_impl_options(config: pytest.Config) -> ImplOptions:
@@ -317,8 +319,9 @@ class MustPass:
     (`requires`), not a gap in the must-pass ones. The reference skips the Rust-only `pages-survive` tests that need
     Live sessions too. What the build lacks is every unmet `requires` of the test against the build's profile, as
     `pytest_runtest_setup` recorded it, not only the first one the skip message names (an in-body skip, with no such
-    record, is judged by its message); each name must be one of the test's own requirements. And except the
-    reference's expected failure under a named `upstream_bug` allowance."""
+    record, is judged by its message); each name must be one of the test's own requirements. Except a test whose
+    `since` is above the build's parity level: the build does not claim it yet. And except the reference's expected
+    failure under a named `upstream_bug` allowance."""
 
     def __init__(self, capabilities: frozenset[str], config: pytest.Config) -> None:
         self.capabilities = capabilities
@@ -350,7 +353,7 @@ class MustPass:
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" and report.passed:
             self.passed.add(report.nodeid)
-        elif report.skipped and self._divergence(report):
+        elif report.skipped and (self._divergence(report) or self._above_level(report)):
             self.excused.add(report.nodeid)
         elif (report.when == "call" and report.skipped
               and str(getattr(report, "wasxfail", "")).startswith(f"{UPSTREAM_BUG}:")):
@@ -366,6 +369,9 @@ class MustPass:
             return False
         unmet = self.config.stash.get(_UNMET_KEY, {}).get(report.nodeid, named)
         return unmet <= requires and unmet.isdisjoint(self.capabilities)
+
+    def _above_level(self, report: pytest.TestReport) -> bool:
+        return report.nodeid in self.config.stash.get(_ABOVE_LEVEL_KEY, set())
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_sessionfinish(self, session: pytest.Session) -> None:
@@ -722,6 +728,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if reason is not None and reason.startswith(f"{UNSUPPORTED}:"):
         unmet = unmet_requirements(item, adapter.capabilities)
         item.config.stash.setdefault(_UNMET_KEY, {})[item.nodeid] = unmet
+    if reason is not None and reason.startswith(f"{NOT_YET_AT_LEVEL}: since "):
+        item.config.stash.setdefault(_ABOVE_LEVEL_KEY, set()).add(item.nodeid)
     if reason is None and UI_FIXTURES.intersection(getattr(item, "fixturenames", ())):
         reason = ui_skip_reason(adapter)
     if reason is not None:

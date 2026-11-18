@@ -425,6 +425,65 @@ def test_must_pass_judges_a_skip_by_every_unmet_requirement(
         result.stdout.fnmatch_lines(["*--must-pass live-sessions: not passed*", "*test_parked*"])
 
 
+AHEAD_LIVE_SUITE = """
+import pytest
+
+@pytest.mark.requires("live-sessions")
+def test_live(ctl):
+    {body}
+
+@pytest.mark.requires("live-sessions")
+@pytest.mark.since("0.37.0")
+def test_ahead(ctl):
+    pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("profile", "body", "ret", "problem"),
+    [
+        # a test above the build's level is not claimed yet: excused
+        ({"parityLevel": "0.36.0", "capabilities": ["live-sessions"]}, "pass", pytest.ExitCode.OK, None),
+        # at its level it runs and must pass
+        ({"parityLevel": "0.37.0", "capabilities": ["live-sessions"]}, "pass", pytest.ExitCode.OK, None),
+        # an excused test is no pass: the run still owes one
+        (
+            {"parityLevel": "0.36.0", "capabilities": ["live-sessions"]},
+            "pytest.skip('other')",
+            pytest.ExitCode.TESTS_FAILED,
+            "*test_live",
+        ),
+        # an in-body skip that only reads as a level skip: not excused
+        (
+            {"parityLevel": "0.36.0", "capabilities": ["live-sessions"]},
+            "pytest.skip('not-yet-at-level: since 0.37.0, rust is at 0.36.0')",
+            pytest.ExitCode.TESTS_FAILED,
+            "*test_live",
+        ),
+        # a build with no parity level is below every level, not ahead of a test: not excused
+        ({"capabilities": ["live-sessions"]}, "pass", pytest.ExitCode.TESTS_FAILED, "*test_ahead"),
+    ],
+)
+def test_must_pass_excuses_a_test_above_the_builds_level(
+    pytester: pytest.Pytester,
+    roots: list[Path],
+    fake_bin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: dict[str, object],
+    body: str,
+    ret: pytest.ExitCode,
+    problem: str | None,
+) -> None:
+    monkeypatch.setenv("FAKE_VERSION", json.dumps({"conformance": profile}))
+    pytester.makepyfile(AHEAD_LIVE_SUITE.replace("{body}", body))
+    result = run_suite(pytester, "--impl", "rust", "--bin", str(fake_bin), "--must-pass", "live-sessions")
+    assert result.ret == ret
+    if problem is None:
+        result.stdout.no_fnmatch_line("*--must-pass live-sessions: not passed*")
+    else:
+        result.stdout.fnmatch_lines(["*--must-pass live-sessions: not passed*", problem])
+
+
 def test_rust_without_a_profile_is_below_every_level(
     pytester: pytest.Pytester, roots: list[Path], fake_bin: Path
 ) -> None:
