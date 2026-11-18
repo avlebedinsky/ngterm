@@ -216,7 +216,8 @@ internal final class LogsOnAMachineTests: XCTestCase {
         secret.typeText(machine.passphrase + "\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
-        // the system's offer to keep the passphrase in Passwords comes at no fixed time, and takes the next tap
+        // a guard: the system's offer to keep the passphrase in Passwords (gone since the import empties its field)
+        // came at no fixed time, and took the next tap
         let page = app.descendants(matching: .any)["public-key-page"].firstMatch
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")

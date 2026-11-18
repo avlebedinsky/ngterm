@@ -278,9 +278,7 @@ internal struct ExportKeyView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 SecureField(title, text: text)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.password)
+                    .passphraseEntry()
                     .frame(minHeight: Spacing.hitTarget)
                     .accessibilityIdentifier(identifier)
                 trailing()

@@ -2,9 +2,9 @@ import XCTest
 
 /// A key's export on the fake core, whose device's owner confirms at once (mobile/android's `KeyExport*E2eTest`s): a
 /// key made on the first run is saved under a passphrase through the system's file screen and Import a key reads the
-/// file back as the same key; a save left without a place says nothing; an export without a passphrase warns and
-/// asks again, and the page left forgets it; a device with no passcode exports nothing; a check that failed opens
-/// the export on Try again.
+/// file back as the same key; a save left without a place says nothing; an export under a passphrase brings no offer
+/// of the system's to keep the passphrase in Passwords; an export without a passphrase warns and asks again, and the
+/// page left forgets it; a device with no passcode exports nothing; a check that failed opens the export on Try again.
 ///
 /// The key is the core's own (made by the first run, kept in memory), so the file holds a real export. It is saved
 /// under a name of this run's own, and removed after it.
@@ -167,6 +167,21 @@ internal final class ExportKeyTests: XCTestCase {
         FakeApp.expect(app.secureTextFields["export-passphrase"], "the passphrase field, the switch off again")
         XCTAssertEqual(unprotected.value as? String, "0")
         XCTAssertFalse(app.staticTexts["Copied"].exists, "the page still says Copied")
+    }
+
+    @MainActor
+    internal func testAnExportUnderAPassphraseBringsNoOfferToKeepIt() {
+        // an offer takes the next tap: the steps after it are not what they say
+        continueAfterFailure = false
+        let app = openExport()
+        typePassphrase(Self.passphrase, in: app)
+        app.buttons["export-copy"].tap()
+        FakeApp.expect(app.staticTexts["Copied"], "that the key was copied")
+        PasswordOffer.expectNone(in: app, "after the export")
+
+        app.navigationBars["Export private key"].buttons.element(boundBy: 0).tap()
+        FakeApp.expect(app.navigationBars["Settings"], "Settings again")
+        PasswordOffer.expectNone(in: app, "once the export screen closed")
     }
 
     @MainActor

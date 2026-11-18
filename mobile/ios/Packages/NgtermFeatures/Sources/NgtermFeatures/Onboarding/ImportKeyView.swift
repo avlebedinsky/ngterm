@@ -116,9 +116,7 @@ internal struct ImportKeyView: View {
                         SecureField(String(localized: "Passphrase"), text: $passphrase)
                     }
                 }
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textContentType(.password)
+                .passphraseEntry()
                 .accessibilityIdentifier("passphrase")
                 Button(isPassphraseShown ? String(localized: "Hide") : String(localized: "Show")) {
                     isPassphraseShown.toggle()
@@ -142,14 +140,23 @@ internal struct ImportKeyView: View {
         }
     }
 
-    // imports the chosen file's key (a copy of its own: the import zeroes what it is handed), or the text
+    // imports the chosen file's key (a copy of its own: the import zeroes what it is handed), or the text.
+    //
+    // The passphrase field is empty while the import runs, and gets the passphrase back if the import fails. When a
+    // screen goes while a secure field holds text, iOS offers to keep that text in Passwords, whatever the field's
+    // content type: a passphrase is not a password to keep. A successful import replaces this screen, so the field is
+    // empty when it goes.
     private func importKey() {
         let file = chosen
         let text = keyText
         let typed = passphrase
+        passphrase = ""
         Task {
             var bytes = file.map { Data([UInt8]($0)) } ?? Data(text.utf8)
             await work.importKey(&bytes, typed)
+            if work.state().problem != nil {
+                passphrase = typed
+            }
         }
     }
 

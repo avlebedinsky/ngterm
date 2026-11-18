@@ -75,9 +75,10 @@ internal enum LogsPage {
 
     /// Taps `control` until `isDone`, and closes the system's offer to keep a password whenever it shows.
     ///
-    /// After a key's import with its passphrase, the system offers to keep the passphrase in Passwords. The offer
-    /// comes at no fixed time: on a loaded simulator it came 11 s after the import, over Settings. A tap while the
-    /// offer shows or closes reaches only the offer. The tap is then tried again, while `control` is on screen.
+    /// Before Import a key emptied its passphrase field as the import starts, the system offered to keep the passphrase
+    /// in Passwords after the import (``KeyPassphraseOfferTests`` now fails if it does). The close stays as a guard:
+    /// the offer came at no fixed time (on a loaded simulator 11 s after the import, over Settings), and a tap while
+    /// it shows or closes reaches only the offer. The tap is then tried again, while `control` is on screen.
     /// `isDone` reads the app on each poll. An offer that shows when `isDone` holds is closed before the return,
     /// because it takes the next tap. Returns true when it closed an offer.
     @MainActor
@@ -123,9 +124,10 @@ internal enum LogsPage {
         return true
     }
 
-    /// Closes the offer to keep the imported key's passphrase if it comes after the import's last tap.
+    /// Closes the offer to keep the imported key's passphrase if it comes after the import's last tap (a guard, as
+    /// for ``tap(_:until:in:_:)``).
     ///
-    /// The system makes the offer one time for each import. When the import's taps closed no offer, it can still
+    /// The system made the offer one time for each import. When the import's taps closed no offer, it can still
     /// come, and take a tap of the steps after the import: wait for it until `wait` ends.
     @MainActor
     internal static func closeLateOffer(unless closed: Bool, in app: XCUIApplication) {

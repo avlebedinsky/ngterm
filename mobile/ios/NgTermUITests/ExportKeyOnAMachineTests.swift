@@ -191,7 +191,8 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         closePublicKey(in: app)
     }
 
-    // the public key page's Done, past the offer to keep the passphrase in Passwords
+    // the public key page's Done, past the offer to keep the passphrase in Passwords: a guard, as the offer is gone
+    // since the import empties its field
     @MainActor
     private func closePublicKey(in app: XCUIApplication) {
         let notNow = app.buttons["Not Now"]

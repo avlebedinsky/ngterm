@@ -17,18 +17,8 @@ internal final class LogsTests: XCTestCase {
     private static let typed = "qa-typed-mk9x"
     private static let chatMarker = "qa-chat-mk3p"
     private static let chatText = "\(chatMarker) please look at the build"
-    private static let passphrase = "qa-pass-mk7r"
-    // a key made for this test alone (ssh-keygen, ed25519, under `passphrase`), never a machine's
-    private static let key = """
-        -----BEGIN OPENSSH PRIVATE KEY-----
-        b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0AAAAGAAAABCWngIYVP
-        VfoDphEkgjvf91AAAAIAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIAQf4nqcnoLFMdd2
-        Oiv6z8HrIpFslGrrx4lZRZnMxyJbAAAAkNAV6oDZnuBaC4bgT40ab7mXuhc3SFz+az1Yhh
-        I+o77Iyh5R6zc8eqAt77knhwXoO4xwYTrz9Kksmzjq/FL34xgQGcxBWPjJwiAGgYZpHpTe
-        G3YEmpNoPCh4DIdIPAi0iglvnx53LueqWq6bk8b4WnC3LeyHiiq+ruDes7AXg8Jwrh3Mar
-        j+YSTabiXDgS4ZmQ==
-        -----END OPENSSH PRIVATE KEY-----
-        """
+    private static let passphrase = TestKey.passphrase
+    private static let key = TestKey.privateKey
     private static let fingerprint = "b2HWDf9FyXwRq12b914kfeYPm0qpzJF8WiUKuHlr8Ag"
     // what the log tells of the session, oldest first
     private static let told = [
@@ -150,7 +140,8 @@ internal final class LogsTests: XCTestCase {
         secret.typeText(Self.passphrase + "\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
-        // the system's offer to keep the passphrase in Passwords comes at no fixed time, and takes the next tap
+        // a guard: the system's offer to keep the passphrase in Passwords (gone since the import empties its field)
+        // came at no fixed time, and took the next tap
         let done = app.buttons["settings-done"]
         let back = app.buttons["BackButton"].firstMatch
         let closedOnBack = LogsPage.tap(back, until: { done.exists }, in: app, "no Settings' Done")
