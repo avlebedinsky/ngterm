@@ -180,6 +180,9 @@ def test_a_permission_prompt_is_an_approval_only_while_the_pane_is_blocked(cli, 
         approval = _record(ctl, sid)["approval"]
         assert approval["tool"] == "Bash"
         assert "touch allowed.txt" in approval["title"] + approval.get("detail", "")
+        # a background subagent's `--if-idle` write the blocked row skips leaves the dialog's approval up
+        assert cli(*status[:2], "active", "--if-idle", *status[2:]).returncode == 0
+        assert _record(ctl, sid)["approval"] == approval
         assert cli(*status[:2], "active", *status[2:]).returncode == 0
         assert "approval" not in _record(ctl, sid)
     finally:
