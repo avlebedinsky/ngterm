@@ -765,10 +765,11 @@ fn a_paint_that_finds_the_pane_busy_draws_the_output_on_the_next_frame(cx: &mut 
     wait_painted(&view, cx, "ready");
     let pane = terminal.read_with(cx, |terminal, _| terminal.shared().pane().unwrap());
     pane.write(b"\n").unwrap();
-    // the output is in before the app runs again; the one paint its wake brings finds the pane busy, and nothing
-    // wakes the app after that (the IO thread can hold a lock for a moment after its wake)
+    // the output is in, and the IO thread sent its last wake, before the app runs again; the one paint that wake
+    // brings finds the pane busy, and nothing wakes the app after that (the IO thread can hold a lock for a moment
+    // after its wake)
     let deadline = Instant::now() + DEADLINE;
-    while !pane.read_text(ngterm_term::TextRegion::All).unwrap().contains("then") {
+    while !(pane.read_text(ngterm_term::TextRegion::All).unwrap().contains("then") && pane.io_idle()) {
         assert!(Instant::now() < deadline, "the output never reached the terminal");
         std::thread::sleep(Duration::from_millis(5));
     }

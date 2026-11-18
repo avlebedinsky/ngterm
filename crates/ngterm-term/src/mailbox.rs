@@ -114,6 +114,9 @@ struct State {
     child_exited: bool,
     shutdown: bool,
     animation_deadline: Option<Instant>,
+    /// The worker sleeps in [`Mailbox::next`] ([`Mailbox::idle`]).
+    #[cfg(any(test, feature = "test-support"))]
+    waiting: bool,
 }
 
 #[derive(Debug)]
@@ -257,8 +260,25 @@ impl Mailbox {
                 state.eof = OutputEnd::Reported;
                 return Mail::Eof;
             }
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                state.waiting = true;
+            }
             state = self.wait(state, deadline);
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                state.waiting = false;
+            }
         }
+    }
+
+    /// The worker sleeps in [`Mailbox::next`] and no output is queued: it completed each batch it took (fed, counted
+    /// and woken for), and the next batch comes only from new output. The worker sets the flag under the state lock
+    /// that this call takes, so all that the worker did before it sleeps happened before this call returns `true`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn idle(&self) -> bool {
+        let state = self.lock();
+        state.waiting && state.output.is_empty()
     }
 
     /// `len` bytes of a taken read reached the VT. Whether reads were resumed: the caller wakes the actor's reader
@@ -401,5 +421,25 @@ mod tests {
         assert_eq!(waiter.join().unwrap(), Answer::ChildExited);
         mailbox.answer(2, ClipboardAnswer::Denied);
         assert_eq!(mailbox.await_answer(2, None), Answer::ChildExited);
+    }
+
+    #[test]
+    fn the_worker_is_idle_only_while_it_sleeps_with_no_output_queued() {
+        let mailbox = Arc::new(mailbox().0);
+        assert!(!mailbox.idle(), "the worker did not wait yet");
+        let (slept, asleep) = std::sync::mpsc::channel();
+        *mailbox.before_wait.lock().unwrap() = Some(slept);
+        let worker = {
+            let mailbox = Arc::clone(&mailbox);
+            std::thread::spawn(move || mailbox.next(None))
+        };
+        asleep.recv().unwrap();
+        // the worker sets the flag before it signals, and it sleeps under the lock that `idle` takes
+        assert!(mailbox.idle());
+        mailbox.deliver(b"out");
+        assert_eq!(worker.join().unwrap(), Mail::Output(b"out".to_vec()));
+        assert!(!mailbox.idle(), "the worker holds a batch");
+        mailbox.deliver(b"more");
+        assert!(!mailbox.idle(), "output is queued");
     }
 }

@@ -830,6 +830,14 @@ impl Pane {
         self.shared.paint_hooks.stall.store(true, Ordering::Release);
     }
 
+    /// The IO worker waits for new output: each batch it took is fed to the VT, and its wake was sent. A test that
+    /// waits for this before [`Self::stall_next_paint`] knows that no wake of the worker comes after the stalled paint.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn io_idle(&self) -> bool {
+        self.shared.mailbox.idle()
+    }
+
     /// Every event reported since the last call, in order. A program title equal to one still waiting here was
     /// dropped as it came (upstream's `TitleAdmission`, #911): a program writing one title in a loop leaves a few
     /// events, not one per write.
