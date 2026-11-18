@@ -39,7 +39,9 @@ Linux build unless it names another OS.
   `~/.omp/agent/extensions/ngterm-status.ts`. It reports `active --blink` on `agent_start`, keeps that status on
   `agent_end` while `willContinue` is true (including background work), reports `completed --auto-reset` on the final
   `agent_end`, and clears to `idle` on `session_shutdown`. It uses the shared wrapper, including the PowerShell form
-  on Windows, and does nothing outside ngterm. OMP runs the extension again in each subagent session (task tool,
+  on Windows, and does nothing outside ngterm. Each wrapper call starts after the previous call ends. On Windows,
+  where a cold `powershell.exe` needs some seconds, a call gets 10 s and the turn does not wait for it; the Pi
+  extension does the same (`build/patches/agent-status/0004-windows-forms.patch`). Upstream waits up to 1 s. OMP runs the extension again in each subagent session (task tool,
   `/tan` clones) with the pane of the parent, so it reports only for the top-level session (`ctx.agent.kind`). The
   Claude adapters recognize `omp` as a parent agent, so a Claude worker cannot reset its status. Restart OMP after installation. The installers preserve unmarked user files;
   custom OMP config directories and named profiles need manual installation into their own `extensions/` and
@@ -378,12 +380,14 @@ and how this build does it where the OS matters:
 - For the OpenCode plugin's tests (`crates/ngterm-app/tests/opencode_status.rs`): Node.js 22.7+ (or 20.19+ on the 20.x
   line), which imports the plugin's bare ES module. A missing or older one skips them (`SKIPPED:`) unless
   `NGTERM_REQUIRE_NODE_TESTS` is set, as CI sets it, which fails them instead.
-- For the Oh My Pi extension's tests (`crates/ngterm-app/tests/omp_status.rs`): Node.js 22.6+ with TypeScript stripping.
-  The test loads the real extension and checks its lifecycle status reports and POSIX/Windows command forms.
+- For the Oh My Pi and Pi extensions' tests (`crates/ngterm-app/tests/omp_status.rs`, `pi_status.rs`): Node.js 22.6+
+  with TypeScript stripping. Each test loads the real extension. It checks the lifecycle status reports, the
+  POSIX/Windows command forms and timeouts, the order of slow calls, and that a Windows turn does not wait for a call.
   A Node capability probe checks the required flags. A missing or incompatible Node skips the test unless
   `NGTERM_REQUIRE_NODE_TESTS` is set, which makes it fail instead.
-- For native OMP end-to-end tests (`crates/ngterm-gpui/tests/omp.rs`): the real `omp` executable, Python 3, Xvfb,
-  lavapipe and a local OpenAI-compatible chat endpoint. These tests use a private home, display, buses and ngterm socket.
+- For native OMP end-to-end tests (`crates/ngterm-gpui/tests/omp.rs`): the real `omp` executable (a release binary,
+  or the Bun install's script with `bun` on `PATH`), Python 3, Xvfb, lavapipe and a local OpenAI-compatible chat
+  endpoint. The pane's `PATH` gets the directories of `omp` and of its script interpreter. These tests use a private home, display, buses and ngterm socket.
   They do not read the user's OMP credentials. Set `NGTERM_REQUIRE_OMP_E2E=1` to fail instead of skipping missing prerequisites.
 - For the conformance suite: Python 3.11+ with venv, weston and dbus-daemon (each instance gets its own headless
   weston and bus); zsh or fish as the login shell for the Live tests of that shell. Its ui layer also needs Xvfb (an

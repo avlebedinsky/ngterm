@@ -6,8 +6,9 @@
 mod support;
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -320,6 +321,41 @@ fn check_abort_and_recovery(sandbox: &Sandbox, rpc: &mut File, id: &str) -> Test
     Ok(())
 }
 
+/// The directories the pane needs on its PATH to start `omp`: the directory of the given path and of the file it
+/// resolves to, and for a script (the Bun install's `#!/usr/bin/env bun`) the directory of its interpreter, found on
+/// the host's PATH as `env` finds it.
+fn omp_path_dirs(omp: &Path, host_path: &OsStr) -> TestResult<Vec<PathBuf>> {
+    let resolved = fs::canonicalize(omp)?;
+    let mut dirs: Vec<PathBuf> = [omp, resolved.as_path()]
+        .iter()
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .collect();
+    let mut head = Vec::new();
+    File::open(&resolved)?.take(256).read_to_end(&mut head)?;
+    if let Some(line) = head.strip_prefix(b"#!") {
+        let line = String::from_utf8_lossy(line.split(|&byte| byte == b'\n').next().unwrap_or_default()).into_owned();
+        let mut words = line.split_whitespace();
+        let program = words.next().unwrap_or_default();
+        let interpreter = if Path::new(program).file_name() == Some(OsStr::new("env")) {
+            words.find(|word| !word.starts_with('-')).unwrap_or_default()
+        } else {
+            program
+        };
+        let found = if interpreter.contains('/') {
+            Some(PathBuf::from(interpreter))
+        } else {
+            std::env::split_paths(host_path)
+                .map(|dir| dir.join(interpreter))
+                .find(|candidate| !interpreter.is_empty() && candidate.is_file())
+        };
+        if let Some(dir) = found.as_deref().and_then(Path::parent) {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    dirs.dedup();
+    Ok(dirs)
+}
+
 fn run_e2e(pane: &str) -> TestResult {
     let Some(omp) = std::env::var_os("NGTERM_OMP_E2E_BIN").map(PathBuf::from) else {
         return missing("NGTERM_OMP_E2E_BIN (absolute path to omp)");
@@ -340,11 +376,18 @@ fn run_e2e(pane: &str) -> TestResult {
     if !ctl_path.is_file() {
         return missing("ngtermctl next to the built ngterm executable");
     }
-    let xvfb_dir = std::env::split_paths(&std::env::var_os("PATH").ok_or("no PATH")?)
+    let host_path = std::env::var_os("PATH").ok_or("no PATH")?;
+    let xvfb_dir = std::env::split_paths(&host_path)
         .find(|directory| directory.join("Xvfb").is_file())
         .ok_or("no Xvfb")?;
+    let mut pane_path = vec![xvfb_dir];
+    pane_path.extend(omp_path_dirs(&omp, &host_path)?);
+    pane_path.extend(["/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
     let mut sandbox = Sandbox::new()?;
-    sandbox.set_env("PATH", format!("{}:/usr/local/bin:/usr/bin:/bin", xvfb_dir.display()));
+    let pane_path = std::env::join_paths(pane_path)?
+        .into_string()
+        .map_err(|_| "a PATH that is not UTF-8")?;
+    sandbox.set_env("PATH", pane_path);
     sandbox.start_xvfb()?;
     sandbox.use_software_rendering(&lavapipe);
     let proxy = start_proxy(&mut sandbox)?;
