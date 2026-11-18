@@ -25,9 +25,9 @@ function setup(fail = false) {
   });
   return {
     calls,
-    async emit(type, fields = {}) {
+    async emit(type, fields = {}, ctx = undefined) {
       const handler = handlers.get(type);
-      if (handler) await handler({ type, ...fields });
+      if (handler) await handler({ type, ...fields }, ctx);
     },
   };
 }
@@ -58,6 +58,24 @@ for (const platform of ['linux', 'darwin', 'win32']) {
     args: [...prefix, ...args], options: { timeout: 1000 },
   })));
 
+  // A task subagent runs this extension again in the same process, with the pane of its parent: only the
+  // top-level session reports, so the end and shutdown of a subagent keep the parent active.
+  const main = { agent: { kind: 'main', id: 'Main', name: 'main', depth: 0 } };
+  const sub = { agent: { kind: 'sub', id: '0-Task', name: 'task', depth: 1, parentId: 'Main' } };
+  const clone = { agent: { kind: 'sub', id: '1-Sub', name: 'sub', depth: 0, parentId: 'Main' } };
+  const nested = setup();
+  await nested.emit('agent_start', {}, main);
+  for (const ctx of [sub, clone]) {
+    await nested.emit('agent_start', {}, ctx);
+    await nested.emit('agent_end', { willContinue: false }, ctx);
+    await nested.emit('session_shutdown', {}, ctx);
+  }
+  await nested.emit('agent_end', { willContinue: false }, main);
+  await nested.emit('session_shutdown', {}, main);
+  assert.deepEqual(nested.calls.map(call => call.args.slice(prefix.length)), [
+    ['active', '--blink'], ['completed', '--auto-reset'], ['idle'],
+  ]);
+
   const failing = setup(true);
   await failing.emit('agent_start');
   await failing.emit('agent_end');
@@ -73,7 +91,7 @@ for (const platform of ['linux', 'darwin', 'win32']) {
   await outside.emit('session_shutdown');
   assert.deepEqual(outside.calls, []);
 }
-console.log('OMP lifecycle: active, continuations, background work, completed, shutdown, failures, outside ngterm; POSIX and Windows commands');
+console.log('OMP lifecycle: active, continuations, background work, completed, shutdown, subagents, failures, outside ngterm; POSIX and Windows commands');
 ";
 
 #[test]

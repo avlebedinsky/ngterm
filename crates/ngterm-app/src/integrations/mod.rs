@@ -45,7 +45,8 @@
 //!   these ([`hooks::Leftovers`]);
 //! - the Pi extension and both `OpenCode` plugins call the wrapper in `~/.config/ngterm/agent-status`;
 //! - Oh My Pi gets its own extension in `~/.omp/agent/extensions`, using `agent_end.willContinue` to keep a turn active
-//!   through continuations and background work, and clearing the status on shutdown. The Claude adapters recognize
+//!   through continuations and background work, and clearing the status on shutdown; it reports only for the top-level
+//!   session, as OMP runs it again in each subagent with the parent's pane. The Claude adapters recognize
 //!   `omp` as a parent agent so a worker cannot reset its pane (`build/patches/agent-status/0011-oh-my-pi.patch`);
 //! - the package adds Windows forms, which upstream (macOS only) has no need of: `ngterm-agent-status.ps1`,
 //!   `ngterm-claude-status.ps1` and `ngterm-agent-restore.ps1` do what their POSIX namesakes do under Windows

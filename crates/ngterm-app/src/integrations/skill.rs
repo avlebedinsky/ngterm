@@ -10,6 +10,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ngterm_core::paths::join_relative;
+
 use super::files;
 use super::{Environment, InstallError};
 
@@ -59,7 +61,9 @@ impl Agent {
                 Self::Codex => "Codex",
                 Self::Omp => "Oh My Pi",
             },
-            skill_directory: home.join(self.config_directory()).join("skills").join(SKILL_NAME),
+            skill_directory: join_relative(home, self.config_directory())
+                .join("skills")
+                .join(SKILL_NAME),
         }
     }
 }
@@ -123,7 +127,7 @@ pub fn plan(env: &Environment) -> Result<SkillPlan, InstallError> {
     let home = &env.home;
     let agents = [Agent::Claude, Agent::Codex, Agent::Omp]
         .into_iter()
-        .filter(|agent| home.join(agent.config_directory()).exists());
+        .filter(|agent| join_relative(home, agent.config_directory()).exists());
     let targets = install_targets(home, agents)
         .into_iter()
         .map(|target| {
@@ -261,6 +265,12 @@ mod tests {
             [claude.clone(), codex.clone(), omp.clone()]
         );
         assert_eq!(install_targets(home, [Agent::Omp]), std::slice::from_ref(&omp));
+        // the shown path has the platform's one separator, also inside `.omp/agent`
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            install_targets(home, [Agent::Omp])[0].skill_directory.to_str(),
+            Some(format!("/h{sep}.omp{sep}agent{sep}skills{sep}ngterm").as_str())
+        );
         assert_eq!(install_targets(home, [Agent::Codex]), std::slice::from_ref(&codex));
         assert_eq!(install_targets(home, [Agent::Claude]), std::slice::from_ref(&claude));
         assert_eq!(

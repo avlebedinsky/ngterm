@@ -39,8 +39,9 @@ Linux build unless it names another OS.
   `~/.omp/agent/extensions/ngterm-status.ts`. It reports `active --blink` on `agent_start`, keeps that status on
   `agent_end` while `willContinue` is true (including background work), reports `completed --auto-reset` on the final
   `agent_end`, and clears to `idle` on `session_shutdown`. It uses the shared wrapper, including the PowerShell form
-  on Windows, and does nothing outside ngterm. The Claude adapters recognize `omp` as a parent agent, so a Claude
-  worker cannot reset its status. Restart OMP after installation. The installers preserve unmarked user files;
+  on Windows, and does nothing outside ngterm. OMP runs the extension again in each subagent session (task tool,
+  `/tan` clones) with the pane of the parent, so it reports only for the top-level session (`ctx.agent.kind`). The
+  Claude adapters recognize `omp` as a parent agent, so a Claude worker cannot reset its status. Restart OMP after installation. The installers preserve unmarked user files;
   custom OMP config directories and named profiles need manual installation into their own `extensions/` and
   `skills/` directories. The resource is maintained in `build/patches/agent-status/0011-oh-my-pi.patch`.
 - Another extension beyond upstream: Install Agent Status Hooks… also wires a restore adapter

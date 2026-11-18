@@ -1108,6 +1108,7 @@ fn the_bundled_resources_carry_their_ownership_markers() {
     let call = format!("join(homedir(), {}, \"{WRAPPER_NAME}\")", segments.join(", "));
     for plugin in [
         "pi/ngterm-status.ts",
+        "omp/ngterm-status.ts",
         "opencode/ngterm-status.js",
         "opencode/ngterm-v2/tui.js",
     ] {
