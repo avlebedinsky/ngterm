@@ -697,7 +697,7 @@ fn terminal(cx: &mut TestAppContext, script: &str, dir: &Path) -> Entity<Termina
 fn settle(cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContext) -> bool) {
     let deadline = Instant::now() + DEADLINE;
     loop {
-        cx.run_until_parked();
+        super::run_frame(cx);
         if done(cx) {
             return;
         }
@@ -752,6 +752,33 @@ fn the_owner_starts_the_pane_at_its_grid_and_resizes_it(cx: &mut TestAppContext)
     wait_painted(&view, cx, "11 31");
     let frame = view.read_with(cx, |view, _| view.painted().cloned()).unwrap();
     assert_eq!((frame.cols, frame.rows.len()), (31, 11));
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn a_paint_that_finds_the_pane_busy_draws_the_output_on_the_next_frame(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let terminal = terminal(cx, "printf 'ready'; read _; printf 'then'; exec cat", dir.path());
+    let (view, cx) = cx.add_window_view(|_, cx| TerminalView::new(&terminal, ViewRole::Owner, cx));
+    cx.simulate_scale_factor_change(1.0);
+    cx.simulate_resize(size(px(640.), px(480.)));
+    wait_painted(&view, cx, "ready");
+    let pane = terminal.read_with(cx, |terminal, _| terminal.shared().pane().unwrap());
+    pane.write(b"\n").unwrap();
+    // the output is in before the app runs again; the one paint its wake brings finds the pane busy, and nothing
+    // wakes the app after that (the IO thread can hold a lock for a moment after its wake)
+    let deadline = Instant::now() + DEADLINE;
+    while !pane.read_text(ngterm_term::TextRegion::All).unwrap().contains("then") {
+        assert!(Instant::now() < deadline, "the output never reached the terminal");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    pane.stall_next_paint();
+    cx.run_until_parked();
+    assert!(
+        !painted_text(&view, cx).contains("then"),
+        "the busy paint kept the previous frame"
+    );
+    wait_painted(&view, cx, "then");
 }
 
 #[gpui_kit::test]

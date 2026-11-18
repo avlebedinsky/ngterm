@@ -279,9 +279,19 @@ pub(crate) struct Shared {
     started: Instant,
     /// Set once the IO worker fed the last of the output (or stopped); after EOF it still services animation wakes.
     eof: (Mutex<bool>, Condvar),
+    #[cfg(any(test, feature = "test-support"))]
+    paint_hooks: PaintHooks,
+}
+
+/// What a test makes the next paint do.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+struct PaintHooks {
     /// Runs once at the start of the next paint, before it takes any lock (tests interleave a second view there).
     #[cfg(test)]
-    before_paint: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    before: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// The next paint finds the terminal busy ([`Pane::stall_next_paint`]).
+    stall: AtomicBool,
 }
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -813,6 +823,13 @@ impl Pane {
         frame(&self.shared)
     }
 
+    /// Makes the next [`Self::frame`] find a lock busy, as when the IO thread holds one for a moment: it returns the
+    /// previous frame marked stale, and nothing wakes the frontend for it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn stall_next_paint(&self) {
+        self.shared.paint_hooks.stall.store(true, Ordering::Release);
+    }
+
     /// Every event reported since the last call, in order. A program title equal to one still waiting here was
     /// dropped as it came (upstream's `TitleAdmission`, #911): a program writing one title in a loop leaves a few
     /// events, not one per write.
@@ -987,8 +1004,8 @@ fn shared(config: &PaneConfig, events: Sender<PaneEvent>, mailbox: Arc<Mailbox>)
         status_file: Mutex::new(config.status_file.clone()),
         started: Instant::now(),
         eof: (Mutex::new(false), Condvar::new()),
-        #[cfg(test)]
-        before_paint: Mutex::new(None),
+        #[cfg(any(test, feature = "test-support"))]
+        paint_hooks: PaintHooks::default(),
     })
 }
 
@@ -1019,12 +1036,20 @@ fn frame(shared: &Shared) -> FrameSnapshot {
     shared.wake_pending.store(false, Ordering::Release);
     #[cfg(test)]
     {
-        let hook = lock(&shared.before_paint).take();
+        let hook = lock(&shared.paint_hooks.before).take();
         if let Some(hook) = hook {
             hook();
         }
     }
-    match capture(shared) {
+    #[cfg(any(test, feature = "test-support"))]
+    let captured = if shared.paint_hooks.stall.swap(false, Ordering::AcqRel) {
+        None
+    } else {
+        capture(shared)
+    };
+    #[cfg(not(any(test, feature = "test-support")))]
+    let captured = capture(shared);
+    match captured {
         Some(frame) => FrameSnapshot { frame, stale: false },
         None => FrameSnapshot {
             frame: Arc::clone(&lock(&shared.published)),
@@ -1681,6 +1706,29 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_stalled_paint_keeps_the_previous_frame_and_the_next_paint_captures() {
+        let dir = tempfile::tempdir().unwrap();
+        let command = PaneCommand::new("/bin/sh")
+            .arg("-c")
+            .arg("printf first; read _; printf ' second'; exec sleep 5")
+            .cwd(dir.path());
+        let pane = Pane::spawn(&command, &PaneConfig::new(SIZE)).unwrap();
+        let first = wait_for(&pane, "first");
+        pane.write(b"\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !pane.read_text(crate::TextRegion::All).unwrap().contains("second") {
+            assert!(Instant::now() < deadline, "the output never reached the terminal");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        pane.stall_next_paint();
+        let stalled = pane.frame();
+        assert!(stalled.stale);
+        assert!(Arc::ptr_eq(&stalled.frame, &first));
+        wait_for(&pane, "second");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_view_that_paints_while_another_does_never_publishes_older_rows() {
         let dir = tempfile::tempdir().unwrap();
         let command = PaneCommand::new("/bin/sh")
@@ -1703,7 +1751,7 @@ mod tests {
         // view B starts painting; before it looks at the terminal, the row changes in place (the cursor moves too)
         // and view A paints the change completely
         let shared = Arc::clone(&pane.shared);
-        *lock(&pane.shared.before_paint) = Some(Box::new(move || {
+        *lock(&pane.shared.paint_hooks.before) = Some(Box::new(move || {
             lock(&shared.vt).terminal.vt_write(b"\x1b[1;1HXYZ\x1b[3;5H");
             // view A paints until it gets the terminal (the IO thread may hold a lock for a moment on a loaded machine)
             let deadline = Instant::now() + Duration::from_secs(20);

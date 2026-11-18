@@ -353,7 +353,7 @@ impl Fixture<'_> {
     fn settle(&mut self, mut done: impl FnMut(&mut Self) -> bool) {
         let deadline = Instant::now() + DEADLINE;
         loop {
-            self.cx.run_until_parked();
+            super::run_frame(self.cx);
             if done(self) {
                 return;
             }
@@ -1619,7 +1619,7 @@ fn new_terminal(
 fn wait_view(view: &Entity<TerminalView>, needle: &str, cx: &mut VisualTestContext) -> String {
     let deadline = Instant::now() + DEADLINE;
     loop {
-        cx.run_until_parked();
+        super::run_frame(cx);
         let text = view.read_with(cx, |view, _| {
             view.painted().map(|frame| frame.lines().join("\n")).unwrap_or_default()
         });

@@ -85,7 +85,7 @@ impl<'a> Fixture<'a> {
     pub(crate) fn settle(&mut self, mut done: impl FnMut(&mut Self) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
-            self.cx.run_until_parked();
+            crate::terminal::run_frame(self.cx);
             if done(self) {
                 return;
             }

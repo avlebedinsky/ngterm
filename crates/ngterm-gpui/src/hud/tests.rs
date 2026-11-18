@@ -438,7 +438,7 @@ impl PanelHarness<'_> {
         self.deck.update_in(self.cx, |deck, window, cx| {
             let _ = deck.reconcile(core, false, window, cx);
         });
-        self.cx.run_until_parked();
+        crate::terminal::run_frame(self.cx);
     }
 
     fn panel(&self) -> (Entity<Terminal>, Entity<TerminalView>) {

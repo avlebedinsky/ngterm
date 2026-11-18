@@ -341,7 +341,7 @@ fn terminal(cx: &mut TestAppContext, script: &str, dir: &Path) -> Entity<Termina
 fn settle(cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContext) -> bool) {
     let deadline = Instant::now() + DEADLINE;
     loop {
-        cx.run_until_parked();
+        super::run_frame(cx);
         if done(cx) {
             return;
         }

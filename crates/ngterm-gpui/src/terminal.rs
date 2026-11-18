@@ -79,6 +79,15 @@ pub use mouse::{cursor_style, scroll_multiplier};
 pub use row_cache::{Cluster, Decoration, Line, RowCache, RowLayout, RowMarks, Span, SpriteCell, TextRun, TextStyle};
 pub use surface::TerminalSurface;
 
+/// Runs the app until it parks, then gives the window the frame it asked for and runs it again, as a platform's frame
+/// loop does (GPUI's test platform has none): a paint that found its pane busy asks for that frame to draw again.
+#[cfg(test)]
+pub(crate) fn run_frame(cx: &mut gpui_kit::VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(Window::simulate_next_frame);
+    cx.run_until_parked();
+}
+
 /// What a terminal draws and starts with, from the ghostty config.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalConfig {

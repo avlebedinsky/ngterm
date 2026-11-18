@@ -146,6 +146,8 @@ embed-resource.workspace = true
 # the Kitty clipboard tests' OSC 5522 requests and replies (src/terminal/clipboard_tests.rs)
 base64.workspace = true
 ngterm-host = { workspace = true, features = ["fakes"] }
+# the terminal tests make a paint find the pane busy (`Pane::stall_next_paint`)
+ngterm-term = { workspace = true, features = ["test-support"] }
 # the updater's tests check for, download and stage a local release (src/updater.rs)
 ngterm-update = { workspace = true, features = ["fakes"] }
 gpui-kit = { workspace = true, features = ["test-support"] }

@@ -276,7 +276,7 @@ impl Harness<'_> {
         for grant in self.state.take_spawns() {
             self.deck.read_with(self.cx, |deck, _| deck.launch(&grant));
         }
-        self.cx.run_until_parked();
+        crate::terminal::run_frame(self.cx);
     }
 
     /// Turns until the panes' threads have posted nothing for [`QUIET`], or fails: what a pseudoconsole sends on its own

@@ -17,6 +17,8 @@ local = ["dep:ngterm-host", "dep:ngterm-pty", "dep:ngterm-session"]
 # Reading the program's screen itself and sending only to the screen read (`Pane::active_screen`, `Pane::key_if`,
 # `Pane::paste_if`): what a remote viewer answering an agent's dialog needs (ngterm-mobile), and no frontend else.
 screen-read = []
+# `Pane::stall_next_paint`: a frontend's tests make a paint find the terminal busy, as the IO thread can for a moment.
+test-support = []
 
 [dependencies]
 ngterm-core.workspace = true
