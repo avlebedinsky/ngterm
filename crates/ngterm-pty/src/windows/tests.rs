@@ -1,8 +1,8 @@
 //! The Windows child and its job on real pseudoconsoles: a handed-over child killed through its process handle, a
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
 //! list has room for, the spawn's and the master's refusals, each shell's tree in its job, the suspended start's
-//! failures, panes of one package that end alone, and the processes that left a job taken back into it, but not a
-//! process that got a listed one's id. An actor reads each child's output away, so the console never waits on its
+//! failures, panes of one package that end alone, and the processes that left a job taken back into it (or, in
+//! another job, ended with its kill), but not a process that got a listed one's id. An actor reads each child's output away, so the console never waits on its
 //! pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
@@ -419,9 +419,24 @@ fn a_program_windows_denies_is_refused_naming_it() {
     );
 }
 
+/// Whether `shell` is there to test. A shell that is not there fails the test on CI, whose Windows runners have each
+/// shell [`a_ping_that_a_shells_child_starts_is_in_the_job`] names; elsewhere (a machine without that installer's
+/// shell, or with it in another folder) its case is left out, and the test says so.
+fn installed(shell: &str) -> bool {
+    let there = std::path::Path::new(shell).is_file();
+    assert!(
+        there || std::env::var_os("CI").is_none(),
+        "{shell} is not on the CI runner"
+    );
+    if !there {
+        eprintln!("{shell} is not installed: its case is left out");
+    }
+    there
+}
+
 /// Each shell a pane runs (`cmd.exe`, Windows PowerShell, PowerShell 7 from its installer, Git Bash) is in its job
 /// before it runs, and so is the ping its child starts: the kill of the tree ends that ping. CI's Windows runners
-/// have each of them.
+/// have each of them; elsewhere a shell not in its installer's default folder is left out ([`installed`]).
 #[test]
 fn a_ping_that_a_shells_child_starts_is_in_the_job() {
     let program_files = std::env::var("ProgramFiles").expect("the Program Files folder");
@@ -434,7 +449,9 @@ fn a_ping_that_a_shells_child_starts_is_in_the_job() {
         (&pwsh, &["-NoLogo", "-NoProfile", "-Command", posh_line]),
         (&bash, &["-c", "bash -c 'ping -n 300 127.0.0.1'; true"]),
     ];
-    for (shell, args) in shells {
+    // `cmd.exe` and `powershell.exe` come with Windows, found on its PATH
+    let found = |(shell, _): &(&str, &[&str])| !std::path::Path::new(shell).is_absolute() || installed(shell);
+    for (shell, args) in shells.into_iter().filter(found) {
         let Running { child, _actor } = run(shell, args);
         assert!(
             !escapees::packaged(child.process().expect("the process handle")),
@@ -643,6 +660,64 @@ fn what_an_escaped_process_started_is_taken_back_too() {
     assert_eq!(exit_code_of(&ping), Some(1));
 }
 
+/// The id of the process `process` names.
+fn pid_of(process: &OwnedHandle) -> u32 {
+    // SAFETY: reads the id of a process this test holds open.
+    unsafe { GetProcessId(process.as_raw_handle()) }
+}
+
+/// What escaped a job and is then put into another job, as Windows puts a packaged program a pane's process starts
+/// into its package's: `line`'s `cmd.exe`, the inner one, in a job of its own, after it started a ping.
+fn escaped_into_another_job() -> (Escaped, OwnedHandle, OwnedHandle, OwnedHandle) {
+    use windows_sys::Win32::System::Threading::{PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+    let escaped = Escaped::new("cmd /d /c ping -n 300 127.0.0.1 >nul", "cmd.exe");
+    let inner = child_of(escaped.shell.id(), "cmd.exe");
+    let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
+    // SAFETY: opens a process by id; no memory is passed.
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            inner,
+        )
+    };
+    assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+    // SAFETY: a fresh handle nothing else owns.
+    let inner = unsafe { OwnedHandle::from_raw_handle(raw) };
+    let package = package_job();
+    // SAFETY: both handles are open, the process one with the rights an assignment needs.
+    let joined = unsafe { AssignProcessToJobObject(package.as_raw_handle(), inner.as_raw_handle()) };
+    assert_ne!(joined, 0, "{}", io::Error::last_os_error());
+    (escaped, package, inner, ping)
+}
+
+/// A process of the tree that cannot join its job (it is in another job, as a packaged program a pane's process
+/// starts is in its package's) ends with the kill of the tree, and what it started is taken back and ends too.
+#[test]
+fn a_process_of_the_tree_in_another_job_ends_with_its_kill() {
+    let (escaped, _package, inner, ping) = escaped_into_another_job();
+    let pid = pid_of(&inner);
+    escapees::Tree::of(&escaped.job.handle).adopt(&escaped.job.handle, &escapees::processes());
+    assert!(!escaped.holds(pid), "the inner shell joined the job");
+    assert!(escaped.holds(pid_of(&ping)), "its ping was not taken back");
+    escaped.killer().kill_tree().expect("the kill");
+    assert_eq!(exit_code_of(&inner), Some(1), "the inner shell outlived the kill");
+    assert_eq!(exit_code_of(&ping), Some(1), "its ping outlived the kill");
+}
+
+/// The close of a job takes back what a process of the tree in another job started, and ends it with the tree. That
+/// process itself is left to its console, which a pane's close ends.
+#[test]
+fn the_close_of_a_job_ends_what_a_process_in_another_job_started() {
+    let (escaped, _package, inner, ping) = escaped_into_another_job();
+    drop(escaped);
+    // a kill on close ends a process with the exit code 0
+    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
+    // the inner shell ends with its ping, or ends here; one that ended already fails harmlessly
+    // SAFETY: terminates a process this test holds open with `PROCESS_TERMINATE`.
+    unsafe { TerminateProcess(inner.as_raw_handle(), 1) };
+}
+
 /// A process table read before a process ended can name its id as a child of the tree, after another process got
 /// that id: that process is left alone, as its creator, read through its own handle, is not of the tree. It is
 /// created after the tree's process, so the creation time alone does not tell.
@@ -736,6 +811,14 @@ fn a_suspended_child_that_cannot_resume_is_terminated() {
     drop((conpty, thread));
 }
 
+/// Held for the whole run of a test that starts Store PowerShell: libtest runs tests on many threads, and a test that
+/// needs the package to start with it ([`store_powershell_panes_end_alone`]) must not see another test's Store
+/// PowerShell. Poison-tolerant: a failed Store test does not fail the next.
+fn store_test() -> std::sync::MutexGuard<'static, ()> {
+    static STORE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    STORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The Store PowerShell's app execution alias.
 fn store_powershell() -> String {
     let local = std::env::var("LOCALAPPDATA").expect("the local app data folder");
@@ -772,6 +855,7 @@ fn store_powershells() -> Vec<u32> {
 #[test]
 #[ignore = "needs PowerShell from the Microsoft Store"]
 fn a_store_powershell_pane_starts_and_its_tree_ends_with_it() {
+    let _store = store_test();
     let (first, first_pings) = store_powershell_pane();
     let (second, second_pings) = store_powershell_pane();
     second.child.killer().kill_tree().expect("the kill");
@@ -849,6 +933,7 @@ fn store_powershell_panes_end_alone(outside_first: bool) {
 #[test]
 #[ignore = "needs PowerShell from the Microsoft Store"]
 fn store_powershell_panes_that_start_the_package_end_alone() {
+    let _store = store_test();
     store_powershell_panes_end_alone(false);
 }
 
@@ -856,7 +941,95 @@ fn store_powershell_panes_that_start_the_package_end_alone() {
 #[test]
 #[ignore = "needs PowerShell from the Microsoft Store"]
 fn store_powershell_panes_after_one_outside_end_alone() {
+    let _store = store_test();
     store_powershell_panes_end_alone(true);
+}
+
+/// A Store PowerShell that a pane's program starts (`pwsh` typed in a `cmd.exe` pane) while no other one runs, so it
+/// starts the package: Windows puts it into its package's job, and it cannot join the pane's. A Store PowerShell pane
+/// opened after it runs on when that pane ends. The pane's end, by its kill (`kill`) or its close, ends that
+/// PowerShell (the close through its console) and the ping it started through `Start-Process`.
+fn a_pane_whose_program_started_the_package_ends(kill: bool) {
+    let _store = store_test();
+    assert_eq!(store_powershells(), [], "a Store PowerShell runs before the test");
+    let script = std::env::temp_dir().join(format!("ngterm-pty-store-{}.ps1", std::process::id()));
+    std::fs::write(
+        &script,
+        "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; Start-Sleep 300",
+    )
+    .expect("the script");
+    let line = format!(
+        "{} -NoLogo -NoProfile -ExecutionPolicy Bypass -File {}",
+        store_powershell(),
+        script.display()
+    );
+    let first = run("cmd.exe", &["/d", "/c", &line]);
+    let mut started = Vec::new();
+    wait_until("the cmd pane's program started a Store PowerShell", || {
+        started = store_powershells();
+        !started.is_empty()
+    });
+    let pid = started[0];
+    let started = watched(pid).expect("the cmd pane's PowerShell");
+    let ping = watched(child_of(pid, "ping.exe")).expect("its ping");
+    let mut inside = 0;
+    // SAFETY: both handles are open; the result goes to a live local.
+    let read = unsafe {
+        IsProcessInJob(
+            started.as_raw_handle(),
+            first.child.job().as_raw_handle(),
+            &raw mut inside,
+        )
+    };
+    assert_ne!(read, 0, "{}", io::Error::last_os_error());
+    assert_eq!(inside, 0, "its PowerShell is in the cmd pane's job");
+    let (second, second_pings) = store_powershell_pane();
+    let shell = watched(second.child.pid()).expect("the second pane's shell");
+    if kill {
+        first.child.killer().kill_tree().expect("the first pane's kill");
+        assert_eq!(
+            exit_code_of(&started),
+            Some(1),
+            "its PowerShell outlived the pane's kill"
+        );
+        assert_eq!(exit_code_of(&ping), Some(1), "its ping outlived the pane's kill");
+    } else {
+        drop(first);
+        assert!(
+            exit_code_of(&started).is_some(),
+            "its PowerShell outlived the pane's close"
+        );
+        assert_eq!(exit_code_of(&ping), Some(0), "its ping outlived the pane's close");
+    }
+    // what the end would end with it ends in milliseconds
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(
+        runs(shell.as_handle()),
+        "the Store PowerShell pane ended with the cmd pane"
+    );
+    for ping in &second_pings {
+        assert!(
+            runs(ping.as_handle()),
+            "a ping of the Store PowerShell pane ended with the cmd pane"
+        );
+    }
+    drop(second);
+    assert_eq!(exit_code_of(&shell), Some(0));
+    drop(std::fs::remove_file(script));
+}
+
+/// [`a_pane_whose_program_started_the_package_ends`] by its kill.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn a_pane_whose_program_started_the_package_ends_its_tree_alone_by_its_kill() {
+    a_pane_whose_program_started_the_package_ends(true);
+}
+
+/// [`a_pane_whose_program_started_the_package_ends`] by its close.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn a_pane_whose_program_started_the_package_ends_its_tree_alone_by_its_close() {
+    a_pane_whose_program_started_the_package_ends(false);
 }
 
 /// The two pings a Store PowerShell pane's line starts, once its job took both back.

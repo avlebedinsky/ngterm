@@ -298,8 +298,9 @@ impl Killer {
     }
 
     /// Terminate every process of the child's job, the child too (exit code 1), after it takes back what escaped
-    /// the job ([`escapees::Tree::adopt`]). Once the terminated tree ended (it waits a second at most), it takes back
-    /// and terminates what a process of the tree started outside the job as it ended.
+    /// the job ([`escapees::Tree::adopt`]), and each process of the tree that could not join the job. Once the
+    /// terminated tree ended (it waits a second at most), it takes back and terminates what a process of the tree
+    /// started outside the job as it ended.
     ///
     /// # Errors
     ///
@@ -309,9 +310,12 @@ impl Killer {
         let mut tree = escapees::Tree::of(job);
         tree.adopt(job, &escapees::processes());
         terminate(job)?;
+        tree.terminate_outside();
         tree.wait_ended(escapees::ENDING);
         tree.adopt(job, &escapees::processes());
-        terminate(job)
+        terminate(job)?;
+        tree.terminate_outside();
+        Ok(())
     }
 
     /// Nothing on Windows: the job, not a process id, names the child's tree for as long as a handle holds it (Unix's

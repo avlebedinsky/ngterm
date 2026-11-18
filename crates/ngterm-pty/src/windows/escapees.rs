@@ -6,6 +6,12 @@
 //! which is not in the job itself, escaped it, and is assigned to it. The job then ends it with the rest of the tree,
 //! lists it as the pane's foreground and keeps it across a handoff.
 //!
+//! A packaged program that a pane's process starts (`pwsh` typed in a `cmd.exe` pane) escapes too, and Windows puts
+//! it into its package's job at once. A process in another job cannot join the pane's job, which holds processes
+//! outside that one. So it is held without the job: [`super::Killer::kill_tree`] terminates it with the job, and what
+//! it starts is taken back as from any process of the tree. The job's close does not end it, but a program on the
+//! pane's console ends with that console.
+//!
 //! The process table is a snapshot, and an id in it can name another process by the time it is read: one that took
 //! the id of a process that ended since. So the table only names the candidates. A [`Tree`] holds each process of
 //! the job open, and an open process keeps its id from its creation on. A candidate is opened in turn, and its
@@ -36,7 +42,7 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, IsProcessInJob};
 use windows_sys::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
-    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, WaitForSingleObject,
+    PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
 };
 
 use super::Job;
@@ -96,6 +102,8 @@ struct Held {
     /// When it was created, in 100 ns units since 1601.
     started: u64,
     process: OwnedHandle,
+    /// Whether it is in the job: a process that is in another job (a packaged program in its package's) is not.
+    joined: bool,
 }
 
 /// The processes of a job's tree, held open from the time they are found, so that the id of each names it alone.
@@ -120,6 +128,7 @@ impl Tree {
                     pid,
                     started: started(&process)?,
                     process,
+                    joined: true,
                 })
             })
             .collect();
@@ -128,7 +137,8 @@ impl Tree {
 
     /// Assign to `job` each process of `processes` that escaped it: one that a held process created, that is not in
     /// the job (a breakaway the system made). One taken back is held, and counts as a parent in its turn, as what it
-    /// started before then escaped too. A process that cannot be opened with the rights the assignment needs (another
+    /// started before then escaped too. One that cannot join the job (it is in another job) is held all the same, for
+    /// [`Tree::terminate_outside`]. A process that cannot be opened with the rights the assignment needs (another
     /// user's, an elevated one) stays where it is.
     pub(super) fn adopt(&mut self, job: &OwnedHandle, processes: &[Entry]) {
         let mut known: HashSet<u32> = self.held.iter().map(|held| held.pid).collect();
@@ -148,6 +158,16 @@ impl Tree {
         }
     }
 
+    /// Terminate each held process that could not join the job (exit code 1): the job's own end does not reach it.
+    pub(super) fn terminate_outside(&self) {
+        for held in self.held.iter().filter(|held| !held.joined) {
+            // SAFETY: terminates a process held open with `PROCESS_TERMINATE`; one already gone fails harmlessly.
+            if unsafe { TerminateProcess(held.process.as_raw_handle(), 1) } == 0 {
+                tracing::debug!(pid = held.pid, err = %std::io::Error::last_os_error(), "a process of the tree outside its job could not be terminated");
+            }
+        }
+    }
+
     /// Wait up to `limit` for each held process to end.
     pub(super) fn wait_ended(&self, limit: Duration) {
         let deadline = Instant::now() + limit;
@@ -161,8 +181,9 @@ impl Tree {
 }
 
 /// Process `pid` held, after it is assigned to `job` unless it is in it already, when `parent` (a process the caller
-/// holds, created at `parent_started`) created it. A process that has the id now but that `parent` did not create
-/// (it got the id after the caller's snapshot, from a process that ended) is left alone.
+/// holds, created at `parent_started`) created it; held outside the job when the assignment fails. A process that has
+/// the id now but that `parent` did not create (it got the id after the caller's snapshot, from a process that ended)
+/// is left alone.
 fn take_back(job: &OwnedHandle, pid: u32, parent: u32, parent_started: u64) -> Option<Held> {
     let process = open(pid, CANDIDATE)?;
     if creator(&process)? != parent {
@@ -172,14 +193,18 @@ fn take_back(job: &OwnedHandle, pid: u32, parent: u32, parent_started: u64) -> O
     if started < parent_started {
         return None;
     }
-    if !in_job(&process, job)? {
-        // SAFETY: both handles are open, the process one with the rights an assignment needs.
-        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
-            tracing::debug!(pid, err = %std::io::Error::last_os_error(), "a process that left its pane's job stays out");
-            return None;
-        }
+    // SAFETY: both handles are open, the process one with the rights an assignment needs.
+    let joined = in_job(&process, job)?
+        || unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } != 0;
+    if !joined {
+        tracing::debug!(pid, err = %std::io::Error::last_os_error(), "a process that left its pane's job is held outside it");
     }
-    Some(Held { pid, started, process })
+    Some(Held {
+        pid,
+        started,
+        process,
+        joined,
+    })
 }
 
 /// Whether `process` is in `job`; `None` when that cannot be read.
