@@ -614,6 +614,28 @@ def test_session_status_carries_its_overrides(cli, ctl, adapter):
     assert_ok(ctl.request("session.close", sid))
 
 
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("cli:session status")
+def test_session_status_if_idle_applies_only_on_an_idle_row(cli, ctl):
+    sid = _new(ctl)
+    _ok(cli("session", "status", "completed", "--if-idle", "--target", sid), "ok\n")
+    before = _node(ctl, sid)
+    assert before["status"] == "completed"
+    assert _json(cli("session", "status", "active", "--blink", "--if-idle", "--target", sid, "--json")) == {"id": sid}
+    node = _node(ctl, sid)
+    assert node["status"] == "completed" and node["statusChangedAt"] == before["statusChangedAt"]
+    assert_absent(node, "statusBlink")
+
+    # another pane's block skips the write instead of refusing it
+    assert_ok(ctl.request("session.status", sid, status="idle"))
+    assert_ok(ctl.request("session.split", sid, mode="on"))
+    _ok(cli("session", "status", "blocked", "--pane", "left", "--target", sid), "ok\n")
+    _ok(cli("session", "status", "active", "--pane", "right", "--if-idle", "--target", sid), "ok\n")
+    assert _node(ctl, sid)["status"] == "blocked"
+    _usage(cli("session", "status", "--if-idle", "--target", sid), "Missing expected argument '<state>'")
+    assert_ok(ctl.request("session.close", sid))
+
+
 @pytest.mark.covers("cli:session move", "cli:session go")
 def test_session_move_and_go(cli, ctl):
     wid = assert_ok(ctl.request("workspace.new", name=_name("cli-move")))["id"]

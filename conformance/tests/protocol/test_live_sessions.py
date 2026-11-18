@@ -1010,6 +1010,46 @@ def test_status_sound_goes_to_a_following_presenter(live):
     assert_ok(live.request("session.close", sid))
 
 
+def _kinds_before(stream, fence):
+    """The kinds of the frames `stream` got before the context frame carrying `fence`."""
+    kinds = []
+
+    def read(timeout):
+        frame = stream.read(timeout)
+        kinds.append(frame.get("kind"))
+        return frame
+
+    while wait_frame(read, "context", stream.send).get("context") != fence:
+        pass
+    return kinds[:-1]
+
+
+@LIVE
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status", "live.present", "field:tree.session.presenters", streams=("live.present",))
+def test_a_skipped_if_idle_status_sends_the_viewers_nothing(live):
+    """Upstream's `testASkippedIfIdleStatusAnswersOkAndPlaysNothing`: an `ifIdle` write a busy row skips sends a
+    following presenter no status and no sound, and a mirror no status."""
+    sid = _live_session(live)
+    endpoint = assert_ok(live.request(live.vocabulary.command("live.tree")))["remote"]["endpoint"]
+    daemon = _entries(live, sid)["left"]["daemon"]
+    with live.vocabulary.leading_client(live.instance, endpoint, daemon) as viewer:
+        live.wait_tree(lambda tree: _follows(tree, sid, viewer))
+        with _acquired(live, sid, SOUND_KINDS) as presenter, _subscribed(live, sid, "mirror")[0] as mirror:
+            _presenters(live, sid, {"mirrors": 1, "presenter": True})
+            assert_ok(live.request("session.status", sid, status="completed"))
+            assert wait_frame(presenter.read, "status", presenter.send)["status"]["status"] == "completed"
+            assert wait_frame(mirror.read, "status", mirror.send)["status"]["status"] == "completed"
+            skipped = live.request("session.status", sid, status="blocked", sound="Glass", ifIdle=True)
+            assert assert_ok(skipped)["id"] == sid
+            assert_ok(live.request("session.context", sid, mode="set", text="fence"))
+            for stream in (presenter, mirror):
+                kinds = _kinds_before(stream, "fence")
+                assert "status" not in kinds and "sound" not in kinds, kinds
+        _presenters(live, sid, None)
+    assert_ok(live.request("session.close", sid))
+
+
 @LIVE_IN_ANY_SHELL
 @pytest.mark.covers("live.tree", "field:result.remote", "session.status")
 def test_tree_rows_carry_the_session_status(live):
