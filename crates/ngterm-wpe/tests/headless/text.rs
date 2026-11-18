@@ -1,6 +1,7 @@
 //! The shipped text page renderer (upstream's `TextPageRenderingTests`) in a real isolated `WebKit` world, with
 //! authored scripts disabled: highlight.js and `text.js` over the document `ngterm_core::html::text_page::html`
-//! builds, worn with the stylesheet the app gives it (`page.css` with `text.css` over it).
+//! builds, worn with the stylesheet the app gives it (`page.css` with `text.css` and ngterm's `text-narrow.css` over
+//! it).
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -40,9 +41,10 @@ fn script() -> String {
 /// The text page's stylesheet (`documents::text_style`).
 fn style() -> String {
     format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         include_str!("../../../../resources/markdown/page.css"),
-        include_str!("../../../../resources/markdown/text.css")
+        include_str!("../../../../resources/markdown/text.css"),
+        include_str!("../../../../resources/html/text-narrow.css")
     )
 }
 
@@ -389,7 +391,9 @@ pub fn counts_after_ready(h: &Harness, _: &Context) -> Outcome {
 
 /// Upstream 6c082ecd (#934): a log page's bar keeps every control in one line on a narrow (400px, upstream's) page,
 /// following, paused and with a note: the Follow button ends before Wrap, Wrap shows its whole label, and the search
-/// box and its buttons end inside the page. Under 480px the paused label drops its prefix and keeps `Resume`.
+/// box and its buttons end inside the page. Under 480px the paused label drops its prefix and keeps `Resume`. A
+/// 320px page (a pane of a split window) also keeps them all: there upstream's bar clips the search buttons, and
+/// ngterm's own narrow rules (`text-narrow.css`) make the gaps smaller (a fix over upstream).
 pub fn narrow_bar(h: &Harness, _: &Context) -> Outcome {
     const FITS: &str = "(() => {
       const width = document.documentElement.clientWidth;
@@ -404,6 +408,8 @@ pub fn narrow_bar(h: &Harness, _: &Context) -> Outcome {
     let text = numbered(200, "") + "x\n";
     let search = " data-revision=\"1\" data-query=\"line\" data-current=\"0\"";
     let cases = [
+        (320, "true", "", "Follow: on||Wrap: off"),
+        (320, "false", " data-waiting", "Resume|waiting for file|Wrap: off"),
         (400, "true", "", "Follow: on||Wrap: off"),
         (400, "false", "", "Resume||Wrap: off"),
         (400, "false", " data-waiting", "Resume|waiting for file|Wrap: off"),

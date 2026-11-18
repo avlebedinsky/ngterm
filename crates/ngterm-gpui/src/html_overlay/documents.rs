@@ -15,6 +15,8 @@ const HIGHLIGHT: &str = include_str!("../../../../resources/markdown/highlight-1
 const RENDER: &str = include_str!("../../../../resources/markdown/render.js");
 const TEXT: &str = include_str!("../../../../resources/markdown/text.js");
 const TEXT_STYLE: &str = include_str!("../../../../resources/markdown/text.css");
+/// ngterm's narrow-page rules over `text.css` (a fix over upstream, kept out of the vendored copy).
+const TEXT_NARROW_STYLE: &str = include_str!("../../../../resources/html/text-narrow.css");
 
 /// The Markdown renderer: markdown-it, highlight.js and `render.js`.
 pub(super) fn script() -> String {
@@ -38,9 +40,10 @@ pub(super) fn text_script() -> String {
 }
 
 /// The text page's stylesheet (upstream's `textStyle`): the Markdown stylesheet, for the theme colors and highlight
-/// rules both pages share, with `text.css` over it.
+/// rules both pages share, with `text.css` over it, and ngterm's `text-narrow.css` last: under 400px it makes the bar's
+/// gaps smaller, so a log page in a narrow pane keeps all its search buttons (a fix over upstream).
 pub(super) fn text_style() -> String {
-    format!("{STYLE}\n{TEXT_STYLE}")
+    format!("{STYLE}\n{TEXT_STYLE}\n{TEXT_NARROW_STYLE}")
 }
 
 /// The renderer `source` runs, at document end, in the backend's named helper world; `None` for a page with none. A
@@ -200,7 +203,8 @@ mod tests {
         };
         assert_eq!(browser_refusal(&source), Some(errors::TEXT_IN_OVERLAY));
         assert_eq!(renderer(&source), Some(text_script()));
-        assert!(text_style().contains(TEXT_STYLE) && text_style().contains(STYLE));
+        let style = text_style();
+        assert!(style.contains(STYLE) && style.contains(TEXT_STYLE) && style.ends_with(TEXT_NARROW_STYLE));
     }
 
     fn png(width: u32) -> Vec<u8> {

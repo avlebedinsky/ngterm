@@ -1,0 +1,8 @@
+/* ngterm's own rules over upstream's text.css (a fix over upstream): under 400px, as on a pane of a split window, the
+   bar's gaps and the button padding become smaller, so the Follow and Wrap buttons leave the search box room for its
+   input and all its buttons. With upstream's spacing, a 320px log page clips the search buttons and Close. */
+@media (max-width: 399px) {
+  .ngterm-bar { gap: 6px; }
+  .ngterm-logbar button, .ngterm-wrap { padding: 0 4px; }
+  .ngterm-search { gap: 4px; padding: 3px 4px 3px 6px; }
+}
