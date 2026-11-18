@@ -3,8 +3,8 @@
 # that runs the command locally (rsync's too) and a `lockf` over flock(1). It checks the arguments, the copy and its
 # checksum (a file that drifted on the Mac is copied again), the removal of what the tree lost, the lock (held for
 # the command, its wait bounded), the time limit, the exit status, the logs and the cleanup. It also tests the iOS
-# build lock under an outer lockf (lib/native.sh) and the core cache (lib/ios-core-cache.sh). Needs rsync, flock,
-# perl, python3, git and cargo.
+# build lock under an outer lockf (lib/native.sh), the core cache (lib/ios-core-cache.sh) and the record of a test-plan
+# build (lib/native.sh). Needs rsync, flock, perl, python3, git and cargo.
 #
 # Usage: scripts/test-ios-mac-run.sh
 # shellcheck disable=SC2016,SC2034 # check() takes its condition as text and evaluates it later, with the variables it reads
@@ -13,6 +13,7 @@ set -euo pipefail
 source_root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 cleanup() {
+  [[ -z "${holder:-}" ]] || pkill -P "$holder" 2>/dev/null || true
   [[ -z "${holder:-}" ]] || kill "$holder" 2>/dev/null || true
   rm -rf "${work:?}"
 }
@@ -218,16 +219,19 @@ holder=$!
 sleep 1
 run "$runner" run --queue-timeout 2 -- true
 check "a lock wait past its limit gives 75" '((status == 75)) && grep -q "not free within 2 s" "$logs/command.log"'
+pkill -P "$holder" 2>/dev/null || true # flock's child holds the lock too
 kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true
 holder=""
 
-"$runner" run -- sleep 30 >"$work/bg.out" 2>"$work/bg.err" &
+# another time zone in the run's environment: ps writes the start time of the command in it (cancel must still match it)
+"$runner" run --env TZ=Asia/Tokyo -- sleep 30 >"$work/bg.out" 2>"$work/bg.err" &
 background=$!
 for _ in $(seq 1 50); do
   [[ ! -s "$scratch/run/cmdpid" ]] || break
   sleep 0.2
 done
+check "the command of the background run started" '[[ -s "$scratch/run/cmdpid" ]]'
 run "$runner" run -- true
 check "a second run of the same name is refused while one runs" '((status == 1)) && grep -q "still going" "$err"'
 run "$runner" clean
@@ -236,6 +240,9 @@ run "$runner" cancel
 status_bg=0
 wait "$background" || status_bg=$?
 check "cancel stops the run, whose runner gives 143" '((status == 0 && status_bg == 143))' || cat "$work/bg.err" >&2
+command_pid="$(cat "$scratch/run/cmdpid" 2>/dev/null || echo 0)"
+check "cancel stops the command of the live run and its process group" \
+  '((command_pid > 0)) && ! kill -0 "$command_pid" 2>/dev/null && ! pgrep -g "$command_pid" >/dev/null'
 run "$runner" wait
 check "wait on an ended run gives its exit status at once" '((status == 143))'
 setsid sleep 30 &
@@ -265,6 +272,12 @@ run "$runner" cancel
 check "cancel sends no signal to a pid of a lost run that names a different process" \
   '((status == 0)) && kill -0 "$stranger" 2>/dev/null && [[ "$(cat "$scratch/run/exit")" == 143 ]]'
 run "$runner" clean
+# A run of a runner that wrote no start times: its live pids count, so the scratch stays.
+mkdir -p "$scratch/run"
+echo "$stranger" >"$scratch/run/pid"
+run "$runner" clean
+check "clean refuses while a pid with no start time is alive" '((status == 3)) && [[ -d "$scratch" ]]'
+rm -rf "${scratch:?}"
 kill "$stranger" 2>/dev/null || true
 wait "$stranger" 2>/dev/null || true
 run "$runner" run --clean -- true
@@ -354,24 +367,31 @@ cache_call ios_core_cache_prune "$cache" 100000
 check "a prune removes stopped stores and incomplete entries" \
   '[[ ! -e "$cache/.tmp-dddd" && ! -e "$cache/eeee" && -d "$cache/bbbb" ]]'
 
-# --- the fingerprint of Generated/ in the test-build stamp (files_fingerprint, lib/native.sh) ------------------------
+# --- the record of a test-plan build (sync_dir, test_build_record, lib/native.sh) ------------------------------------
 
 generated="$work/generated"
-mkdir -p "$work/core-a" "$work/core-b"
+design="$work/design"
+mkdir -p "$work/core-a" "$work/core-b" "$design"
 printf 'one\n' >"$work/core-a/lib.a"
 printf 'two\n' >"$work/core-b/lib.a"
-fingerprint() {
-  bash -c 'source "$1/scripts/lib/native.sh"; files_fingerprint "$2"' fp "$source_root" "${1:-$generated}"
+printf 'font\n' >"$design/mono.ttf"
+native_call() {
+  bash -c 'source "$1/scripts/lib/native.sh"; shift; "$@"' native "$source_root" "$@"
 }
-# as build-ios.sh's step 7 writes Generated/ (sync_dir)
-rsync -r --checksum --delete "$work/core-a/" "$generated/"
-print1="$(fingerprint)"
+record() {
+  native_call test_build_record Unit "${1-tree}" debug /xcode "${2:-$generated}" "$design"
+}
+# as build-ios.sh's step 7 writes Generated/
+native_call sync_dir "$work/core-a" "$generated"
+record1="$(record)"
 sleep 0.1
-rsync -r --checksum --delete "$work/core-a/" "$generated/"
-check "Generated/ with the same core keeps its fingerprint" '[[ -n "$print1" && "$(fingerprint)" == "$print1" ]]'
-rsync -r --checksum --delete "$work/core-b/" "$generated/"
-check "Generated/ with a different core has a different fingerprint" '[[ "$(fingerprint)" != "$print1" ]]'
-check "the fingerprint of a missing directory fails" '! fingerprint "$work/none" 2>/dev/null'
+native_call sync_dir "$work/core-a" "$generated"
+check "a test build with the same core keeps its record" \
+  '[[ "$record1" == "Unit tree debug /xcode "* && "$(record)" == "$record1" ]]'
+native_call sync_dir "$work/core-b" "$generated"
+check "a test build with a different core has a different record" '[[ -n "$(record)" && "$(record)" != "$record1" ]]'
+check "a test build with no tree stamp has no record" '[[ -z "$(record "")" ]]'
+check "a test build whose Generated/ is missing has no record" '[[ -z "$(record tree "$work/none" 2>/dev/null)" ]]'
 
 if ((failures)); then
   echo "$failures check(s) failed" >&2

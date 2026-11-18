@@ -228,6 +228,24 @@ files_fingerprint() {
   printf '%s' "$text" | sha256_of
 }
 
+# Make directory $2 hold what directory $1 holds, rewriting only the files whose content differs. No times are
+# copied, so an unchanged file keeps its own time, and a changed file gets a new one (files_fingerprint sees it).
+sync_dir() {
+  mkdir -p "$2"
+  rsync -r --checksum --delete "$1/" "$2/"
+}
+
+# The record of a test-plan build (build-ios.sh's build_test_plan): plan $1, tree stamp $2, profile $3, Xcode $4 and
+# the fingerprint of the Generated/ directories $5.... Empty when there is no tree stamp or the fingerprint fails:
+# then no record matches, and the plan builds.
+test_build_record() {
+  local plan="$1" tree="$2" profile="$3" xcode="$4" generated
+  shift 4
+  [[ -n "$tree" ]] || return 0
+  generated="$(files_fingerprint "$@")" || return 0
+  printf '%s\n' "$plan $tree $profile $xcode $generated"
+}
+
 # Whether FILE's sha256 is SHA.
 sha256_matches() {
   local sha="$1" file="$2" actual

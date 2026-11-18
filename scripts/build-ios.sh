@@ -278,13 +278,7 @@ fi
 
 # --- 7. the outputs --------------------------------------------------------------------------------------------------
 
-# Make directory $2 hold what directory $1 holds, rewriting only the files whose content differs (no times are
-# copied, so an unchanged file keeps its own and Xcode sees nothing to rebuild).
-sync_dir() {
-  mkdir -p "$2"
-  rsync -r --checksum --delete "$1/" "$2/"
-}
-
+# sync_dir (lib/native.sh) writes only the files whose content changed, so Xcode sees nothing to rebuild.
 if ((!PREBUILT_CORE)); then
   sync_dir "$CORE_XCFRAMEWORK" "$CORE_GENERATED/NgtermCoreFFI.xcframework"
   rm -rf "${STAGING:?}/swift"
@@ -476,11 +470,9 @@ run_test_plan() {
 # other settings (--env RUSTFLAGS=..., another cached core) changes only Generated/, and step 7 writes a changed file
 # again, which changes its fingerprint. The plan's test run file must still be in the derived data.
 build_test_plan() {
-  local plan="$1" built="$BUILD_DIR/built-tree" stamp="" generated start status=0
-  if [[ -n "${BUILD_IOS_TREE_STAMP:-}" ]] &&
-    generated="$(files_fingerprint "$CORE_GENERATED" "$DESIGN_GENERATED")"; then
-    stamp="$plan $BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-} $generated"
-  fi
+  local plan="$1" built="$BUILD_DIR/built-tree" stamp start status=0
+  stamp="$(test_build_record "$plan" "${BUILD_IOS_TREE_STAMP:-}" "$PROFILE" "${DEVELOPER_DIR:-}" \
+    "$CORE_GENERATED" "$DESIGN_GENERATED")"
   if [[ -n "$stamp" && -f "$built" && "$(cat "$built")" == "$stamp" ]] &&
     compgen -G "$DERIVED_DATA/Build/Products/NgTerm_${plan}_iphonesimulator*.xctestrun" >/dev/null; then
     echo "build-ios.sh: the $plan plan was built from this tree already (BUILD_IOS_TREE_STAMP): no new build" >&2
