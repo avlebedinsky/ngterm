@@ -1,23 +1,25 @@
-A packaged app (an MSIX package, such as PowerShell from the Microsoft Store) whose start carries
-PROC_THREAD_ATTRIBUTE_JOB_LIST (0004) fails with ERROR_ACCESS_DENIED when another process of its package runs:
-Windows then cannot add the new process to the package's Desktop AppX container. ngterm-pty starts such a child
-suspended instead, assigns it to its job and resumes it, which needs the main thread handle that CreateProcessW gives
-and portable-pty closes. `ConPtyMasterPty::spawn_command_suspended` starts the child with CREATE_SUSPENDED and no job
-list, and returns that thread handle with the child. ngterm's own. Remove when portable-pty can start a child
-suspended. Its test: ngterm-pty's `a_store_powershell_pane_starts_and_its_tree_ends_with_it` (a Windows machine with
-that PowerShell) and, on CI, `a_child_started_suspended_prints_to_its_console`.
+ngterm-pty runs each Windows child tree in a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so ending a pane
+ends its shell's descendants too. The child must join the job before it runs, or it can start processes outside it.
+portable-pty closes the main thread handle that a suspended start needs. `ConPtyMasterPty::spawn_command_suspended`
+starts the child with CREATE_SUSPENDED and returns that thread handle with the child: the caller assigns the child
+to its job, then resumes the thread, or terminates the child. Not PROC_THREAD_ATTRIBUTE_JOB_LIST: a packaged app's
+first process started with a job list puts its package's job inside that job, and each later process of the package
+(another pane's shell, one started outside ngterm) is then in it too. A slave behind `PtyPair::slave` cannot be
+downcast, so the master spawns. ngterm's own patch; remove when portable-pty can start a child suspended. Its tests:
+ngterm-pty's `a_suspended_child_that_cannot_join_its_job_is_terminated`, `a_child_prints_to_its_console` and
+`the_end_of_a_pane_leaves_the_panes_of_its_package_running`.
 
 diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
 --- a/src/win/conpty.rs
 +++ b/src/win/conpty.rs
-@@ -100,6 +100,19 @@
-         Ok(Box::new(child))
-     }
+@@ -77,6 +77,20 @@
+     inner: Arc<Mutex<Inner>>,
+ }
  
++impl ConPtyMasterPty {
 +    /// Spawn `cmd` attached to this pseudoconsole with its main thread
-+    /// suspended, for a program whose start a job list refuses (a packaged
-+    /// app): the caller assigns the child to a job, then resumes the returned
-+    /// thread, or terminates the child.
++    /// suspended: the caller assigns the child to a job before it runs, then
++    /// resumes the returned thread, or terminates the child.
 +    pub fn spawn_command_suspended(
 +        &self,
 +        cmd: CommandBuilder,
@@ -26,10 +28,11 @@ diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
 +        let (child, main_thread) = inner.con.spawn_command_suspended(cmd)?;
 +        Ok((Box::new(child), main_thread))
 +    }
++}
 +
-     /// The write end of the console's input pipe and the read end of its
-     /// output pipe, in place of `take_writer` and `try_clone_reader`: the
-     /// caller owns them, and can hand them to another process. Fails once the
+ pub struct ConPtySlavePty {
+     inner: Arc<Mutex<Inner>>,
+ }
 diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
 --- a/src/win/psuedocon.rs
 +++ b/src/win/psuedocon.rs
@@ -43,11 +46,11 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
  };
  use winapi::um::wincon::COORD;
  use winapi::um::winnt::HANDLE;
-@@ -197,6 +198,25 @@
-         cmd: CommandBuilder,
-         job: Option<HANDLE>,
-     ) -> anyhow::Result<WinChild> {
-+        self.create_process(cmd, job, 0).map(|(child, _main_thread)| child)
+@@ -144,6 +145,24 @@
+     }
+ 
+     pub fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
++        self.create_process(cmd, 0).map(|(child, _main_thread)| child)
 +    }
 +
 +    /// Spawn `cmd` attached to this console with its main thread suspended,
@@ -57,19 +60,18 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
 +        &self,
 +        cmd: CommandBuilder,
 +    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
-+        self.create_process(cmd, None, CREATE_SUSPENDED)
++        self.create_process(cmd, CREATE_SUSPENDED)
 +    }
 +
 +    fn create_process(
 +        &self,
 +        cmd: CommandBuilder,
-+        job: Option<HANDLE>,
 +        flags: DWORD,
 +    ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
          let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
          si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
          // Explicitly set the stdio handles as invalid handles otherwise
-@@ -234,7 +254,7 @@
+@@ -175,7 +194,7 @@
                  ptr::null_mut(),
                  ptr::null_mut(),
                  0,
@@ -78,7 +80,7 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
                  cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                  cwd.as_ref()
                      .map(|c| c.as_slice().as_ptr())
-@@ -256,11 +276,15 @@
+@@ -198,11 +217,15 @@
  
          // Make sure we close out the thread handle so we don't leak it;
          // we do this simply by making it owned

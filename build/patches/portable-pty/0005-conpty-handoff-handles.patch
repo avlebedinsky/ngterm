@@ -23,9 +23,9 @@ diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
  use std::sync::{Arc, Mutex};
  use winapi::um::wincon::COORD;
  
-@@ -90,6 +91,77 @@
-         let child = inner.con.spawn_command_in_job(cmd, Some(job as _))?;
-         Ok(Box::new(child))
+@@ -89,6 +90,77 @@
+         let (child, main_thread) = inner.con.spawn_command_suspended(cmd)?;
+         Ok((Box::new(child), main_thread))
      }
 +
 +    /// The write end of the console's input pipe and the read end of its
@@ -104,7 +104,7 @@ diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
 diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
 --- a/src/win/psuedocon.rs
 +++ b/src/win/psuedocon.rs
-@@ -96,8 +96,15 @@
+@@ -97,8 +97,15 @@
      static ref CONPTY: ConPtyFuncs = load_conpty();
  }
  
@@ -120,7 +120,7 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
  }
  
  unsafe impl Send for PsuedoCon {}
-@@ -105,11 +112,44 @@
+@@ -106,11 +113,44 @@
  
  impl Drop for PsuedoCon {
      fn drop(&mut self) {
@@ -166,7 +166,7 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
      pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
          let mut con: HPCON = INVALID_HANDLE_VALUE;
          let result = unsafe {
-@@ -128,7 +168,10 @@
+@@ -129,7 +169,10 @@
              "failed to create psuedo console: HRESULT {}",
              result
          );

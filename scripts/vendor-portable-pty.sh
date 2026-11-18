@@ -6,7 +6,8 @@
 #        (herdr's 0001 reduced: herdr also loads a hash-checked app-local conpty.dll, which ngterm does not ship)
 #   0002 malformed Windows environments rejected (herdr's 0003)
 #   0003 directories skipped when resolving a program on PATH (herdr's 0004)
-#   0004 a child spawned straight into a job object (PROC_THREAD_ATTRIBUTE_JOB_LIST), so no descendant escapes it
+#   0004 a child started suspended, with its main thread, so it joins its job object before it runs (no job list: a
+#        packaged app's first process would put its package's job inside it)
 #   0005 a ConPTY master's handles exported, and a master rebuilt from handles another process handed over (the
 #        session server's update handoff)
 #   0006 a raw command-line tail, appended without ArgvQuote escaping (herdr's 0002): a pane's command line runs as
@@ -14,7 +15,6 @@
 #   0007 a failed openpty's io::Error kept, so ngterm-pty reads its errno (the macOS ptmx clone race's retry)
 #   0008 ConPTY dimensions beyond the signed COORD range refused with the requested size
 #   0009 a failed CreateProcessW's io::Error kept, so ngterm-pty names the program as written beside the OS error
-#   0010 a child started suspended, with its main thread, for a packaged app whose start in a job is denied
 #
 # The source is the crates.io archive of PORTABLE_PTY_VERSION, verified against PORTABLE_PTY_SHA256 (the checksum
 # Cargo.lock records for it), unpacked verbatim apart from its Cargo.lock (which pins nothing for a dependency), then

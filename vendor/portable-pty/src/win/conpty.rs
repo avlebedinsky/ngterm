@@ -87,23 +87,9 @@ pub struct ConPtyMasterPty {
 }
 
 impl ConPtyMasterPty {
-    /// Spawn `cmd` attached to this pseudoconsole, assigned to the job object
-    /// `job` as it is created, so neither it nor any process it starts runs
-    /// outside the job. `job` must stay open until this returns.
-    pub fn spawn_command_in_job(
-        &self,
-        cmd: CommandBuilder,
-        job: std::os::windows::io::RawHandle,
-    ) -> anyhow::Result<Box<dyn Child + Send + Sync>> {
-        let inner = self.inner.lock().unwrap();
-        let child = inner.con.spawn_command_in_job(cmd, Some(job as _))?;
-        Ok(Box::new(child))
-    }
-
     /// Spawn `cmd` attached to this pseudoconsole with its main thread
-    /// suspended, for a program whose start a job list refuses (a packaged
-    /// app): the caller assigns the child to a job, then resumes the returned
-    /// thread, or terminates the child.
+    /// suspended: the caller assigns the child to a job before it runs, then
+    /// resumes the returned thread, or terminates the child.
     pub fn spawn_command_suspended(
         &self,
         cmd: CommandBuilder,

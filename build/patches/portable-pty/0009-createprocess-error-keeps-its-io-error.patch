@@ -20,7 +20,7 @@ diff -ruN a/src/win/psuedocon.rs b/src/win/psuedocon.rs
  use filedescriptor::{FileDescriptor, OwnedHandle};
  use lazy_static::lazy_static;
  use std::ffi::{OsStr, OsString};
-@@ -246,13 +246,12 @@
+@@ -249,13 +249,12 @@
          if res == 0 {
              let err = IoError::last_os_error();
              let msg = format!(

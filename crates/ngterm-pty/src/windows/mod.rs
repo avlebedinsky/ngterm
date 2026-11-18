@@ -1,14 +1,14 @@
-//! The PTY on Windows: a pseudoconsole (`ConPTY`) through portable-pty, the child assigned as it is created to a job
-//! object that kills it and every process it starts once the job's last handle closes. A packaged app (PowerShell
-//! from the Microsoft Store) whose start the job list makes fail with `ERROR_ACCESS_DENIED` (Windows cannot add it
-//! to its package's container then) is started suspended instead, assigned and resumed. What a packaged program
-//! starts leaves every job, so [`escapees`] takes it back into the child's.
+//! The PTY on Windows: a pseudoconsole (`ConPTY`) through portable-pty, the child started suspended, assigned to a
+//! job object that kills it and every process it starts once the job's last handle closes, and only then resumed. A
+//! packaged app's process (PowerShell from the Microsoft Store) joins its package's job as it is created, so it is
+//! never created in a pane's job ([`spawn_with`] says why). What a packaged program starts leaves every job, so
+//! [`escapees`] takes it back into the child's.
 //!
 //! herdr: `src/pty/backend.rs` (`spawn_with_portable_pty`, its Windows form) and `src/platform/windows.rs`
 //! (`StatusCommandGuard`'s kill-on-close job) at `HERDR_REV` (`build/pins.env`), licensed under the Apache License
-//! 2.0, modified: the child is created inside the job (`build/patches/portable-pty/0004`), and started suspended and
-//! assigned only when that is refused (`0010`); the pipes are taken as owned handles (`0005`), so the actor holds what
-//! a handoff passes on; a master is rebuilt from handed-over handles.
+//! 2.0, modified: the child is started suspended and assigned before it runs (`build/patches/portable-pty/0004`); the
+//! pipes are taken as owned handles (`0005`), so the actor holds what a handoff passes on; a master is rebuilt from
+//! handed-over handles.
 
 mod actor;
 mod escapees;
@@ -20,9 +20,7 @@ use std::sync::{Arc, Weak};
 
 use portable_pty::win::conpty::{ConPtyHandoff, ConPtyMasterPty, ConPtySystem};
 use portable_pty::{CommandBuilder, ExitStatus, MasterPty, PtySystem};
-use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_MORE_DATA, FALSE, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT,
-};
+use windows_sys::Win32::Foundation::{ERROR_MORE_DATA, FALSE, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_PROCESS_ID_LIST,
@@ -428,65 +426,32 @@ fn let_children_take_ctrl_c() {
 }
 
 pub(crate) fn spawn(builder: CommandBuilder, size: Size) -> io::Result<Spawned> {
-    spawn_with(builder, size, start)
+    spawn_with(builder, size, create)
 }
 
-/// How a child joins its job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Joining {
-    /// As it is created (a job list): nothing it starts runs outside the job for an instant.
-    AtCreation,
-    /// Started suspended, then assigned and resumed: for a packaged app, whose start a job list makes fail.
-    Suspended,
-}
+/// A pseudoconsole, the child started suspended on it, and the child's main thread.
+type Created = (
+    Box<ConPtyMasterPty>,
+    Box<dyn portable_pty::Child + Send + Sync>,
+    OwnedHandle,
+);
 
-/// A pseudoconsole and the child started on it.
-type Started = (Box<ConPtyMasterPty>, Box<dyn portable_pty::Child + Send + Sync>);
-
-/// A start that failed: the error the caller gets, and whether Windows denied the child's creation
-/// (`ERROR_ACCESS_DENIED`).
-#[derive(Debug)]
-struct Refusal {
-    error: io::Error,
-    denied: bool,
-}
-
-impl Refusal {
-    fn other(error: io::Error) -> Self {
-        Self { error, denied: false }
-    }
-
-    /// A failed `CreateProcessW`, named as [`start_error`] says.
-    fn of_start<E>(err: &E, program: &std::ffi::OsStr) -> Self
-    where
-        E: std::ops::Deref<Target = dyn std::error::Error + Send + Sync> + std::fmt::Display,
-    {
-        let cause: &(dyn std::error::Error + 'static) = &**err;
-        Self {
-            error: start_error(cause, program).unwrap_or_else(|| pty_error(err)),
-            denied: os_error(cause).and_then(io::Error::raw_os_error) == i32::try_from(ERROR_ACCESS_DENIED).ok(),
-        }
-    }
-}
-
-/// [`spawn`] through `start`: the child joins its job as it is created, and when Windows denies that, it is started
-/// suspended on a new pseudoconsole, in a new job, instead.
+/// [`spawn`] through `create`, which starts the child suspended: the child joins a new kill-on-close job, and only
+/// then runs. Never a job list (`PROC_THREAD_ATTRIBUTE_JOB_LIST`): when the first process of a packaged app (issue
+/// 19: PowerShell from the Microsoft Store) starts with one, Windows puts its package's job inside the listed job,
+/// and each later process of the package is in that job from its creation (another pane's shell, the quick
+/// terminal's, one started outside ngterm): the pane's end would end them all. Started suspended and then assigned,
+/// the process is in its package's job only, and the pane's job nests in that one, so the pane's end ends its own
+/// tree only.
 fn spawn_with(
     builder: CommandBuilder,
     size: Size,
-    start: impl Fn(CommandBuilder, Size, &OwnedHandle, Joining) -> Result<Started, Refusal>,
+    create: impl FnOnce(CommandBuilder, Size) -> io::Result<Created>,
 ) -> io::Result<Spawned> {
     let_children_take_ctrl_c();
-    let mut job = kill_on_close_job()?;
-    let started = match start(builder.clone(), size, &job, Joining::AtCreation) {
-        Err(refusal) if refusal.denied => {
-            // a packaged app's denied start leaves its job refusing the app's processes
-            job = kill_on_close_job()?;
-            start(builder, size, &job, Joining::Suspended)
-        }
-        started => started,
-    };
-    let (conpty, child) = started.map_err(|refusal| refusal.error)?;
+    let job = kill_on_close_job()?;
+    let (conpty, child, thread) = create(builder, size)?;
+    let child = join_and_resume(child, &thread, &job)?;
     let pid = child
         .process_id()
         .ok_or_else(|| io::Error::other("the PTY child has no process id"))?;
@@ -503,30 +468,23 @@ fn spawn_with(
     })
 }
 
-/// Start `builder` on a new pseudoconsole of `size`, in `job` as `joining` says.
-fn start(builder: CommandBuilder, size: Size, job: &OwnedHandle, joining: Joining) -> Result<Started, Refusal> {
+/// Start `builder` suspended on a new pseudoconsole of `size`.
+fn create(builder: CommandBuilder, size: Size) -> io::Result<Created> {
     let program = program_as_written(&builder);
     let pair = ConPtySystem::default()
         .openpty(size.pty())
-        .map_err(|err| Refusal::other(pty_error(&err)))?;
+        .map_err(|err| pty_error(&err))?;
     // the master spawns the child: the slave behind `PtyPair::slave` cannot be downcast
     drop(pair.slave);
     let master: Box<dyn MasterPty> = pair.master;
     let conpty = master
         .downcast::<ConPtyMasterPty>()
-        .map_err(|_| Refusal::other(io::Error::other("the PTY master is not a ConPTY master")))?;
-    let child = match joining {
-        Joining::AtCreation => conpty
-            .spawn_command_in_job(builder, job.as_raw_handle())
-            .map_err(|err| Refusal::of_start(&err, &program))?,
-        Joining::Suspended => {
-            let (child, thread) = conpty
-                .spawn_command_suspended(builder)
-                .map_err(|err| Refusal::of_start(&err, &program))?;
-            join_and_resume(child, &thread, job).map_err(Refusal::other)?
-        }
-    };
-    Ok((conpty, child))
+        .map_err(|_| io::Error::other("the PTY master is not a ConPTY master"))?;
+    let (child, thread) = conpty.spawn_command_suspended(builder).map_err(|err| {
+        let cause: &(dyn std::error::Error + 'static) = &*err;
+        start_error(cause, &program).unwrap_or_else(|| pty_error(&err))
+    })?;
+    Ok((conpty, child, thread))
 }
 
 /// Assign a child started suspended to `job`, then resume its main thread, `thread`; a child that cannot join or

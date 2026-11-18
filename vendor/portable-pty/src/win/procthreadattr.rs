@@ -4,12 +4,8 @@ use std::io::Error as IoError;
 use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::*;
-use winapi::um::winnt::HANDLE;
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
-// ProcThreadAttributeValue(ProcThreadAttributeJobList = 13, input): the jobs
-// the new process is assigned to as it is created (Windows 10 and newer).
-const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002000D;
 
 pub struct ProcThreadAttributeList {
     data: Vec<u8>,
@@ -63,28 +59,6 @@ impl ProcThreadAttributeList {
         ensure!(
             res != 0,
             "UpdateProcThreadAttribute failed: {}",
-            IoError::last_os_error()
-        );
-        Ok(())
-    }
-
-    /// Assign the process to `jobs` as it is created. The list keeps a pointer
-    /// to `jobs`, which must outlive the CreateProcessW call that uses it.
-    pub fn set_job_list(&mut self, jobs: &[HANDLE]) -> Result<(), Error> {
-        let res = unsafe {
-            UpdateProcThreadAttribute(
-                self.as_mut_ptr(),
-                0,
-                PROC_THREAD_ATTRIBUTE_JOB_LIST,
-                jobs.as_ptr() as *mut _,
-                mem::size_of_val(jobs),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        };
-        ensure!(
-            res != 0,
-            "UpdateProcThreadAttribute(job list) failed: {}",
             IoError::last_os_error()
         );
         Ok(())

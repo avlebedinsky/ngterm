@@ -5,6 +5,7 @@ The zero-size API errors and the last successful size are left as they were.
 ngterm's own. Remove when portable-pty checks the COORD range before converting a PtySize. Tests:
 ngterm-pty's an_oversized_console_is_refused_with_the_requested_size and a_resize_the_console_refuses_is_reported.
 
+diff -ruN a/src/win/conpty.rs b/src/win/conpty.rs
 --- a/src/win/conpty.rs
 +++ b/src/win/conpty.rs
 @@ -3,26 +3,37 @@

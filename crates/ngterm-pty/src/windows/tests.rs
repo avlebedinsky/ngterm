@@ -1,8 +1,9 @@
 //! The Windows child and its job on real pseudoconsoles: a handed-over child killed through its process handle, a
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
-//! list has room for, the spawn's and the master's refusals, the suspended start a denied one falls back to and its
-//! failure, and the processes that left a job taken back into it, but not a process that got a listed one's id. An
-//! actor reads each child's output away, so the console never waits on its pipe.
+//! list has room for, the spawn's and the master's refusals, each shell's tree in its job, the suspended start's
+//! failures, panes of one package that end alone, and the processes that left a job taken back into it, but not a
+//! process that got a listed one's id. An actor reads each child's output away, so the console never waits on its
+//! pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::ChildKiller;
 use windows_sys::Win32::Foundation::{DuplicateHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE};
+use windows_sys::Win32::System::JobObjects::IsProcessInJob;
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, GetCurrentProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
 };
@@ -316,45 +318,6 @@ fn an_oversized_console_is_refused_with_the_requested_size() {
     }
 }
 
-/// A spawn of `program` with `args` through [`spawn_with`], each start refused as `refuse` says or else made, and
-/// the starts it asked for, in order.
-fn spawn_recording(
-    program: &str,
-    args: &[&str],
-    refuse: impl Fn(Joining) -> Option<Refusal>,
-) -> (io::Result<Spawned>, Vec<Joining>) {
-    let (spawned, made) = spawn_recording_jobs(program, args, refuse);
-    (spawned, made.into_iter().map(|(joining, _)| joining).collect())
-}
-
-/// [`spawn_recording`], with the job each start was given (its handle's value).
-fn spawn_recording_jobs(
-    program: &str,
-    args: &[&str],
-    refuse: impl Fn(Joining) -> Option<Refusal>,
-) -> (io::Result<Spawned>, Vec<(Joining, usize)>) {
-    let made = std::sync::Mutex::new(Vec::new());
-    let spawned = spawn_with(
-        command(program, args).builder(),
-        Size::cells(24, 80),
-        |builder, size, job, joining| {
-            made.lock()
-                .expect("the starts")
-                .push((joining, job.as_raw_handle().addr()));
-            refuse(joining).map_or_else(|| start(builder, size, job, joining), Err)
-        },
-    );
-    (spawned, made.into_inner().expect("the starts"))
-}
-
-/// The refusal of a start in a job that Windows denies (`ERROR_ACCESS_DENIED`), for the start in the job only.
-fn denied_in_job(joining: Joining) -> Option<Refusal> {
-    (joining == Joining::AtCreation).then(|| Refusal {
-        error: io::Error::from_raw_os_error(i32::try_from(ERROR_ACCESS_DENIED).expect("an error code")),
-        denied: true,
-    })
-}
-
 /// The exit code of the process `process` names, once it exits; `None` if it still runs `PATIENCE` from now.
 fn exit_code_of(process: &OwnedHandle) -> Option<u32> {
     let patience = u32::try_from(PATIENCE.as_millis()).expect("a timeout");
@@ -365,6 +328,12 @@ fn exit_code_of(process: &OwnedHandle) -> Option<u32> {
     let mut code = 0_u32;
     // SAFETY: reads the exit code of a process this test holds open into a live local.
     (unsafe { GetExitCodeProcess(process.as_raw_handle(), &raw mut code) } != 0).then_some(code)
+}
+
+/// Whether the process `process` names still runs.
+fn runs(process: BorrowedHandle<'_>) -> bool {
+    // SAFETY: polls a process handle this test holds open with `SYNCHRONIZE`.
+    unsafe { WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_TIMEOUT }
 }
 
 /// Process `pid` with the rights to wait for it and read its state; `None` once it is gone.
@@ -390,30 +359,17 @@ fn child_of(pid: u32, program: &str) -> u32 {
     found.expect("a child")
 }
 
-/// A child whose start in its job Windows denies (a packaged app's, PowerShell from the Microsoft Store while another
-/// of its processes runs) starts suspended on a new pseudoconsole, in a new job (the denied start's refuses the app's
-/// processes), instead: it joins the job before it runs, so what it starts is in the job too, and the job's end ends
-/// them.
+/// A child joins its job before it runs: it is in the job, and so is what it starts, a level down too. The job's end
+/// ends them.
 #[test]
-fn a_denied_start_starts_the_child_suspended_in_a_new_job() {
-    let (spawned, made) = spawn_recording_jobs(
-        "cmd.exe",
-        &["/d", "/c", "cmd /d /c ping -n 300 127.0.0.1 >nul"],
-        denied_in_job,
-    );
-    let [(Joining::AtCreation, denied_job), (Joining::Suspended, job)] = made[..] else {
-        panic!("the starts: {made:?}");
-    };
-    assert_ne!(denied_job, job, "the suspended start got the denied start's job");
-    let Spawned { master, mut child } = spawned.expect("the suspended start");
-    assert_eq!(child.job().as_raw_handle().addr(), job);
-    let _actor = drain(master);
-    assert!(!escapees::packaged(child.process().expect("the process handle")));
+fn a_child_and_what_it_starts_are_in_its_job() {
+    let Running { mut child, _actor } = run("cmd.exe", &["/d", "/c", "cmd /d /c ping -n 300 127.0.0.1 >nul"]);
     let view = child.job_view();
     wait_until("the inner cmd started its ping in the job", || {
         view.process_ids().is_some_and(|pids| pids.len() >= 3)
     });
     assert!(view.process_ids().expect("the job's processes").contains(&child.pid()));
+    assert!(!escapees::packaged(child.process().expect("the process handle")));
     child.killer().kill_tree().expect("the kill");
     assert_eq!(child.wait().expect("the exit").exit_code(), 1);
     wait_until("the tree ended", || {
@@ -424,9 +380,12 @@ fn a_denied_start_starts_the_child_suspended_in_a_new_job() {
 /// A child started suspended runs on its own pseudoconsole: what it prints reaches the master. The line is not
 /// the one the command names, which the console's title would carry too.
 #[test]
-fn a_child_started_suspended_prints_to_its_console() {
-    let (spawned, _) = spawn_recording("cmd.exe", &["/d", "/c", "echo ngterm-%OS%"], denied_in_job);
-    let Spawned { master, mut child } = spawned.expect("the suspended start");
+fn a_child_prints_to_its_console() {
+    let Spawned { master, mut child } = crate::spawn(
+        &command("cmd.exe", &["/d", "/c", "echo ngterm-%OS%"]),
+        Size::cells(24, 80),
+    )
+    .expect("a child on a pseudoconsole");
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let on_read = {
         let seen = Arc::clone(&seen);
@@ -447,30 +406,146 @@ fn a_child_started_suspended_prints_to_its_console() {
     actor.child_exited();
 }
 
-/// Only a denied start is made again: another refusal is the spawn's error, after one start.
+/// A program Windows denies (a directory) is refused in plain words.
 #[test]
-fn a_start_refused_otherwise_is_not_made_again() {
-    let (spawned, made) = spawn_recording("cmd.exe", &["/d", "/c", "exit 0"], |_| {
-        Some(Refusal::other(io::Error::other("no console for the child")))
-    });
-    assert_eq!(made, [Joining::AtCreation]);
-    let err = spawned.expect_err("a refused start");
-    assert_eq!(err.to_string(), "no console for the child");
-}
-
-/// A program Windows denies however it starts (a directory) is refused after both starts, in plain words.
-#[test]
-fn a_program_denied_both_starts_is_refused_naming_it() {
+fn a_program_windows_denies_is_refused_naming_it() {
     let program = std::env::var("SystemRoot").expect("the Windows directory");
-    let (spawned, made) = spawn_recording(&program, &[], |_| None);
-    assert_eq!(made, [Joining::AtCreation, Joining::Suspended]);
-    let err = spawned.expect_err("a directory started");
+    let err = crate::spawn(&command(&program, &[]), Size::cells(24, 80)).expect_err("a directory started");
     let shown = err.to_string();
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{shown}");
     assert!(
         shown.starts_with(&format!("{program}: ")) && shown.ends_with("(os error 5)"),
         "{shown}"
     );
+}
+
+/// Each shell a pane runs (`cmd.exe`, Windows PowerShell, PowerShell 7 from its installer, Git Bash) is in its job
+/// before it runs, and so is the ping its child starts: the kill of the tree ends that ping. CI's Windows runners
+/// have each of them.
+#[test]
+fn a_ping_that_a_shells_child_starts_is_in_the_job() {
+    let program_files = std::env::var("ProgramFiles").expect("the Program Files folder");
+    let pwsh = format!(r"{program_files}\PowerShell\7\pwsh.exe");
+    let bash = format!(r"{program_files}\Git\bin\bash.exe");
+    let posh_line = "cmd /d /c ping -n 300 127.0.0.1";
+    let shells: [(&str, &[&str]); 4] = [
+        ("cmd.exe", &["/d", "/c", "cmd /d /c ping -n 300 127.0.0.1 >nul"]),
+        ("powershell.exe", &["-NoLogo", "-NoProfile", "-Command", posh_line]),
+        (&pwsh, &["-NoLogo", "-NoProfile", "-Command", posh_line]),
+        (&bash, &["-c", "bash -c 'ping -n 300 127.0.0.1'; true"]),
+    ];
+    for (shell, args) in shells {
+        let Running { child, _actor } = run(shell, args);
+        assert!(
+            !escapees::packaged(child.process().expect("the process handle")),
+            "{shell} is packaged"
+        );
+        let view = child.job_view();
+        let mut ping = None;
+        wait_until("the shell's child started a ping in the job", || {
+            ping = view
+                .process_ids()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(watched)
+                .find(|process| image_name(process).eq_ignore_ascii_case("ping.exe"));
+            ping.is_some()
+        });
+        child.killer().kill_tree().expect("the kill");
+        assert_eq!(
+            exit_code_of(&ping.expect("the ping")),
+            Some(1),
+            "the ping of {shell} outlived the kill"
+        );
+    }
+}
+
+/// A job that stands for a package's, the job Windows puts each process of a packaged app into as `CreateProcessW`
+/// creates it: no limits, and the test holds it.
+fn package_job() -> OwnedHandle {
+    // SAFETY: creates an unnamed job with default security; no memory is passed.
+    let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+    // SAFETY: a fresh handle nothing else owns.
+    unsafe { OwnedHandle::from_raw_handle(raw) }
+}
+
+/// [`create`] as Windows does it for a packaged app: the child created is put into its package's job, `package`,
+/// before the spawn can assign it to the pane's job.
+fn create_in_package(package: &OwnedHandle) -> impl FnOnce(CommandBuilder, Size) -> io::Result<Created> + '_ {
+    move |builder, size| {
+        let created = create(builder, size)?;
+        let process = created.1.as_raw_handle().expect("the child's process handle");
+        // SAFETY: both handles are open; no memory is passed.
+        let joined = unsafe { AssignProcessToJobObject(package.as_raw_handle(), process) };
+        assert_ne!(joined, 0, "{}", io::Error::last_os_error());
+        Ok(created)
+    }
+}
+
+/// A pane of the package `package` (see [`create_in_package`]) whose shell runs until it is killed.
+fn package_pane(package: &OwnedHandle) -> Running {
+    let builder = command("cmd.exe", &["/d", "/c", "ping -n 300 127.0.0.1 >nul"]).builder();
+    let Spawned { master, child } =
+        spawn_with(builder, Size::cells(24, 80), create_in_package(package)).expect("a pane of the package");
+    Running {
+        child,
+        _actor: drain(master),
+    }
+}
+
+/// Whether `child`'s process is in `job`.
+fn in_job_of(child: &Child, job: BorrowedHandle<'_>) -> bool {
+    let mut inside = 0;
+    // SAFETY: both handles are open; the result goes to a live local.
+    let read = unsafe {
+        IsProcessInJob(
+            child.process().expect("the process handle").as_raw_handle(),
+            job.as_raw_handle(),
+            &raw mut inside,
+        )
+    };
+    assert_ne!(read, 0, "{}", io::Error::last_os_error());
+    inside != 0
+}
+
+/// Panes of one packaged app (issue 19, PowerShell from the Microsoft Store) are each in their package's job and their
+/// own, but not in each other's: the package's job takes the first process before its pane's job does, so it nests
+/// in no pane's job. The end of a pane, by its kill or its job's close, ends its own tree only, in any order.
+#[test]
+fn the_end_of_a_pane_leaves_the_panes_of_its_package_running() {
+    let package = package_job();
+    let panes: Vec<Running> = (0..3).map(|_| package_pane(&package)).collect();
+    for (index, pane) in panes.iter().enumerate() {
+        assert!(
+            in_job_of(&pane.child, package.as_handle()),
+            "pane {index} is not in its package's job"
+        );
+        for (other, other_pane) in panes.iter().enumerate().filter(|(other, _)| *other != index) {
+            assert!(
+                !in_job_of(&pane.child, other_pane.child.job()),
+                "pane {index} is in the job of pane {other}"
+            );
+        }
+    }
+    let [first, second, third] = <[Running; 3]>::try_from(panes)
+        .map_err(|_| "three panes")
+        .expect("three panes");
+    let shells: Vec<OwnedHandle> = [&first, &second, &third]
+        .iter()
+        .map(|pane| watched(pane.child.pid()).expect("a pane's shell"))
+        .collect();
+    first.child.killer().kill_tree().expect("the first pane's kill");
+    assert_eq!(exit_code_of(&shells[0]), Some(1));
+    assert!(runs(shells[1].as_handle()), "the second pane ended with the first");
+    assert!(runs(shells[2].as_handle()), "the third pane ended with the first");
+    drop(third);
+    // a kill on close ends a process with the exit code 0
+    assert_eq!(exit_code_of(&shells[2]), Some(0));
+    assert!(runs(shells[1].as_handle()), "the second pane ended with the third");
+    drop(first);
+    second.child.killer().kill_tree().expect("the second pane's kill");
+    assert_eq!(exit_code_of(&shells[1]), Some(1));
 }
 
 /// What a packaged shell leaves, made without a package: `line` run by a `cmd.exe` outside any job of the test's
@@ -638,39 +713,150 @@ fn a_suspended_child_that_cannot_join_its_job_is_terminated() {
     );
 }
 
-/// PowerShell from the Microsoft Store (a packaged app) as a pane's program, the issue's setup: the first pane starts
-/// in its job, the second, while the first runs, only suspended, as Windows then denies the start in a job. What
-/// either starts leaves its job and is taken back: a ping on the console and a detached one end with the pane, by
-/// its kill and by its job's close. Needs that PowerShell (`Microsoft.PowerShell` from the Store or its
-/// msixbundle), which CI does not have.
+/// A child started suspended whose main thread cannot be resumed (a thread handle without the right to) is terminated,
+/// and the start fails with the resume's error: no suspended process is left.
+#[test]
+fn a_suspended_child_that_cannot_resume_is_terminated() {
+    let (conpty, child, thread) = create(
+        command("cmd.exe", &["/d", "/c", "exit 0"]).builder(),
+        Size::cells(24, 80),
+    )
+    .expect("a suspended child");
+    let process = watched(child.process_id().expect("the child's id")).expect("the child");
+    let job = kill_on_close_job().expect("a job");
+    // `SYNCHRONIZE` (winnt.h) without `THREAD_SUSPEND_RESUME`
+    let wait_only = restricted(thread.as_handle(), 0x0010_0000);
+    let err = join_and_resume(child, &wait_only, &job).expect_err("resumed without the right");
+    assert_eq!(os_error(&err), Some(ERROR_ACCESS_DENIED), "{err}");
+    assert_eq!(
+        exit_code_of(&process),
+        Some(1),
+        "the suspended child was not terminated"
+    );
+    drop((conpty, thread));
+}
+
+/// The Store PowerShell's app execution alias.
+fn store_powershell() -> String {
+    let local = std::env::var("LOCALAPPDATA").expect("the local app data folder");
+    format!(r"{local}\Microsoft\WindowsApps\pwsh.exe")
+}
+
+/// A Store PowerShell pane that starts a detached ping and a ping on its console, and the two pings once its job
+/// took both back.
+fn store_powershell_pane() -> (Running, Vec<OwnedHandle>) {
+    let line = "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; ping -n 300 127.0.0.1";
+    let pane = run(&store_powershell(), &["-NoLogo", "-NoProfile", "-Command", line]);
+    assert!(escapees::packaged(pane.child.process().expect("the process handle")));
+    let pings = pings_of(&pane.child);
+    (pane, pings)
+}
+
+/// The packaged PowerShell processes that run now.
+fn store_powershells() -> Vec<u32> {
+    escapees::processes()
+        .into_iter()
+        .filter(|entry| {
+            watched(entry.pid).is_some_and(|process| {
+                image_name(&process).eq_ignore_ascii_case("pwsh.exe") && escapees::packaged(process.as_handle())
+            })
+        })
+        .map(|entry| entry.pid)
+        .collect()
+}
+
+/// PowerShell from the Microsoft Store (a packaged app) as a pane's program, the issue's setup: two panes start, the
+/// second while the first runs. What either starts leaves its job and is taken back: a ping on the console and a
+/// detached one end with the pane, by its kill and by its job's close. Needs that PowerShell (`Microsoft.PowerShell`
+/// from the Store or its msixbundle), which CI does not have.
 #[test]
 #[ignore = "needs PowerShell from the Microsoft Store"]
 fn a_store_powershell_pane_starts_and_its_tree_ends_with_it() {
-    let local = std::env::var("LOCALAPPDATA").expect("the local app data folder");
-    let alias = format!(r"{local}\Microsoft\WindowsApps\pwsh.exe");
-    let line = "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; ping -n 300 127.0.0.1";
-    let args = ["-NoLogo", "-NoProfile", "-Command", line];
-    let (first, made) = spawn_recording(&alias, &args, |_| None);
-    assert_eq!(made, [Joining::AtCreation], "another Store PowerShell runs");
-    let (second, made) = spawn_recording(&alias, &args, |_| None);
-    assert_eq!(made, [Joining::AtCreation, Joining::Suspended]);
-    let mut pings = Vec::new();
-    let mut panes = Vec::new();
-    for Spawned { master, child } in [first.expect("the first pane"), second.expect("the second pane")] {
-        assert!(escapees::packaged(child.process().expect("the process handle")));
-        let actor = drain(master);
-        pings.push(pings_of(&child));
-        panes.push((child, actor));
-    }
-    let (second, _actor) = panes.pop().expect("the second pane");
-    second.killer().kill_tree().expect("the kill");
-    for ping in pings.pop().expect("the second pane's pings") {
+    let (first, first_pings) = store_powershell_pane();
+    let (second, second_pings) = store_powershell_pane();
+    second.child.killer().kill_tree().expect("the kill");
+    for ping in second_pings {
         assert_eq!(exit_code_of(&ping), Some(1), "a ping outlived the second pane's kill");
     }
-    drop(panes);
-    for ping in pings.pop().expect("the first pane's pings") {
+    drop(first);
+    for ping in first_pings {
+        // a kill on close ends a process with the exit code 0
         assert_eq!(exit_code_of(&ping), Some(0), "a ping outlived the first pane's close");
     }
+}
+
+/// Store PowerShell panes, and one started outside ngterm (`outside_first`: before the panes, else after them):
+/// the end of a pane, by its kill or its job's close, leaves each other pane, what it started, and the outside one
+/// running. Windows puts each process of the package into its package's job as it creates it: started in a job list,
+/// the first one would put that job inside its pane's job, and the pane's end would end every later one.
+fn store_powershell_panes_end_alone(outside_first: bool) {
+    assert_eq!(store_powershells(), [], "a Store PowerShell runs before the test");
+    let start_outside = || {
+        std::process::Command::new(store_powershell())
+            .args(["-NoLogo", "-NoProfile", "-Command", "Start-Sleep 300"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .expect("a Store PowerShell outside ngterm")
+    };
+    let mut early = outside_first.then(start_outside);
+    let (first, _) = store_powershell_pane();
+    let (second, second_pings) = store_powershell_pane();
+    let (third, _) = store_powershell_pane();
+    let mut outside = early.take().unwrap_or_else(start_outside);
+    let shells: Vec<OwnedHandle> = [&first, &second, &third]
+        .iter()
+        .map(|pane| watched(pane.child.pid()).expect("a pane's shell"))
+        .collect();
+    first.child.killer().kill_tree().expect("the first pane's kill");
+    assert_eq!(exit_code_of(&shells[0]), Some(1));
+    // what the kill would end with it ends in milliseconds
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(runs(shells[1].as_handle()), "the second pane ended with the first");
+    assert!(runs(shells[2].as_handle()), "the third pane ended with the first");
+    for ping in &second_pings {
+        assert!(
+            runs(ping.as_handle()),
+            "a ping of the second pane ended with the first pane"
+        );
+    }
+    assert!(
+        outside.try_wait().expect("the outside one's state").is_none(),
+        "the outside one ended with the first pane"
+    );
+    drop(third);
+    assert_eq!(exit_code_of(&shells[2]), Some(0));
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(runs(shells[1].as_handle()), "the second pane ended with the third");
+    assert!(
+        outside.try_wait().expect("the outside one's state").is_none(),
+        "the outside one ended with the third pane"
+    );
+    drop((first, second));
+    assert_eq!(exit_code_of(&shells[1]), Some(0));
+    for ping in &second_pings {
+        assert_eq!(exit_code_of(ping), Some(0), "a ping outlived the second pane's close");
+    }
+    assert!(
+        outside.try_wait().expect("the outside one's state").is_none(),
+        "the outside one ended with the panes"
+    );
+    outside.kill().expect("the outside one's end");
+    outside.wait().expect("the outside one's exit");
+}
+
+/// [`store_powershell_panes_end_alone`] when the panes start the package (issue 19's QA, Q1): no Store PowerShell
+/// runs before the first pane.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn store_powershell_panes_that_start_the_package_end_alone() {
+    store_powershell_panes_end_alone(false);
+}
+
+/// [`store_powershell_panes_end_alone`] when a Store PowerShell outside ngterm started the package first.
+#[test]
+#[ignore = "needs PowerShell from the Microsoft Store"]
+fn store_powershell_panes_after_one_outside_end_alone() {
+    store_powershell_panes_end_alone(true);
 }
 
 /// The two pings a Store PowerShell pane's line starts, once its job took both back.

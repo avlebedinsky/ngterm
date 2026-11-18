@@ -188,17 +188,7 @@ impl PsuedoCon {
     }
 
     pub fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
-        self.spawn_command_in_job(cmd, None)
-    }
-
-    /// Spawn `cmd` attached to this console and, with `job`, inside that job
-    /// object from its first instruction on.
-    pub fn spawn_command_in_job(
-        &self,
-        cmd: CommandBuilder,
-        job: Option<HANDLE>,
-    ) -> anyhow::Result<WinChild> {
-        self.create_process(cmd, job, 0).map(|(child, _main_thread)| child)
+        self.create_process(cmd, 0).map(|(child, _main_thread)| child)
     }
 
     /// Spawn `cmd` attached to this console with its main thread suspended,
@@ -208,13 +198,12 @@ impl PsuedoCon {
         &self,
         cmd: CommandBuilder,
     ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
-        self.create_process(cmd, None, CREATE_SUSPENDED)
+        self.create_process(cmd, CREATE_SUSPENDED)
     }
 
     fn create_process(
         &self,
         cmd: CommandBuilder,
-        job: Option<HANDLE>,
         flags: DWORD,
     ) -> anyhow::Result<(WinChild, std::os::windows::io::OwnedHandle)> {
         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
@@ -230,14 +219,8 @@ impl PsuedoCon {
         si.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
         si.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
 
-        // UpdateProcThreadAttribute keeps a pointer to the job list: it lives
-        // until CreateProcessW below has returned.
-        let jobs: Vec<HANDLE> = job.into_iter().collect();
-        let mut attrs = ProcThreadAttributeList::with_capacity(1 + jobs.len() as DWORD)?;
+        let mut attrs = ProcThreadAttributeList::with_capacity(1)?;
         attrs.set_pty(self.con)?;
-        if !jobs.is_empty() {
-            attrs.set_job_list(&jobs)?;
-        }
         si.lpAttributeList = attrs.as_mut_ptr();
 
         let mut pi: PROCESS_INFORMATION = unsafe { mem::zeroed() };
