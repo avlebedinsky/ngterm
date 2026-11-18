@@ -114,7 +114,7 @@ struct State {
     child_exited: bool,
     shutdown: bool,
     animation_deadline: Option<Instant>,
-    /// The worker sleeps in [`Mailbox::next`] ([`Mailbox::idle`]).
+    /// The worker sleeps in [`Mailbox::next`] with no hold deadline ([`Mailbox::idle`]).
     #[cfg(any(test, feature = "test-support"))]
     waiting: bool,
 }
@@ -262,7 +262,7 @@ impl Mailbox {
             }
             #[cfg(any(test, feature = "test-support"))]
             {
-                state.waiting = true;
+                state.waiting = deadline.is_none();
             }
             state = self.wait(state, deadline);
             #[cfg(any(test, feature = "test-support"))]
@@ -272,13 +272,19 @@ impl Mailbox {
         }
     }
 
-    /// The worker sleeps in [`Mailbox::next`] and no output is queued: it completed each batch it took (fed, counted
-    /// and woken for), and the next batch comes only from new output. The worker sets the flag under the state lock
-    /// that this call takes, so all that the worker did before it sleeps happened before this call returns `true`.
+    /// The worker sleeps in [`Mailbox::next`] and only new output can end the sleep: it completed each batch it took
+    /// (fed, counted and woken for), no output is queued, and no hold deadline, animation deadline, end of output or
+    /// shutdown is pending. Each of these makes the worker return and wake the frontend again. The worker sets the
+    /// flag under the state lock that this call takes, so all that the worker did before it sleeps happened before
+    /// this call returns `true`.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn idle(&self) -> bool {
         let state = self.lock();
-        state.waiting && state.output.is_empty()
+        state.waiting
+            && state.output.is_empty()
+            && state.animation_deadline.is_none()
+            && state.eof != OutputEnd::Pending
+            && !state.shutdown
     }
 
     /// `len` bytes of a taken read reached the VT. Whether reads were resumed: the caller wakes the actor's reader
@@ -439,7 +445,41 @@ mod tests {
         mailbox.deliver(b"out");
         assert_eq!(worker.join().unwrap(), Mail::Output(b"out".to_vec()));
         assert!(!mailbox.idle(), "the worker holds a batch");
-        mailbox.deliver(b"more");
-        assert!(!mailbox.idle(), "output is queued");
+    }
+
+    #[test]
+    fn the_worker_is_not_idle_in_a_timed_wait() {
+        let mailbox = Arc::new(mailbox().0);
+        let (slept, asleep) = std::sync::mpsc::channel();
+        *mailbox.before_wait.lock().unwrap() = Some(slept);
+        let worker = {
+            let mailbox = Arc::clone(&mailbox);
+            std::thread::spawn(move || mailbox.next(Some(Instant::now() + Duration::from_secs(60))))
+        };
+        asleep.recv().unwrap();
+        assert!(!mailbox.idle(), "the hold deadline ends the wait");
+        mailbox.shutdown();
+        assert_eq!(worker.join().unwrap(), Mail::End);
+    }
+
+    #[test]
+    fn the_worker_is_not_idle_while_a_change_waits_for_it() {
+        // a sleeping worker that did not take the lock again yet; each change makes it return and wake the frontend
+        type Change = (&'static str, fn(&Mailbox));
+        let changes: [Change; 4] = [
+            ("output is queued", |mailbox| mailbox.deliver(b"more")),
+            ("an animation deadline is armed", |mailbox| {
+                mailbox.animation_deadline(Some(Instant::now() + Duration::from_secs(60)));
+            }),
+            ("the end of output is pending", Mailbox::end_of_output),
+            ("a shutdown is pending", Mailbox::shutdown),
+        ];
+        for (change, apply) in changes {
+            let (mailbox, _) = mailbox();
+            mailbox.lock().waiting = true;
+            assert!(mailbox.idle(), "{change}: idle before the change");
+            apply(&mailbox);
+            assert!(!mailbox.idle(), "{change}");
+        }
     }
 }

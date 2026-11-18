@@ -830,8 +830,10 @@ impl Pane {
         self.shared.paint_hooks.stall.store(true, Ordering::Release);
     }
 
-    /// The IO worker waits for new output: each batch it took is fed to the VT, and its wake was sent. A test that
-    /// waits for this before [`Self::stall_next_paint`] knows that no wake of the worker comes after the stalled paint.
+    /// The IO worker waits for new output only: each batch it took is fed to the VT, and its wake was sent. No
+    /// synchronized-output hold, animation deadline, end of output or shutdown is pending, so the worker does not
+    /// return without new output. A test that waits for this before [`Self::stall_next_paint`], and gives no output
+    /// after it, knows that no wake of the worker comes after the stalled paint.
     #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn io_idle(&self) -> bool {
