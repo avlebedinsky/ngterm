@@ -356,7 +356,15 @@ def test_go_next_attention_stays_in_its_window_with_cross_window_on(launch):
 
 
 @pytest.mark.covers("session.go")
-@pytest.mark.parametrize("to", [None, "sideways", pytest.param("0", marks=pytest.mark.since("0.42.0"))])
+@pytest.mark.parametrize(
+    "to",
+    [
+        None,
+        "sideways",
+        pytest.param("0", marks=pytest.mark.since("0.42.0")),
+        pytest.param("-1", marks=pytest.mark.since("0.42.0")),
+    ],
+)
 def test_go_requires_a_direction(ctl, to):
     args = {} if to is None else {"to": to}
     assert_error(
@@ -386,6 +394,44 @@ def test_go_to_a_position_counts_collapsed_workspaces_and_never_wraps(ctl):
         assert active_session_id(ctl.tree()) == ids[len(ids) - 2]
     finally:
         ctl.request("workspace.delete", wid)
+
+
+def _go_to_each_position(ctl, order, label):
+    """`session.go` to each place of `order` lands there; one past the end is refused and keeps the last."""
+    for position, sid in enumerate(order, 1):
+        assert assert_ok(ctl.request("session.go", to=str(position)))["id"] == sid, (label, position)
+        assert active_session_id(ctl.tree()) == sid, (label, position)
+    past = len(order) + 1
+    assert_error(ctl.request("session.go", to=str(past)), f"no session at position {past}: {len(order)} navigable")
+    assert active_session_id(ctl.tree()) == order[-1], label
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.go", "workspace.focus", "session.flag", "sidebar.mode", "sidebar.flagged-layout")
+def test_go_to_a_position_follows_the_focus_filter_and_the_flagged_layout(ctl):
+    top = ctl.tree()["tree"]
+    first, (a1, _) = _new_workspace(ctl, sessions=2)
+    second, (b1, b2) = _new_workspace(ctl, sessions=2)
+    try:
+        assert_ok(ctl.request("workspace.focus", second, mode="on"))
+        _go_to_each_position(ctl, [b1, b2], "focus filter")
+        assert_ok(ctl.request("workspace.focus", second, mode="off"))
+
+        assert_ok(ctl.request("session.flag", "active", mode="clear"))
+        for sid in (b2, a1):
+            assert_ok(ctl.request("session.flag", sid, mode="on"))
+        assert_ok(ctl.request("sidebar.mode", mode="flagged"))
+        # the flat and plain lists keep the flagging order, the flagged tree the sidebar's
+        for layout, order in [("flat", [b2, a1]), ("plain", [b2, a1]), ("tree", [a1, b2])]:
+            assert_ok(ctl.request("sidebar.flagged-layout", mode=layout))
+            _go_to_each_position(ctl, order, layout)
+    finally:
+        ctl.request("workspace.focus", second, mode="off")
+        ctl.request("session.flag", "active", mode="clear")
+        ctl.request("sidebar.mode", mode=top["sidebarMode"])
+        ctl.request("sidebar.flagged-layout", mode=top["sidebarFlaggedLayout"])
+        for wid in (first, second):
+            ctl.request("workspace.delete", wid)
 
 
 # -- naming
