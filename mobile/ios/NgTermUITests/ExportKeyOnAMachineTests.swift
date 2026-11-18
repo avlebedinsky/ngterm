@@ -32,15 +32,6 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
     // how long a switch is held: a plain tap on a form's switch can miss
     private static let switchPress: TimeInterval = 0.6
     private static let tries = 3
-    // how many swipes a row far down the form may take to come into view
-    private static let swipes = 12
-    // how many times a face or finger is shown before the system's prompt is known to be up
-    private static let looks = 10
-    private static let springboardIdentifier = "com.apple.springboard"
-
-    private static func pause(_ seconds: TimeInterval) {
-        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: seconds)
-    }
 
     @MainActor
     internal func testAOnARealMachineAKeyIsExportedBehindTheOwnerCheckUnderAPassphrase() throws {
@@ -54,27 +45,27 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         FakeApp.expect(app.navigationBars["Settings"], "Settings")
 
         // a face or finger that doesn't match, then Cancel: nothing opens
-        tapExport(in: app)
-        refuseOwnerCheck()
-        Self.pause(Self.beat)
+        ExportPage.tapExport(in: app)
+        ExportPage.refuseOwnerCheck()
+        ExportPage.pause(Self.beat)
         XCTAssertFalse(app.navigationBars["Export private key"].exists, "a refused check opened the export")
         shot("refused", app)
 
         // a match opens the export, which shows the key's fingerprint
-        tapExport(in: app)
-        passOwnerCheck(in: app)
+        ExportPage.tapExport(in: app)
+        ExportPage.passOwnerCheck(in: app)
         let page = app.scrollViews["export-key-page"]
         FakeApp.expect(page, "the export page")
         FakeApp.expect(FakeApp.element(containing: machine.fingerprint, in: app), "the key's fingerprint")
 
         // nothing is saved under a passphrase too short
-        typePassphrase(Self.short, in: app)
+        ExportPage.typePassphrase(Self.short, in: app)
         app.buttons["export-save"].tap()
         FakeApp.expect(FakeApp.element(containing: "Use at least 8 characters.", in: app), "the short passphrase")
         XCTAssertFalse(app.buttons["DOCPicker.actionButton"].exists, "a short passphrase opened the file screen")
         shot("short", app)
 
-        typePassphrase(Self.passphrase, in: app)
+        ExportPage.typePassphrase(Self.passphrase, in: app)
         FileScreen.open(with: app.buttons["export-save"], in: app)
         FileScreen.save(in: app, back: app.buttons["export-copy"])
         FakeApp.expect(app.staticTexts["Saved"], "that the key was saved")
@@ -226,69 +217,6 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
         XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
-    }
-
-    // Settings' Export private key of the app's one key, tapped
-    @MainActor
-    private func tapExport(in app: XCUIApplication) {
-        let export = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'export-key-'")).firstMatch
-        let form = app.collectionViews["settings-form"]
-        for _ in 0..<Self.swipes where !(export.exists && export.isHittable) {
-            form.swipeUp()
-        }
-        XCTAssertTrue(export.isHittable, "Export private key never came into view")
-        export.tap()
-    }
-
-    // allows the app Face ID, the first time it asks (Touch ID asks nothing)
-    @MainActor
-    private func allowBiometrics() {
-        let allow = XCUIApplication(bundleIdentifier: Self.springboardIdentifier).alerts.buttons["OK"]
-        if allow.waitForExistence(timeout: Self.offerWait) {
-            allow.tap()
-        }
-    }
-
-    // the system's prompt shown a face or finger that doesn't match, then cancelled
-    @MainActor
-    private func refuseOwnerCheck() {
-        allowBiometrics()
-        let cancel = XCUIApplication(bundleIdentifier: Self.springboardIdentifier).buttons["Cancel"].firstMatch
-        for _ in 0..<Self.looks where !cancel.exists {
-            Self.pause(Self.beat)
-            Biometrics.noMatch()
-        }
-        FakeApp.expect(cancel, "the system prompt's Cancel")
-        cancel.tap()
-    }
-
-    // the system's prompt shown a matching face or finger, until the export opens
-    @MainActor
-    private func passOwnerCheck(in app: XCUIApplication) {
-        allowBiometrics()
-        let page = app.navigationBars["Export private key"]
-        for _ in 0..<Self.looks where !page.exists {
-            Self.pause(Self.beat)
-            Biometrics.match()
-        }
-        FakeApp.expect(page, "the export page after a match")
-    }
-
-    // types the passphrase into both fields, each emptied first, closing the keyboard after the second
-    @MainActor
-    private func typePassphrase(_ passphrase: String, in app: XCUIApplication) {
-        for identifier in ["export-passphrase", "export-passphrase-again"] {
-            let field = app.secureTextFields[identifier]
-            FakeApp.expect(field, identifier)
-            field.tap()
-            let old = (field.value as? String ?? "").count
-            if old > 0, field.value as? String != field.placeholderValue {
-                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old))
-            }
-            field.typeText(passphrase + (identifier.hasSuffix("again") ? "\n" : ""))
-            // a secure field reads as a dot for each character it holds
-            XCTAssertEqual((field.value as? String)?.count, passphrase.count, "\(identifier) holds another text")
-        }
     }
 
     // the one saved file is an OpenSSH private key under a cipher, never in the clear; only its cipher is reported
