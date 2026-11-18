@@ -37,6 +37,10 @@ CONFORMANCE_FIELD = "conformance"
 INSTALLED_FILE = Path("share/ngterm/app-BUILD")
 # Where an instance's private install lies in its root.
 PRIVATE_INSTALL_DIR = "install"
+# The release packaging's marker that enables updates, relative to the install root (`ngterm-update`'s `MARKER`).
+UPDATE_MARKER = Path("share/ngterm/update-format")
+# The AppImage file that an updatable private install on Linux names, in the instance root.
+APP_IMAGE = "ngterm.AppImage"
 
 class ProfileError(ValueError):
     pass
@@ -120,6 +124,8 @@ class RustAdapter(Adapter):
         ui: Any = None,
         path_prefix: Sequence[os.PathLike[str] | str] = (),
         web_worker_fault: str | None = None,
+        releases_api: str | None = None,
+        github_token: str | None = None,
     ) -> Instance:
         instance = super().launch(
             timeout,
@@ -131,6 +137,8 @@ class RustAdapter(Adapter):
             ui=ui,
             path_prefix=path_prefix,
             web_worker_fault=web_worker_fault,
+            releases_api=releases_api,
+            github_token=github_token,
         )
         return instance if first_run else self._profiled(instance)
 
@@ -177,6 +185,22 @@ class RustAdapter(Adapter):
         temporary = file.with_name(f".{file.name}.tmp")
         temporary.write_text(f"{version}\n{commit or ''}\n")
         os.replace(temporary, file)
+
+    def make_updatable(self, root: Path, env: dict[str, str]) -> None:
+        """The private install's layout is no Linux archive's (`usr/`) and has no `ngterm` directory: Windows marks it
+        an MSI install, which needs neither, and Linux runs it as an AppImage, whose variables name the install and an
+        image file in the root. macOS has no format that fits it."""
+        install = root / PRIVATE_INSTALL_DIR
+        if sys.platform == "win32":
+            marker = install / UPDATE_MARKER
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("windows-msi\n")
+        elif sys.platform.startswith("linux"):
+            image = root / APP_IMAGE
+            image.write_bytes(b"")
+            env.update(APPIMAGE=os.path.realpath(image), APPDIR=os.path.realpath(install))
+        else:
+            raise LaunchError(f"{self.name}: no update format fits a private install on {sys.platform}")
 
 
 def lay_out_private_install(binary: Path, install: Path) -> None:

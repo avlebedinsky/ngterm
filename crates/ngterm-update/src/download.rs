@@ -67,6 +67,10 @@ impl Source {
     /// GitHub's releases of ngterm.
     #[must_use]
     pub fn github() -> Self {
+        #[cfg(coverage)]
+        if let Some(source) = crate::stand_in::source() {
+            return source;
+        }
         Self {
             api: API.into(),
             downloads: DOWNLOADS.into(),
@@ -123,6 +127,8 @@ pub enum Trigger {
 
 /// The token lookup runs only for GitHub's own API, so no other source ever gets a local token.
 fn github_only(api: &str, lookup: impl FnOnce() -> Option<String>) -> Option<String> {
+    #[cfg(coverage)]
+    let api = if crate::stand_in::is_api(api) { API } else { api };
     (api == API).then(lookup).flatten()
 }
 

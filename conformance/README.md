@@ -341,6 +341,13 @@ cargo-llvm-cov and the toolchain's `llvm-tools` component:
   no profile, a stage that is not the instrumented build's or lacks one of the app's programs, or a bad marker exits
   2.
 
+Code that only a real outside service reaches gets a stand-in that only the instrumented build reads, under
+`cfg(coverage)` (which `cargo llvm-cov show-env` sets and a release build never has), and a test that skips outside a
+coverage run. The release check is one: `launch(releases_api=...)` points `ngterm-update`'s `Source::github` at a local
+server (`NGTERM_TEST_RELEASES_API`, its `stand_in` module), runs the instance from a private install that the updater
+checks (an MSI install on Windows, an AppImage on Linux) and gives it a fake `GH_TOKEN` and none of the run's
+(`tests/behaviors/test_release_check.py`).
+
 The runners still judge a coverage run's ratchet and exit with that verdict; the CI coverage jobs ignore its exit 1
 (instrumentation slows the app; the ids stay the normal run's) and judge the floors separately:
 `conformance/coverage/e2e-floor-desktop-linux.txt` and `e2e-floor-desktop-windows.txt` hold a `total line%` line,

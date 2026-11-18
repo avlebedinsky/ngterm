@@ -1665,6 +1665,59 @@ def test_rust_private_install_mirrors_the_stage_with_its_own_binary_and_identity
         adapter.write_installed(types.SimpleNamespace(root=tmp_path / "plain"), "1")
 
 
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_rust_makes_a_private_install_updatable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    root = tmp_path / "root"
+    install = root / "install"
+    (install / "share" / "ngterm").mkdir(parents=True)
+    monkeypatch.setattr(sys, "platform", platform)
+    env: dict[str, str] = {}
+    adapter = RustAdapter(None)
+    if platform == "darwin":
+        with pytest.raises(LaunchError, match="no update format fits a private install on darwin"):
+            adapter.make_updatable(root, env)
+        return
+    adapter.make_updatable(root, env)
+    marker = install / "share" / "ngterm" / "update-format"
+    if platform == "win32":
+        assert marker.read_text() == "windows-msi\n" and env == {}
+    else:
+        image = root / "ngterm.AppImage"
+        assert image.is_file() and not marker.exists()
+        assert env == {"APPIMAGE": os.path.realpath(image), "APPDIR": os.path.realpath(install)}
+
+
+def test_a_stand_in_releases_api_reaches_the_instance_with_only_the_fake_token(
+    roots: list[Path], fake_bin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "the run's token")
+    monkeypatch.setenv("GITHUB_TOKEN", "the run's other token")
+
+    class Updatable(UpstreamVocabularyAdapter):
+        def instance_executable(self, root: Path, private_install: bool = False) -> list[str]:
+            assert private_install, "the updater checks a private install"
+            return super().instance_executable(root)
+
+        def make_updatable(self, root: Path, env: dict[str, str]) -> None:
+            env["FAKE_UPDATABLE"] = str(root)
+
+    adapter = Updatable(fake_bin)
+    instance = adapter.launch(releases_api="http://127.0.0.1:9/api", github_token="fake-token")
+    try:
+        seen = json.loads((instance.state_dir / "fake-env.json").read_text())
+        assert seen["AGTERM_TEST_RELEASES_API"] == "http://127.0.0.1:9/api"
+        assert seen["GH_TOKEN"] == "fake-token" and "GITHUB_TOKEN" not in seen
+        assert seen["FAKE_UPDATABLE"] == str(instance.root)
+    finally:
+        adapter.stop(instance)
+    instance = adapter.launch(releases_api="http://127.0.0.1:9/api")
+    try:
+        seen = json.loads((instance.state_dir / "fake-env.json").read_text())
+        assert "GH_TOKEN" not in seen and "GITHUB_TOKEN" not in seen
+    finally:
+        adapter.stop(instance)
+
+
 def test_swift_macos_writes_the_installed_build_into_its_bundle_copy(tmp_path: Path) -> None:
     bundle = tmp_path / "ref" / "agterm.app"
     (bundle / "Contents" / "MacOS").mkdir(parents=True)

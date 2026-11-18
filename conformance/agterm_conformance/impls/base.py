@@ -338,6 +338,10 @@ def unique_app_id() -> str:
     return f"{DEFAULT_APP_ID}.conformance.i{uuid.uuid4().hex[:12]}"
 
 
+# The variables a local GitHub token is read from (`ngterm-update`'s `github_auth`).
+GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
+
+
 # The harness-owned variables, after the implementation's prefix (`Adapter.env_prefix`: upstream's `AGTERM_`, the
 # Rust build's `NGTERM_`); everything else under a scrubbed prefix is inherited and refused.
 OWN_VARIABLE_NAMES = (
@@ -348,6 +352,8 @@ OWN_VARIABLE_NAMES = (
     "UITEST_SHOW_WELCOME",
     # The Rust build's page worker fault (`launch(web_worker_fault=...)`), for the `web-worker-faults` tests alone.
     "TEST_WEB_WORKER_FAULT",
+    # The Rust build's stand-in releases API (`launch(releases_api=...)`), which only an instrumented build reads.
+    "TEST_RELEASES_API",
     # The Rust build's log filter, set only by tools/ghostty_probe.py and tools/chrome_probe.py; an inherited one is
     # still scrubbed.
     "LOG",
@@ -600,6 +606,11 @@ class Adapter:
         read from at request time; a `version` of None removes it."""
         raise NotImplementedError(f"{self.name}: no installed-build metadata")
 
+    def make_updatable(self, root: Path, env: dict[str, str]) -> None:
+        """Makes the private install under `root` one that the app's updater checks for releases, for a launch with
+        `env`."""
+        raise NotImplementedError(f"{self.name}: no updatable private install")
+
     @property
     def headless(self) -> bool:
         return self.needs_runtime_dir and display_mode() == "headless"
@@ -673,6 +684,8 @@ class Adapter:
         ui: Any = None,
         path_prefix: Sequence[os.PathLike[str] | str] = (),
         web_worker_fault: str | None = None,
+        releases_api: str | None = None,
+        github_token: str | None = None,
     ) -> Instance:
         """`settings` seeds `<state>/settings.json`, which every implementation reads at launch (`restoreMode`, ...).
         `ui` is the run-wide A11yRun selecting private Xvfb (headless only); Instance.ui keeps its X11Context.
@@ -685,6 +698,9 @@ class Adapter:
         The dialog is modal and holds the socket unanswered, so such a launch returns without waiting for it: the
         caller dismisses the dialog, then calls `serving`. `private_install`: see `instance_executable`.
         `web_worker_fault` names the fault the Rust build's page worker plays (`web-worker-faults`), kept by relaunches.
+        `releases_api` points an instrumented Rust build's release checks at a local stand-in for GitHub's API, kept by
+        relaunches. The instance runs from a private install that the updater checks (`make_updatable`), and it gets
+        no GitHub token of the run's, only `github_token` as `GH_TOKEN`.
         """
         self.executable()  # refuses before anything exists
         headless = self.headless
@@ -702,6 +718,12 @@ class Adapter:
                 self.first_run_env(env)
             if web_worker_fault is not None:
                 env[self.variable("TEST_WEB_WORKER_FAULT")] = web_worker_fault
+            if releases_api is not None:
+                env[self.variable("TEST_RELEASES_API")] = releases_api
+                for name in GITHUB_TOKEN_VARIABLES:
+                    env.pop(name, None)
+                if github_token is not None:
+                    env["GH_TOKEN"] = github_token
             check_launch_env(
                 env, root, self.needs_app_id, self.needs_runtime_dir, headless, self.env_prefix, vocabulary=self.vocabulary
             )
@@ -709,7 +731,9 @@ class Adapter:
             state_dir = env[self.variable("STATE_DIR")]
             config = self.ghostty_config(pane_shell)
             _prepare_tree(root, Path(env["HOME"]), Path(state_dir), config, settings, first_run)
-            command = self.instance_executable(root, private_install)
+            command = self.instance_executable(root, private_install or releases_api is not None)
+            if releases_api is not None:
+                self.make_updatable(root, env)
             if self.needs_runtime_dir:
                 os.mkdir(env["XDG_RUNTIME_DIR"], 0o700)  # the XDG spec's mode
                 write_noop_launchers(Path(env["XDG_CONFIG_HOME"]), Path(env["XDG_DATA_HOME"]))
