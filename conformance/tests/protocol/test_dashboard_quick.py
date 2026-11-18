@@ -284,15 +284,17 @@ def _watch_quick_grid(ctl):
     was taken after it, so a check can tell a fresh reading from one printed before. Nothing is typed while the panel
     resizes: a key typed then can be lost on Windows. The watcher starts with a disposable space because showing the
     panel can itself resize the terminal; its first reading establishes readiness before any further input. It polls
-    rather than traps SIGWINCH, which Git's sh on Windows can miss. The typed line holds the marker split in two and
-    never matches."""
+    rather than traps SIGWINCH, which Git's sh on Windows can miss. On SIGINT it ends itself with SIGINT, as with no
+    trap: on Windows a new MSYS child (its `stty` or `sleep`, a new one each poll) loses a Ctrl-C in its startup and
+    exits 0, and sh with no trap takes the Ctrl-C as the child's and goes on with the loop. The typed line holds the
+    marker split in two and never matches."""
     response = ctl.wait_response(
         "quick.text", None, lambda response: response.ok and _last_line(response.result["text"])
     )
     prompt = _last_line(response.result["text"])
     marker = f"QGRID{next(_markers)}"
     report = f'printf "%s%s=%s %s\\n" {marker[:5]} {marker[5:]} "$n" "$(stty size)"'
-    loop = f"n=0; while :; do n=$((n+1)); {report}; sleep 0.2; done"
+    loop = f'trap "trap - INT; kill -INT $$" INT; n=0; while :; do n=$((n+1)); {report}; sleep 0.2; done'
     assert_ok(ctl.request("quick.type", text=f" sh -c '{loop}'\n"))
     return re.compile(rf"(?m)^{marker}=(\d+) (\d+) (\d+)$"), prompt
 
