@@ -42,7 +42,7 @@ Linux build unless it names another OS.
   on Windows, and does nothing outside ngterm. The Claude adapters recognize `omp` as a parent agent, so a Claude
   worker cannot reset its status. Restart OMP after installation. The installers preserve unmarked user files;
   custom OMP config directories and named profiles need manual installation into their own `extensions/` and
-  `skills/` directories. The resource is maintained in `build/patches/agent-status/0009-oh-my-pi.patch`.
+  `skills/` directories. The resource is maintained in `build/patches/agent-status/0011-oh-my-pi.patch`.
 - Another extension beyond upstream: Install Agent Status Hooks… also wires a restore adapter
   (`resources/agent-status/ngterm-agent-restore.sh`) into Claude Code's `SessionStart` and `SessionEnd` hooks (Claude
   Code only: Codex gets no restore hooks). On every session start it pins the pane's `session restore` line to the

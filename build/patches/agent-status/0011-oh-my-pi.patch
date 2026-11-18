@@ -1,0 +1,72 @@
+Add Oh My Pi's native lifecycle extension and recognize omp as a parent agent, so a Claude worker cannot reset its pane. Both forms. OMP uses agent_end.willContinue, not Pi's agent_settled event. Applied after 0010-origin-pane-boundary.patch.
+
+diff --git a/ngterm-claude-status.ps1 b/ngterm-claude-status.ps1
+index cccd891..e126a4b 100644
+--- a/ngterm-claude-status.ps1
++++ b/ngterm-claude-status.ps1
+@@ -60,7 +60,7 @@ if (-not $statusWrapper) { $statusWrapper = Join-Path $PSScriptRoot 'ngterm-agen
+ # exact names, not a pattern: the union of the hook-driven agents and the shell integration's NGTERM_AGENT_RE
+ # default, as in the POSIX form; keep the lists in sync. An overridden NGTERM_AGENT_RE extends the set, matched
+ # against the same image name; an expression .NET cannot compile lands on "not an agent", keeping the walk fail-open.
+-$agentNames = @('claude', 'codex', 'kimi', 'opencode', 'pi', 'gemini', 'cursor-agent', 'aider', 'crush', 'goose')
++$agentNames = @('claude', 'codex', 'kimi', 'opencode', 'pi', 'omp', 'gemini', 'cursor-agent', 'aider', 'crush', 'goose')
+ 
+ function Test-Agent([string] $name) {
+   if ($agentNames -contains $name) { return $true }
+diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
+index ba6bfe0..0d2551b 100755
+--- a/ngterm-claude-status.sh
++++ b/ngterm-claude-status.sh
+@@ -66,7 +66,7 @@ status_wrapper=${NGTERM_STATUS_WRAPPER:-"$script_dir/ngterm-agent-status.sh"}
+ # so an override can be valid there and invalid here. `[[` then returns 2, which lands on "not an
+ # agent" and keeps the walk fail-open; the redirect swallows bash's complaint about the expression.
+ is_agent() {
+-  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
++  case "$1" in claude | codex | kimi | opencode | pi | omp | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
+   if [ -n "${NGTERM_AGENT_RE:-}" ]; then
+     [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
+   fi
+diff --git a/omp/ngterm-status.ts b/omp/ngterm-status.ts
+new file mode 100644
+index 0000000..140bbed
+--- /dev/null
++++ b/omp/ngterm-status.ts
+@@ -0,0 +1,38 @@
++// ngterm-omp-status-extension
++
++import { homedir } from "node:os";
++import { join } from "node:path";
++import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
++
++export default function (omp: ExtensionAPI) {
++  const wrapper = join(homedir(), ".config", "ngterm", "agent-status", "ngterm-agent-status.sh");
++  const [program, prefix]: [string, string[]] =
++    process.platform === "win32"
++      ? [
++          "powershell.exe",
++          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper.replace(/\.sh$/, ".ps1")],
++        ]
++      : [wrapper, []];
++
++  async function report(args: string[]): Promise<void> {
++    if (!process.env.NGTERM_SESSION_ID) return;
++    try {
++      await omp.exec(program, [...prefix, ...args], { timeout: 1_000 });
++    } catch {
++      // A status failure must not stop the agent.
++    }
++  }
++
++  omp.on("agent_start", async () => {
++    await report(["active", "--blink"]);
++  });
++
++  omp.on("agent_end", async (event) => {
++    // Retries, queued continuations and background work have not finished the turn.
++    await report(event.willContinue ? ["active", "--blink"] : ["completed", "--auto-reset"]);
++  });
++
++  omp.on("session_shutdown", async () => {
++    await report(["idle"]);
++  });
++}
