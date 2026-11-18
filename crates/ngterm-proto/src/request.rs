@@ -195,6 +195,9 @@ pub struct Args {
     pub status: Option<String>,
     pub blink: Option<bool>,
     pub auto_reset: Option<bool>,
+    /// `session.status --if-idle`: the write applies only while the session's status is idle; otherwise it is an ok
+    /// no-op.
+    pub if_idle: Option<bool>,
     pub sound: Option<String>,
     pub light: Option<String>,
     pub dark: Option<String>,
@@ -574,6 +577,27 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<Request>(line).is_err(), "{line}");
         }
+    }
+
+    /// Upstream's `sessionStatusIfIdleRoundTrips`, with `ifIdle` between `autoReset` and `sound` as `ControlArgs`
+    /// declares it.
+    #[test]
+    fn session_status_if_idle_round_trips_in_upstreams_order() {
+        let wire = json!({
+            "cmd": "session.status",
+            "args": {"status": "active", "blink": true, "autoReset": true, "ifIdle": true, "sound": "Tink"}
+        });
+        let request: Request = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(request.args.as_ref().and_then(|args| args.if_idle), Some(true));
+        assert_eq!(serde_json::to_value(&request).unwrap(), wire);
+        let Value::Object(map) = serde_json::to_value(request.args.unwrap()).unwrap() else {
+            panic!("args is not an object")
+        };
+        let keys: Vec<&str> = map.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["status", "blink", "autoReset", "ifIdle", "sound"]);
+        let plain: Request =
+            serde_json::from_value(json!({"cmd": "session.status", "args": {"status": "active"}})).unwrap();
+        assert_eq!(plain.args.and_then(|args| args.if_idle), None);
     }
 
     #[test]

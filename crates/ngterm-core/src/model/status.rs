@@ -159,6 +159,9 @@ pub enum StatusKeystroke {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusWriteResult {
     Applied,
+    /// An `ifIdle` write that met a non-idle row, dropped whole as [`Self::Refused`] is, but not an error: the caller
+    /// asked for the write only on an idle row.
+    Skipped,
     /// Dropped whole: no status change, no restamp, no event, because `owner` holds a blocked status the writing
     /// pane may not replace.
     Refused {
@@ -221,8 +224,16 @@ impl AppStore {
     /// `applyControlStatus`): while a session is blocked, a write from a DIFFERENT pane is refused unless it is itself
     /// `blocked`, so one agent's `active` or `completed` cannot erase the other pane's block. `idle` is not exempt, as
     /// the bundled hooks emit it unprompted from their own pane. Panes compare after
-    /// [`AgentIndicator::normalized_pane`], an untagged write counting as the main pane.
-    pub fn apply_control_status(&mut self, indicator: AgentIndicator, id: Uuid) -> StatusWriteResult {
+    /// [`AgentIndicator::normalized_pane`], an untagged write counting as the main pane. `if_idle` is checked before
+    /// pane precedence, so its no-op on a busy row is skipped, never refused, across panes.
+    pub fn apply_control_status(&mut self, indicator: AgentIndicator, id: Uuid, if_idle: bool) -> StatusWriteResult {
+        if if_idle
+            && self
+                .session(id)
+                .is_some_and(|session| session.agent_indicator.status != AgentStatus::Idle)
+        {
+            return StatusWriteResult::Skipped;
+        }
         if let Some(session) = self.session(id)
             && session.agent_indicator.status == AgentStatus::Blocked
             && indicator.status != AgentStatus::Blocked

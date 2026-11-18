@@ -111,8 +111,8 @@ impl<'a> StatusUpdate<'a> {
 }
 
 /// `session.status`: a fresh indicator per call, so an override the call leaves out is gone. An unknown sound is
-/// refused before the target resolves and leaves the status unchanged; a write another pane's block refuses plays
-/// nothing. A sound plays on apply: the per-call one, else the configured blocked sound on a transition INTO
+/// refused before the target resolves and leaves the status unchanged; a write another pane's block refuses, or an
+/// `ifIdle` write a non-idle row skips, plays nothing. A sound plays on apply: the per-call one, else the configured blocked sound on a transition INTO
 /// `blocked`. Either goes to the session's presenter instead when the status pane follows it: the per-call name, or
 /// on a transition into `blocked` the marker the presenter plays as its own blocked sound, sent even when this
 /// instance has none configured.
@@ -146,7 +146,11 @@ fn status(core: &mut Core, target: Option<&str>, args: &Args) -> Outcome {
         shape: update.shape,
         status_pane,
     };
-    let written = store.apply_control_status(indicator, id);
+    let written = store.apply_control_status(indicator, id, args.if_idle.unwrap_or(false));
+    // a skipped write says nothing of the pane's agent: the status it kept still stands
+    if written == StatusWriteResult::Skipped {
+        return Ok(with_id(id));
+    }
     // the pane's agent moved on, even when another pane's block refuses its write
     core.note_agent_status_write(writer, update.status);
     if let StatusWriteResult::Refused { owner } = written {

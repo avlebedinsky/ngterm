@@ -1366,6 +1366,29 @@ fn a_refused_status_sends_no_sound() {
     assert!(live.fixture.core.take_status_sounds().is_empty());
 }
 
+/// Upstream's `testASkippedIfIdleStatusAnswersOkAndPlaysNothing` with its presenter, and `aSkippedWritePublishesNothing`:
+/// neither viewer gets a frame.
+#[test]
+fn a_skipped_if_idle_status_sends_the_viewers_nothing() {
+    let (mut live, viewers) = sound_origin(true, &SUPPORTED_KINDS, true);
+    let (presenter, mirror) = viewers.unwrap();
+    assert!(set_status(&mut live, "completed", |_| {}).ok);
+    live.fixture.core.commit();
+    let (to_presenter, to_mirror) = (presenter.kinds().len(), mirror.kinds().len());
+    let skipped = set_status(&mut live, "active", |a| {
+        a.sound = Some("Tink".to_owned());
+        a.if_idle = Some(true);
+    });
+    assert!(skipped.ok, "{skipped:?}");
+    live.fixture.core.commit();
+    let session = live.session;
+    let indicator = &live.fixture.store().session(session).unwrap().agent_indicator;
+    assert_eq!(indicator.status, AgentStatus::Completed);
+    assert_eq!(presenter.kinds().len(), to_presenter, "{:?}", presenter.kinds());
+    assert_eq!(mirror.kinds().len(), to_mirror, "{:?}", mirror.kinds());
+    assert!(live.fixture.core.take_status_sounds().is_empty());
+}
+
 /// Upstream's `testAPaneLeadingHerePlaysTheSoundHere`, and a presenter too old for sound leaving both kinds here.
 #[test]
 fn a_pane_leading_here_plays_the_sound_here() {

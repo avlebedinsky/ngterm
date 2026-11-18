@@ -249,7 +249,11 @@ impl Scene<'_> {
     }
 
     fn status(&self, state: &str) {
-        let status = [&["session", "status", state][..], &self.pane_arguments()].concat();
+        self.status_with(state, &[]);
+    }
+
+    fn status_with(&self, state: &str, flags: &[&str]) {
+        let status = [&["session", "status", state][..], flags, &self.pane_arguments()].concat();
         self.world.headless.ctl(&status).expect("set the status");
     }
 
@@ -278,11 +282,26 @@ impl Scene<'_> {
     }
 
     /// A blocked status with a permission candidate is an approval in the chat; the status leaving `blocked` ends it.
+    /// A background subagent's `--if-idle` write before that changes nothing: the phone gets no status for it.
     fn approval(&mut self, agent: &FakeAgent) {
         self.ask(&agent.permission_payload(APPROVAL_COMMAND));
         let (id, _) = self.approval_card(APPROVAL_COMMAND);
+        self.first.wait("the session blocked", |seen| {
+            seen.statuses.last() == Some(&Some("blocked".to_owned()))
+        });
+        self.first.drain();
+        let statuses = self.first.seen.statuses.len();
+        self.status_with("completed", &["--if-idle"]);
         self.status("active");
         self.wait_done(&id);
+        self.first.wait("the session working", |seen| {
+            seen.statuses.last() == Some(&Some("active".to_owned()))
+        });
+        assert_eq!(
+            self.first.seen.statuses[statuses..],
+            [Some("active".to_owned())],
+            "the skipped write sent no status"
+        );
     }
 
     /// An approval the phone was shown and that was answered while its link was down is over once it is back: its

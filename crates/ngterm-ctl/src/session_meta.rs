@@ -32,6 +32,12 @@ pub struct Status {
 
     #[arg(
         long,
+        help = "Apply only while the session's status is idle; otherwise leave it unchanged."
+    )]
+    if_idle: bool,
+
+    #[arg(
+        long,
         help = "Play a sound when set: 'default' (or 'beep') for the system alert sound, or a system sound name \
                 (Basso, Blow, Bottle, Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, Submarine, Tink)."
     )]
@@ -100,6 +106,7 @@ impl RequestCommand for Status {
             status: Some(self.state.clone()),
             blink: self.blink.then_some(true),
             auto_reset: self.auto_reset.then_some(true),
+            if_idle: self.if_idle.then_some(true),
             sound: self.sound.clone(),
             color: self.color.clone(),
             shape: self.shape.clone(),
@@ -356,10 +363,14 @@ mod tests {
 
     #[test]
     fn status_sends_the_state_and_only_the_overrides_given() {
-        let cases: [(&[&str], Value); 7] = [
+        let cases: [(&[&str], Value); 8] = [
             (
                 &["active", "--blink"],
                 json!({"target": "active", "args": {"status": "active", "blink": true}}),
+            ),
+            (
+                &["active", "--blink", "--if-idle"],
+                json!({"target": "active", "args": {"status": "active", "blink": true, "ifIdle": true}}),
             ),
             (
                 &["completed", "--target", "s1"],

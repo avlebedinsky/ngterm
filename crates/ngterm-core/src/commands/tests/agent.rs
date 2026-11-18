@@ -419,6 +419,31 @@ fn a_write_another_panes_block_refuses_still_ends_the_writers_candidate() {
     );
 }
 
+/// ngterm's own: an `ifIdle` write the blocked row skips (a background subagent's `active`) leaves the pane's approval
+/// live, as the dialog it stands for is still open.
+#[test]
+fn a_skipped_if_idle_write_keeps_the_candidate() {
+    let (mut fixture, session, token) = one_pane();
+    let left = || pane_args(&token, "left");
+    assert!(send_report(&mut fixture, session, left(), start(CLAUDE_A, "aaaa")).ok);
+    assert!(send_report(&mut fixture, session, left(), permission("Bash", "ls")).ok);
+    status(&mut fixture, session, "blocked", "left");
+    let skipped = fixture.session(
+        SessionCmd::Status,
+        Some(&wire(session)),
+        args(|a| {
+            a.status = Some("active".to_owned());
+            a.pane = Some("left".to_owned());
+            a.if_idle = Some(true);
+        }),
+    );
+    assert!(skipped.ok, "{skipped:?}");
+    assert_eq!(
+        agent_of(&get(&mut fixture, session, left()))["approval"]["detail"],
+        "ls"
+    );
+}
+
 #[test]
 fn another_panes_block_is_not_this_panes_approval() {
     let (mut fixture, session, left_token) = one_pane();

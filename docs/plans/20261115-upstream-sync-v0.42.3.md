@@ -230,9 +230,9 @@ What Task 1 left for the feature tasks:
 skipped write sends no status frame.
 **Conformance:** new cases in `tests/protocol/test_session.py`.
 
-- [ ] `ifIdle` makes a write on a non-idle row a success with no change, stamp, event or sound; it is checked
+- [x] `ifIdle` makes a write on a non-idle row a success with no change, stamp, event or sound; it is checked
   before pane precedence, so it never answers a refusal.
-- [ ] Rust unit tests with the Swift cases; conformance cases.
+- [x] Rust unit tests with the Swift cases; conformance cases.
 
 ### Task 5: The checkmark status shape (#947)
 

@@ -293,6 +293,43 @@ fn another_panes_block_refuses_the_write_whole() {
     assert_eq!(status_of(&fixture, id), AgentStatus::Idle);
 }
 
+/// Upstream's `testASkippedIfIdleStatusAnswersOkAndPlaysNothing`: the no-op answers the id and is checked before
+/// pane precedence, so a busy row is never a refusal.
+#[test]
+fn a_skipped_if_idle_status_answers_ok_and_plays_nothing() {
+    let mut fixture = Fixture::new(0);
+    let id = fixture.sessions[0];
+    fixture.store_mut().unwrap().session_mut(id).unwrap().split.exists = true;
+    assert!(set_status(&mut fixture, id, "blocked", |a| a.pane = Some("left".into())).ok);
+    let stamp = fixture.store().session(id).unwrap().status_changed_at;
+    let events = status_events(&fixture).len();
+    for pane in ["left", "right"] {
+        let response = set_status(&mut fixture, id, "active", |a| {
+            a.pane = Some(pane.into());
+            a.sound = Some("Tink".into());
+            a.if_idle = Some(true);
+        });
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({"ok": true, "result": {"id": wire(id)}}),
+            "{pane}"
+        );
+    }
+    let session = fixture.store().session(id).unwrap();
+    assert_eq!(session.agent_indicator.status, AgentStatus::Blocked);
+    assert_eq!(session.status_changed_at, stamp);
+    assert_eq!(status_events(&fixture).len(), events);
+    assert!(fixture.core.take_status_sounds().is_empty());
+
+    assert!(set_status(&mut fixture, id, "idle", |a| a.pane = Some("left".into())).ok);
+    assert!(set_status(&mut fixture, id, "active", |a| a.if_idle = Some(true)).ok);
+    assert_eq!(
+        status_of(&fixture, id),
+        AgentStatus::Active,
+        "an idle row takes the write"
+    );
+}
+
 #[test]
 fn sounds_queue_the_per_call_one_else_the_blocked_default_on_a_transition_into_blocked() {
     let mut fixture = Fixture::with_settings(

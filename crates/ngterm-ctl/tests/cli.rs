@@ -2243,11 +2243,11 @@ fn io_and_metadata_refusals_are_usage_errors_before_connecting() -> TestResult {
         "text",
         "[--all] [--lines <lines>] [--pane <pane>] [--pane-id <pane-id>] ",
     );
-    let status = usage(
-        "status",
-        "<state> [--blink] [--auto-reset] [--sound <sound>] [--color <color>] [--shape <shape>] [--pane <pane>] \
-         [--pane-id <pane-id>] ",
-    );
+    // past twelve arguments the synopsis folds the options, as upstream's `UsageGenerator` does
+    let status =
+        "Usage: ngtermctl session status [<options>] <state>\n  See 'ngtermctl session status --help' for more \
+                  information.\n"
+            .to_owned();
     let cases: [(&[&str], &str, String); 7] = [
         (
             &["session", "text", "--all", "--lines", "2"],

@@ -36,7 +36,7 @@ fn one_session() -> (AppStore, Uuid) {
 fn blocked_left_split_session() -> (AppStore, Uuid) {
     let (mut store, id) = one_session();
     store.session_mut(id).unwrap().split.exists = true;
-    store.apply_control_status(indicator(Blocked, Some(StatusPane::Left)), id);
+    store.apply_control_status(indicator(Blocked, Some(StatusPane::Left)), id, false);
     (store, id)
 }
 
@@ -228,7 +228,7 @@ fn the_right_pane_cannot_replace_the_left_panes_block() {
     for replacement in [Active, Completed, Idle] {
         let (mut store, id) = blocked_left_split_session();
         let stamp = store.session(id).unwrap().status_changed_at;
-        let result = store.apply_control_status(indicator(replacement, Some(StatusPane::Right)), id);
+        let result = store.apply_control_status(indicator(replacement, Some(StatusPane::Right)), id, false);
         assert_eq!(
             result,
             StatusWriteResult::Refused {
@@ -244,7 +244,7 @@ fn the_right_pane_cannot_replace_the_left_panes_block() {
 fn the_owning_pane_changes_its_own_block() {
     for replacement in [Active, Completed, Idle] {
         let (mut store, id) = blocked_left_split_session();
-        let result = store.apply_control_status(indicator(replacement, Some(StatusPane::Left)), id);
+        let result = store.apply_control_status(indicator(replacement, Some(StatusPane::Left)), id, false);
         assert_eq!(result, StatusWriteResult::Applied);
         assert_eq!(status(&store, id).status, replacement);
     }
@@ -254,7 +254,7 @@ fn the_owning_pane_changes_its_own_block() {
 fn an_untagged_writer_counts_as_the_left_pane() {
     let (mut store, id) = blocked_left_split_session();
     assert_eq!(
-        store.apply_control_status(indicator(Active, None), id),
+        store.apply_control_status(indicator(Active, None), id, false),
         StatusWriteResult::Applied
     );
     assert_eq!(status(&store, id).status, Active);
@@ -264,7 +264,7 @@ fn an_untagged_writer_counts_as_the_left_pane() {
 fn the_other_panes_own_block_replaces_the_standing_one() {
     let (mut store, id) = blocked_left_split_session();
     assert_eq!(
-        store.apply_control_status(indicator(Blocked, Some(StatusPane::Right)), id),
+        store.apply_control_status(indicator(Blocked, Some(StatusPane::Right)), id, false),
         StatusWriteResult::Applied
     );
     assert_eq!(status(&store, id).status_pane, Some(StatusPane::Right));
@@ -273,10 +273,10 @@ fn the_other_panes_own_block_replaces_the_standing_one() {
 #[test]
 fn a_stale_right_tag_on_a_splitless_session_owns_the_block_it_set() {
     let (mut store, id) = one_session();
-    store.apply_control_status(indicator(Blocked, Some(StatusPane::Right)), id);
+    store.apply_control_status(indicator(Blocked, Some(StatusPane::Right)), id, false);
     assert_eq!(status(&store, id).status_pane, Some(StatusPane::Left));
     assert_eq!(
-        store.apply_control_status(indicator(Active, Some(StatusPane::Right)), id),
+        store.apply_control_status(indicator(Active, Some(StatusPane::Right)), id, false),
         StatusWriteResult::Applied
     );
     assert_eq!(status(&store, id).status, Active);
@@ -294,8 +294,59 @@ fn a_refused_write_emits_no_status_event() {
             .count()
     };
     assert_eq!(emitted(&store), 1, "the accepted write reached the outbox");
-    store.apply_control_status(indicator(Active, Some(StatusPane::Right)), id);
+    store.apply_control_status(indicator(Active, Some(StatusPane::Right)), id, false);
     assert_eq!(emitted(&store), 1);
+}
+
+// MARK: - ifIdle
+
+/// Upstream's `anIfIdleWriteAppliesOnAnIdleRow`.
+#[test]
+fn an_if_idle_write_applies_on_an_idle_row() {
+    let (mut store, id) = one_session();
+    let blinking = AgentIndicator {
+        blink: true,
+        ..indicator(Active, None)
+    };
+    assert_eq!(
+        store.apply_control_status(blinking.clone(), id, true),
+        StatusWriteResult::Applied
+    );
+    assert_eq!(*status(&store, id), blinking);
+}
+
+/// Upstream's `anIfIdleWriteLeavesABusyRowUntouched` and `aSkippedWritePublishesNothing`.
+#[test]
+fn an_if_idle_write_leaves_a_busy_row_untouched() {
+    for standing in [Active, Completed, Blocked] {
+        let (mut store, id) = one_session();
+        store.apply_control_status(indicator(standing, None), id, false);
+        let stamp = store.session(id).unwrap().status_changed_at;
+        let events = store.outbox().events.len();
+        let blinking = AgentIndicator {
+            blink: true,
+            ..indicator(Active, None)
+        };
+        assert_eq!(
+            store.apply_control_status(blinking, id, true),
+            StatusWriteResult::Skipped,
+            "{standing:?}"
+        );
+        assert_eq!(*status(&store, id), indicator(standing, None));
+        assert_eq!(store.session(id).unwrap().status_changed_at, stamp);
+        assert_eq!(store.outbox().events.len(), events, "{standing:?}");
+    }
+}
+
+/// Upstream's `anIfIdleWriteFromTheOtherPaneIsSkippedNotRefused`.
+#[test]
+fn an_if_idle_write_from_the_other_pane_is_skipped_not_refused() {
+    let (mut store, id) = blocked_left_split_session();
+    assert_eq!(
+        store.apply_control_status(indicator(Active, Some(StatusPane::Right)), id, true),
+        StatusWriteResult::Skipped
+    );
+    assert_eq!(*status(&store, id), indicator(Blocked, Some(StatusPane::Left)));
 }
 
 // MARK: - typed input

@@ -932,6 +932,54 @@ def test_status_shape(ctl):
     assert_subset(_node(ctl, sid), {"status": "active", "statusShape": "star"})
 
 
+def _status_events_since(ctl, cursor, sid):
+    response = ctl.request("events.read", run=cursor.run, after=str(cursor.after), kinds=["status"], limit=100)
+    return [event for event in assert_ok(response)["events"]["items"] if event.get("session") == sid]
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status")
+def test_status_if_idle_applies_on_an_idle_row(ctl):
+    sid = _new(ctl)
+    assert assert_ok(ctl.request("session.status", sid, status="active", blink=True, ifIdle=True))["id"] == sid
+    assert_subset(_node(ctl, sid), {"status": "active", "statusBlink": True})
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status")
+@pytest.mark.parametrize("standing", ["active", "completed", "blocked"])
+def test_status_if_idle_leaves_a_busy_row_untouched(ctl, standing):
+    sid = _new(ctl)
+    assert_ok(ctl.request("session.status", sid, status=standing))
+    before = _node(ctl, sid)
+    cursor = ctl.events_baseline()
+
+    skipped = ctl.request("session.status", sid, status="active", blink=True, sound="Tink", ifIdle=True)
+    assert assert_ok(skipped)["id"] == sid
+    node = _node(ctl, sid)
+    assert node["status"] == standing
+    assert node["statusChangedAt"] == before["statusChangedAt"]
+    assert_absent(node, "statusBlink")
+
+    # the next applied write's event is the first one after the skipped write
+    assert_ok(ctl.request("session.status", sid, status="idle"))
+    ctl.wait_event(cursor, "status", {"session": sid, "payload": {"status": "idle"}})
+    assert [event["payload"]["status"] for event in _status_events_since(ctl, cursor, sid)] == ["idle"]
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status")
+def test_status_if_idle_from_the_other_pane_is_skipped_not_refused(ctl):
+    sid = _new(ctl)
+    assert_ok(ctl.request("session.split", sid, mode="on"))
+    assert_ok(ctl.request("session.status", sid, status="blocked", pane="left"))
+
+    assert assert_ok(ctl.request("session.status", sid, status="active", pane="right", ifIdle=True))["id"] == sid
+    assert _node(ctl, sid)["status"] == "blocked"
+    assert_ok(ctl.request("session.status", sid, status="idle", pane="left"))
+    assert_ok(ctl.request("session.split", sid, mode="off"))
+
+
 @pytest.mark.covers("session.status")
 @pytest.mark.parametrize(
     ("args", "error"),
