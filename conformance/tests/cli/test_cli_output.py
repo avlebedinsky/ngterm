@@ -636,6 +636,23 @@ def test_session_move_and_go(cli, ctl):
             ctl.request("workspace.delete", target)
 
 
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("cli:session go")
+def test_session_go_to_a_position(cli, ctl):
+    wid = assert_ok(ctl.request("workspace.new", name=_name("cli-go")))["id"]
+    try:
+        _new(ctl, workspace=wid)
+        ids = [s["id"] for s in sessions(ctl.tree())]
+        assert _json(cli("session", "go", "--to", str(len(ids)), "--json"))["id"] == ids[-1]
+        _ok(cli("session", "go", "--to", "1"), "ok\n")
+        assert _node(ctl, ids[0])["active"] is True
+        past = len(ids) + 1
+        _refused(cli("session", "go", "--to", str(past)), f"no session at position {past}: {len(ids)} navigable")
+        assert _node(ctl, ids[0])["active"] is True
+    finally:
+        ctl.request("workspace.delete", wid)
+
+
 @pytest.mark.covers(
     "cli:session split",
     "cli:session split close",

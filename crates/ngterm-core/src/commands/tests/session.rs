@@ -521,6 +521,22 @@ fn go_steps_through_the_sessions_and_wraps() {
 }
 
 #[test]
+fn go_to_a_position_selects_that_place_and_refuses_one_past_the_end() {
+    let mut fixture = Fixture::new(2);
+    let ids = fixture.sessions.clone();
+    fixture.store_mut().unwrap().select_session(Some(ids[0]));
+    let last = ids.len().to_string();
+    let response = fixture.session(SessionCmd::Go, None, args(|a| a.to = Some(last.clone())));
+    assert_eq!(answered_id(&response), Some(ids[ids.len() - 1]));
+    let past = (ids.len() + 1).to_string();
+    assert_eq!(
+        fixture.session(SessionCmd::Go, None, args(|a| a.to = Some(past.clone()))),
+        failure(&format!("no session at position {past}: {} navigable", ids.len()))
+    );
+    assert_eq!(fixture.selected(), Some(ids[ids.len() - 1]));
+}
+
+#[test]
 fn go_attention_steps_skip_sessions_that_do_not_need_it() {
     let mut fixture = Fixture::new(2);
     let ids = fixture.sessions.clone();
@@ -588,10 +604,10 @@ fn go_attention_steps_stay_in_their_window_with_cross_window_on() {
 #[test]
 fn go_requires_a_direction_and_a_session() {
     let mut fixture = Fixture::new(0);
-    for to in [None, Some("sideways".into())] {
+    for to in [None, Some("sideways".into()), Some("0".into())] {
         assert_eq!(
             fixture.session(SessionCmd::Go, None, args(|a| a.to = to.clone())),
-            failure("session.go requires --to next|prev|first|last|next-attention|prev-attention")
+            failure("session.go requires --to next|prev|first|last|next-attention|prev-attention|N")
         );
     }
     let only = fixture.sessions[0];

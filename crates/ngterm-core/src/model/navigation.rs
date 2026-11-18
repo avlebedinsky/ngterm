@@ -13,7 +13,8 @@ use super::workspace::SidebarMode;
 
 /// A relative step through the visible session list. `Next`/`Previous` step one and wrap, `First`/`Last` jump to an
 /// end, and the attention steps go (wrapping) through the sessions needing attention only (plus `active` ones under
-/// the `attentionIncludesActive` setting, see [`stops_attention_navigation`]).
+/// the `attentionIncludesActive` setting, see [`stops_attention_navigation`]). `Position` jumps to a 1-based place
+/// in that list and never wraps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionNavigation {
     Next,
@@ -22,6 +23,7 @@ pub enum SessionNavigation {
     Last,
     NextAttention,
     PreviousAttention,
+    Position(usize),
 }
 
 /// Whether an attention step stops on `session`: a status that [`AgentStatus::needs_attention`], or `active` while
@@ -34,9 +36,16 @@ pub fn stops_attention_navigation(session: &Session, includes_active: bool) -> b
 }
 
 impl SessionNavigation {
-    /// Parses a control-channel direction; both `prev` (the CLI's spelling) and `previous` are accepted.
+    /// Parses a control-channel direction; both `prev` (the CLI's spelling) and `previous` are accepted, and a
+    /// positive integer is a `Position`.
     #[must_use]
     pub fn from_wire(direction: &str) -> Option<Self> {
+        if let Ok(position) = direction.parse::<i64>() {
+            return usize::try_from(position)
+                .ok()
+                .filter(|&position| position >= 1)
+                .map(Self::Position);
+        }
         match direction {
             "next" => Some(Self::Next),
             "prev" | "previous" => Some(Self::Previous),
@@ -144,6 +153,7 @@ impl AppStore {
 
     /// Steps the selection through [`AppStore::navigable_sessions`] in sidebar order, wrapping within that set and
     /// never leaking across the filter. With no selection in the set, `Next`/`Previous` land on the first session.
+    /// `Position` selects that place, or is a no-op past the end ([`AppStore::navigation_error`] says why).
     /// A no-op on an empty set, or an attention step with nowhere to go. Returns what
     /// [`AppStore::select_session`] returns. The attention steps stop on blocked and completed sessions only; see
     /// [`AppStore::navigate_session_with`] for the `attentionIncludesActive` setting.
@@ -174,8 +184,19 @@ impl AppStore {
                 let forward = direction == SessionNavigation::NextAttention;
                 self.attention_target(&ids, current, forward, attention_includes_active)?
             }
+            SessionNavigation::Position(position) => *ids.get(position.checked_sub(1)?)?,
         };
         self.select_session(Some(target))
+    }
+
+    /// The error for a `Position` past the end of [`AppStore::navigable_sessions`]; `None` for any other direction.
+    #[must_use]
+    pub fn navigation_error(&self, direction: SessionNavigation) -> Option<String> {
+        let SessionNavigation::Position(position) = direction else {
+            return None;
+        };
+        let count = self.navigable_sessions().len();
+        (position > count).then(|| format!("no session at position {position}: {count} navigable"))
     }
 
     /// The next or previous session needing attention after `current`, wrapping and excluding the current one; with

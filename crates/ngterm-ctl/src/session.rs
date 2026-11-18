@@ -422,12 +422,13 @@ impl RequestCommand for Select {
 
 /// `ngtermctl session go --to <direction>`: relative to the selection, so it takes no `--target`.
 #[derive(Debug, clap::Args)]
-#[command(about = "Navigate sessions: next|prev|first|last|next-attention|prev-attention.")]
+#[command(about = "Navigate sessions: next|prev|first|last|next-attention|prev-attention|N.")]
 pub struct Go {
     #[arg(
         long,
-        help = "Direction: next, prev, first, last, next-attention, or prev-attention (attention = \
-                blocked/completed, plus active when enabled in Settings)."
+        help = "Direction: next, prev, first, last, next-attention, prev-attention (attention = \
+                blocked/completed, plus active when enabled in Settings), or a 1-based position N in the \
+                sidebar order."
     )]
     to: String,
 
@@ -879,6 +880,10 @@ mod tests {
         assert_eq!(
             request(&["go", "--to", "last", "--window", "w1"]),
             json!({"cmd": "session.go", "args": {"to": "last", "window": "w1"}})
+        );
+        assert_eq!(
+            request(&["go", "--to", "3"]),
+            json!({"cmd": "session.go", "args": {"to": "3"}})
         );
         assert!(!parses(&["go"]));
         assert!(!parses(&["go", "--to", "next", "--target", "x"]));

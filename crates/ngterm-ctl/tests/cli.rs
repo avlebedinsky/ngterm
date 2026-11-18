@@ -1421,8 +1421,8 @@ fn parse_errors_of_the_new_commands_name_their_usage() -> TestResult {
             &["session", "go"],
             format!(
                 "Error: Missing expected argument '--to <to>'\nHelp:  --to <to>  Direction: next, prev, first, last, \
-                 next-attention, or prev-attention (attention = blocked/completed, plus active when enabled in \
-                 Settings).\n{go_usage}"
+                 next-attention, prev-attention (attention = blocked/completed, plus active when enabled in \
+                 Settings), or a 1-based position N in the sidebar order.\n{go_usage}"
             ),
         ),
         (
@@ -1464,7 +1464,7 @@ SUBCOMMANDS:
   reattach                Show a detached session of a remote window again.
   select                  Select a session.
   go                      Navigate sessions:
-                          next|prev|first|last|next-attention|prev-attention.
+                          next|prev|first|last|next-attention|prev-attention|N.
   rename                  Rename a session.
   reveal                  Reveal a session's focused working directory in
                           Finder.
@@ -1624,14 +1624,16 @@ OPTIONS:
 ";
 
 const SESSION_GO_HELP: &str = "\
-OVERVIEW: Navigate sessions: next|prev|first|last|next-attention|prev-attention.
+OVERVIEW: Navigate sessions:
+next|prev|first|last|next-attention|prev-attention|N.
 
 USAGE: ngtermctl session go --to <to> [--socket <socket>] [--json] [--window <window>]
 
 OPTIONS:
   --to <to>               Direction: next, prev, first, last, next-attention,
-                          or prev-attention (attention = blocked/completed,
-                          plus active when enabled in Settings).
+                          prev-attention (attention = blocked/completed, plus
+                          active when enabled in Settings), or a 1-based
+                          position N in the sidebar order.
   --socket <socket>       Override the control socket path.
   --json                  Print the raw JSON response.
   --window <window>       Target window id, unique prefix, or 'active'

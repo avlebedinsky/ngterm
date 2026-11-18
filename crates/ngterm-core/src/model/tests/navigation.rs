@@ -11,6 +11,7 @@ use crate::model::{
     AgentIndicator, AgentStatus, AppStore, FocusMode, SaveRequest, Session, SessionNavigation, SidebarMode,
     WorkspaceNavigation, WorkspaceOptions, stops_attention_navigation,
 };
+use crate::persist::settings::FlaggedViewLayout;
 
 /// Two workspaces (work: a, b; personal: c, d), so the flattened order is [a, b, c, d].
 fn nav_tree() -> (AppStore, Vec<Uuid>) {
@@ -228,10 +229,83 @@ fn session_navigation_wire_mapping() {
         ("prev-attention", Some(SessionNavigation::PreviousAttention)),
         ("previous-attention", Some(SessionNavigation::PreviousAttention)),
         ("sideways", None),
+        ("3", Some(SessionNavigation::Position(3))),
+        ("0", None),
+        ("-1", None),
+        ("99999999999999999999", None),
     ];
     for (wire, expected) in cases {
         assert_eq!(SessionNavigation::from_wire(wire), expected, "{wire}");
     }
+}
+
+#[test]
+fn navigate_position_selects_that_place_across_workspaces() {
+    let (mut store, ids) = nav_tree();
+    store.select_session(Some(ids[0]));
+    store.navigate_session(SessionNavigation::Position(3));
+    assert_eq!(store.selected_session_id(), Some(ids[2]));
+    store.navigate_session(SessionNavigation::Position(1));
+    assert_eq!(store.selected_session_id(), Some(ids[0]));
+    assert_eq!(store.navigation_error(SessionNavigation::Position(4)), None);
+}
+
+#[test]
+fn navigate_position_past_the_end_is_a_no_op_with_an_error() {
+    let (mut store, ids) = nav_tree();
+    store.select_session(Some(ids[1]));
+    store.navigate_session(SessionNavigation::Position(5));
+    assert_eq!(store.selected_session_id(), Some(ids[1]));
+    assert_eq!(
+        store.navigation_error(SessionNavigation::Position(5)).as_deref(),
+        Some("no session at position 5: 4 navigable")
+    );
+    assert_eq!(store.navigation_error(SessionNavigation::Next), None);
+}
+
+#[test]
+fn navigate_position_counts_the_filtered_set() {
+    let (mut store, ids) = nav_tree();
+    let personal = owner(&store, ids[2]);
+    store.set_focused_workspace(personal);
+    store.select_session(Some(ids[2]));
+    store.navigate_session(SessionNavigation::Position(2));
+    assert_eq!(store.selected_session_id(), Some(ids[3]));
+    assert!(store.navigation_error(SessionNavigation::Position(3)).is_some());
+}
+
+#[test]
+fn navigate_position_follows_the_flagged_order() {
+    let (mut store, ids) = nav_tree();
+    store.set_flag(true, ids[3]);
+    store.set_flag(true, ids[1]);
+    store.set_sidebar_mode(SidebarMode::Flagged);
+    store.set_flagged_layout(FlaggedViewLayout::Flat);
+    store.navigate_session(SessionNavigation::Position(2));
+    assert_eq!(store.selected_session_id(), Some(ids[1]));
+    assert!(store.navigation_error(SessionNavigation::Position(3)).is_some());
+}
+
+#[test]
+fn navigate_position_counts_a_collapsed_workspace() {
+    let (mut store, ids) = nav_tree();
+    let work = owner(&store, ids[0]);
+    store.set_workspace_expanded(work, false);
+    store.select_session(Some(ids[3]));
+    store.navigate_session(SessionNavigation::Position(2));
+    assert_eq!(store.selected_session_id(), Some(ids[1]));
+}
+
+#[test]
+fn navigate_position_on_an_empty_tree_is_a_no_op_with_an_error() {
+    let mut store = AppStore::new();
+    store.add_workspace("work");
+    store.navigate_session(SessionNavigation::Position(1));
+    assert_eq!(store.selected_session_id(), None);
+    assert_eq!(
+        store.navigation_error(SessionNavigation::Position(1)).as_deref(),
+        Some("no session at position 1: 0 navigable")
+    );
 }
 
 // MARK: - AppStoreNavigationTests: attention steps

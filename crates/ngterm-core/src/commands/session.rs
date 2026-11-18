@@ -274,17 +274,20 @@ fn gone(store: &AppStore, ids: Vec<Uuid>) -> Vec<Uuid> {
     ids.into_iter().filter(|id| store.session(*id).is_none()).collect()
 }
 
-/// `session.go`: a relative step of the selection in the `--window` (else frontmost) window.
+/// `session.go`: a relative step of the selection, or a jump to a place, in the `--window` (else frontmost) window.
 fn go(core: &mut Core, args: &Args) -> Outcome {
     let direction = args
         .to
         .as_deref()
         .and_then(SessionNavigation::from_wire)
         .ok_or_else(|| {
-            ControlError::rejected("session.go requires --to next|prev|first|last|next-attention|prev-attention")
+            ControlError::rejected("session.go requires --to next|prev|first|last|next-attention|prev-attention|N")
         })?;
     let includes_active = core.settings().attention_includes_active.unwrap_or(false);
     in_placement_store(core, args.window.as_deref(), |store| {
+        if let Some(error) = store.navigation_error(direction) {
+            return Err(ControlError::rejected(error));
+        }
         store.navigate_session_with(direction, includes_active);
         store
             .selected_session_id()

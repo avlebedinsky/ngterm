@@ -356,13 +356,36 @@ def test_go_next_attention_stays_in_its_window_with_cross_window_on(launch):
 
 
 @pytest.mark.covers("session.go")
-@pytest.mark.parametrize("to", [None, "sideways"])
+@pytest.mark.parametrize("to", [None, "sideways", pytest.param("0", marks=pytest.mark.since("0.42.0"))])
 def test_go_requires_a_direction(ctl, to):
     args = {} if to is None else {"to": to}
     assert_error(
         ctl.request("session.go", **args),
-        "session.go requires --to next|prev|first|last|next-attention|prev-attention",
+        "session.go requires --to next|prev|first|last|next-attention|prev-attention|N",
     )
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.go", "workspace.collapse")
+def test_go_to_a_position_counts_collapsed_workspaces_and_never_wraps(ctl):
+    wid, _ = _new_workspace(ctl, sessions=2)
+    ids = session_ids(ctl.tree())
+    assert_ok(ctl.request("workspace.collapse", wid))
+    try:
+        assert_ok(ctl.request("session.select", ids[0]))
+        for position in [len(ids), 1, len(ids) - 1]:
+            landed = assert_ok(ctl.request("session.go", to=str(position)))["id"]
+            assert landed == ids[position - 1], position
+            assert active_session_id(ctl.tree()) == landed, position
+
+        past = len(ids) + 1
+        assert_error(
+            ctl.request("session.go", to=str(past)),
+            f"no session at position {past}: {len(ids)} navigable",
+        )
+        assert active_session_id(ctl.tree()) == ids[len(ids) - 2]
+    finally:
+        ctl.request("workspace.delete", wid)
 
 
 # -- naming
