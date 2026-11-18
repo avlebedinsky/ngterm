@@ -1,6 +1,6 @@
 """Windows processes for the harness, through the Win32 API (`ctypes`): the process table, a process's command line and
-creation time, its descendants, a kill by pid that re-checks the process is the one seen, and the polite quit a
-Windows GUI app gets.
+creation time, its descendants, a kill by pid that re-checks the process is the one seen, the polite quit a Windows GUI
+app gets, and a program the harness starts outside every instance.
 
 Windows has no `/proc` and no signals. A process is identified by its pid together with its creation time, so a pid
 the system handed to a new process is never taken for the old one; a descendant is a process whose parent pid is an
@@ -13,8 +13,11 @@ needs Windows.
 from __future__ import annotations
 
 import ctypes
+import os
+import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 if sys.platform == "win32":
@@ -269,6 +272,18 @@ def terminate(process: Process, code: int = 1, wait_ms: int = 5000) -> bool:
         return True
     finally:
         _kernel32.CloseHandle(handle)
+
+
+@contextmanager
+def outside_program(argv: Sequence[str]) -> Iterator[Process]:
+    """Starts `argv` as a program that no pane started, as one from the Start menu: a child of the harness, in no job
+    of an instance. Gives it as the process table sees it (for `alive`); ends and reaps it on exit."""
+    program = subprocess.Popen(list(argv), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        yield Process(program.pid, os.getpid(), os.path.basename(argv[0]), creation_time(program.pid))
+    finally:
+        program.kill()
+        program.wait()
 
 
 def top_level_windows(pid: int, class_name: str | None = None) -> list[int]:

@@ -14,7 +14,6 @@ Store PowerShell, so that case skips there, and its id is not in the Windows rat
 import os
 import random
 import shutil
-import subprocess
 import sys
 
 import pytest
@@ -110,10 +109,7 @@ def test_a_session_close_ends_its_hidden_programs_and_leaves_the_others(launch, 
     ctl.wait_mounted(second, "left")
     hidden_a, console_a, hidden_b, console_b, outside = _addresses(5)
     # a program that no pane started, as one from the Start menu
-    elsewhere = subprocess.Popen(
-        ["ping", "-n", "600", outside], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    try:
+    with winproc.outside_program(["ping", "-n", "600", outside]) as elsewhere:
         _start_pings(ctl, first, shell, hidden_a, console_a)
         _start_pings(ctl, second, shell, hidden_b, console_b)
         others = {address: _pings()[address] for address in (hidden_b, console_b)}
@@ -130,7 +126,7 @@ def test_a_session_close_ends_its_hidden_programs_and_leaves_the_others(launch, 
         assert session_ids(ctl.tree()) == [second]
         for address, process in others.items():
             assert winproc.alive(process), f"the ping to {address} of the other session ended with the first one"
-        assert elsewhere.poll() is None, "a ping that no pane started ended with the first session"
+        assert winproc.alive(elsewhere), "a ping that no pane started ended with the first session"
 
         assert_ok(ctl.request("session.close", second))
 
@@ -140,7 +136,4 @@ def test_a_session_close_ends_its_hidden_programs_and_leaves_the_others(launch, 
             return True
 
         wait_until(second_tree_ended, timeout=TREE_END)
-        assert elsewhere.poll() is None, "a ping that no pane started ended with the last session"
-    finally:
-        elsewhere.kill()
-        elsewhere.wait()
+        assert winproc.alive(elsewhere), "a ping that no pane started ended with the last session"
