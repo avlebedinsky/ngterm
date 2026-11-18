@@ -133,3 +133,27 @@ fn metadata_redirects_are_not_followed_even_after_authentication() {
     ));
     assert_eq!(server.finish().len(), 2);
 }
+
+#[test]
+fn a_credential_that_is_not_a_header_value_is_never_sent() {
+    let server = Server::new(vec![LIMITED]);
+    let error = metadata_response(&test_agent(), &server.url, || Some("bad\ntoken".into()))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("rate limit"));
+    assert_eq!(server.finish().len(), 1);
+}
+
+#[test]
+fn a_source_other_than_github_reports_the_limit_without_credentials() {
+    let server = crate::fakes::Server::start().unwrap();
+    server.route("/latest", LIMITED, "{}");
+    let install = crate::tests::installation(std::path::Path::new("/tmp/ngterm"));
+    let error = server
+        .source()
+        .check(&install, "0.1.0", &Trust::default())
+        .unwrap_err()
+        .to_string();
+    assert!(error.starts_with("GitHub's API rate limit was reached. Retry in 0 seconds."));
+    assert_eq!(server.requests(), ["/latest"]);
+}

@@ -97,7 +97,7 @@ impl Source {
 fn metadata_request(
     agent: &ureq::Agent,
     url: &str,
-    token: Option<&str>,
+    authorization: Option<ureq::http::HeaderValue>,
 ) -> Result<ureq::http::Response<ureq::Body>, Error> {
     let mut request = agent
         .get(url)
@@ -108,10 +108,7 @@ fn metadata_request(
         .header("User-Agent", concat!("ngterm/", env!("CARGO_PKG_VERSION")))
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28");
-    if let Some(token) = token {
-        let mut value = ureq::http::HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|_| error("The local GitHub credential is not a valid HTTP header."))?;
-        value.set_sensitive(true);
+    if let Some(value) = authorization {
         request = request.header("Authorization", value);
     }
     Ok(request.call()?)
@@ -126,8 +123,10 @@ fn metadata_response(
     if primary_limit(&response)
         && !response.headers().contains_key("retry-after")
         && let Some(token) = credentials()
+        && let Ok(mut authorization) = ureq::http::HeaderValue::try_from(format!("Bearer {token}"))
     {
-        response = metadata_request(agent, url, Some(&token))?;
+        authorization.set_sensitive(true);
+        response = metadata_request(agent, url, Some(authorization))?;
     }
     if primary_limit(&response) {
         let reset = response

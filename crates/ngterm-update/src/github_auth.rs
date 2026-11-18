@@ -3,18 +3,26 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const TOKEN_LIMIT: usize = 4096;
+const GH_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) fn local_token() -> Option<String> {
-    resolve(
-        |name| std::env::var(name).ok(),
-        || {
-            let mut command = Command::new("gh");
-            command
-                .args(["auth", "token", "--hostname", "github.com"])
-                .env("GH_PROMPT_DISABLED", "1");
-            command_token(&mut command, Duration::from_secs(3))
-        },
-    )
+    resolve(env_var, gh_token)
+}
+
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+fn gh_token() -> Option<String> {
+    command_token(&mut gh_command(), GH_TIMEOUT)
+}
+
+fn gh_command() -> Command {
+    let mut command = Command::new("gh");
+    command
+        .args(["auth", "token", "--hostname", "github.com"])
+        .env("GH_PROMPT_DISABLED", "1");
+    command
 }
 
 fn resolve(env: impl Fn(&str) -> Option<String>, cli: impl FnOnce() -> Option<String>) -> Option<String> {
@@ -73,6 +81,7 @@ fn command_token(command: &mut Command, timeout: Duration) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     #[test]
     fn explicit_tokens_take_precedence_and_invalid_values_are_skipped() {
@@ -113,6 +122,21 @@ mod tests {
             vec!["-c", script]
         });
         command
+    }
+
+    #[test]
+    fn the_cli_lookup_asks_gh_for_the_github_com_token_without_a_prompt() {
+        let command = gh_command();
+        assert_eq!(command.get_program(), "gh");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["auth", "token", "--hostname", "github.com"]
+        );
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            [(OsStr::new("GH_PROMPT_DISABLED"), Some(OsStr::new("1")))]
+        );
+        assert_eq!(env_var("NGTERM_UPDATE_TEST_UNSET_VARIABLE"), None);
     }
 
     #[test]
