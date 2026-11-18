@@ -5,7 +5,8 @@ import XCTest
 /// On a loaded simulator a tap can leave the field without the keyboard, and typed keys can be lost (one of seven
 /// held, on the tablet just after a reboot). So the field is tapped until it has the keyboard, and emptied and typed
 /// again until it holds the whole text, each a counted number of times. A secure field reads as a dot for each
-/// character it holds.
+/// character it holds, so the field must be empty before the text goes in: a lost delete and a lost key would
+/// otherwise give the right count with the wrong text.
 internal enum SecureEntry {
     private static let tries = 3
     private static let focusWait: TimeInterval = 5
@@ -16,9 +17,8 @@ internal enum SecureEntry {
         var held = -1
         for _ in 0..<tries where held != text.count {
             focus(field)
-            let old = count(in: field)
-            if old > 0 {
-                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old))
+            guard empty(field) else {
+                continue
             }
             field.typeText(text)
             held = count(in: field)
@@ -37,6 +37,16 @@ internal enum SecureEntry {
             focused = XCTWaiter.wait(for: [focus], timeout: focusWait) == .completed
         }
         XCTAssertTrue(focused, "\(field) never took the keyboard")
+    }
+
+    // deletes what the field holds, and tells if it is empty after that
+    @MainActor
+    private static func empty(_ field: XCUIElement) -> Bool {
+        let old = count(in: field)
+        if old > 0 {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old))
+        }
+        return count(in: field) == 0
     }
 
     // the characters the field holds: an empty one reads as its placeholder

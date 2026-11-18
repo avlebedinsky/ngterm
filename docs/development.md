@@ -1216,8 +1216,9 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   a blocked thread too. A shorter `.timeLimit` trait wins. The tests' own waits (`AppWindow.until`, and
   `AppWindow.value` for a call) fail in about 10 s.
 - A UI test that runs longer than 30 minutes fails: `UI.xctestplan` turns on the same timeouts. A UI test's waits
-  are counts of reads, and a simulator that answers each query a minute late makes them take hours. The tests on a
-  real machine set a shorter `executionTimeAllowance`.
+  are counts of reads, and a simulator that answers each query a minute late makes them take hours. The tests with
+  an owner check on a real machine (`ExportKeyOnAMachineTests`, `KeyPassphraseOnAMachineTests`) set a shorter
+  `executionTimeAllowance`.
 - Snapshot goldens live in each package's `Tests/*/__Snapshots__/`, one per simulator (`-on-phone`, `-on-tablet`),
   recorded on the pinned runtime, which CI verifies them on. A missing golden is recorded by the run that first
   meets it, which fails; the next run checks it. To re-record the ones that fail, run
