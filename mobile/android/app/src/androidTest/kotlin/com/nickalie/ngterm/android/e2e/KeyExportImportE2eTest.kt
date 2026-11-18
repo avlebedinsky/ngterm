@@ -176,7 +176,10 @@ class KeyExportImportE2eTest {
         compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
     }
 
-    private fun tap(text: String) = compose.onNodeWithText(text).performScrollTo().performClick()
+    private fun tap(text: String) {
+        compose.putTheKeyboardAway(WAIT_MS)
+        compose.onNodeWithText(text).performScrollTo().performClick()
+    }
 
     private fun field(label: String) = compose.onNode(hasText(label) and hasSetTextAction())
 

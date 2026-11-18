@@ -9,11 +9,15 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -210,7 +214,10 @@ internal class KeyExportDriver {
         substring: Boolean = false,
     ): Int = compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().size
 
-    fun tap(text: String) = compose.onNodeWithText(text).performScrollTo().performClick()
+    fun tap(text: String) {
+        compose.putTheKeyboardAway(WAIT_MS)
+        compose.onNodeWithText(text).performScrollTo().performClick()
+    }
 
     fun tapInDialog(text: String) = compose.onNode(hasText(text) and hasAnyAncestor(isDialog())).performClick()
 
@@ -244,4 +251,21 @@ internal class KeyExportDriver {
         // an argument only scripts/test-android-e2e.sh passes, with each class's own run
         private const val OWN_RUN = "e2eHost"
     }
+}
+
+/**
+ * The soft keyboard put away, and the screen still once it is gone. A phone shows the keyboard for a filled field; a
+ * tap that comes while it slides away or in moves with the layout and can miss its button.
+ */
+internal fun AndroidComposeTestRule<*, MainActivity>.putTheKeyboardAway(timeoutMs: Long) {
+    val window = activity.window
+    runOnUiThread { WindowCompat.getInsetsController(window, window.decorView).hide(WindowInsetsCompat.Type.ime()) }
+    waitUntil(timeoutMs) {
+        var shown = true
+        runOnUiThread {
+            shown = ViewCompat.getRootWindowInsets(window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        !shown
+    }
+    waitForIdle()
 }
