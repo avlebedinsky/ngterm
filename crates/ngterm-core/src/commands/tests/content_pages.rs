@@ -488,7 +488,7 @@ fn acquire(origin: &mut Origin, serial: u64, presenter: &super::remote::Viewer) 
 fn a_headless_origin_probes_a_content_page_before_handing_it_over() {
     let files = Files::new();
     let mut origin = Origin::build(false, &SUPPORTED_KINDS, false);
-    origin.fixture().core.set_page_presenter_only();
+    origin.fixture().core.set_presenter_only();
     let left = origin.live.left;
     set_lead(&mut origin.fixture().core, left, "leader");
     assert_eq!(

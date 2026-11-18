@@ -504,7 +504,7 @@ fn a_remote_open_skips_the_local_page_follow_and_store() {
 fn a_headless_origins_new_split_hands_its_page_to_the_presenter() {
     for role in ["leader", "unowned"] {
         let mut origin = Origin::build(false, &SUPPORTED_KINDS, false);
-        origin.fixture().core.set_page_presenter_only();
+        origin.fixture().core.set_presenter_only();
         assert!(
             origin
                 .overlay(SessionCmd::Split, |a| {

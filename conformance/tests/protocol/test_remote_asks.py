@@ -1,0 +1,118 @@
+"""Questions (`ask.open`) asked from a pane of a session attached from another machine (`live attach HOST ID`), against
+an origin behind the harness's own sshd (`remote_origin`): a second instance of the build, or the staged
+`ngterm-headless`. The pane's program runs on the origin and asks the origin's ngterm, which hands the question to the
+viewer presenting the session.
+
+A desktop origin hands it over only while the pane follows the viewer's lead, as upstream does. A headless origin draws
+nothing, so it hands the question over whatever the lead, as it does a page (upstream v0.42.3's `presentsRemotely`)."""
+
+import json
+import shlex
+
+import pytest
+from agterm_conformance.match import assert_ok, find_session, session_ids
+from agterm_conformance.plugin import Ctl
+from agterm_conformance.wait import wait_until
+
+pytestmark = [
+    pytest.mark.requires(
+        "posix-command-line",
+        reason="the remote origin's sshd is POSIX only, and a Windows viewer runs a remote pane through viewer-run",
+    ),
+    pytest.mark.requires("live-any-shell", reason="the origin's session must be Live in any login shell"),
+]
+
+ANSWER_FILE = "remote-ask.json"
+
+
+def _origin_session(origin):
+    sid = assert_ok(origin.request("session.new"))["id"]
+    origin.wait_mounted(sid, "left")
+    return sid
+
+
+def _attach(viewer, host, sid):
+    """`live attach HOST ID` on the viewer: the local row's id, once its pane reads back."""
+    local = assert_ok(viewer.request("live.attach", sid, host=host))["id"]
+    viewer.wait_tree(lambda tree: find_session(tree, local).get("realized"))
+    return local
+
+
+def _lead(sid, role):
+    def leads(tree):
+        (left,) = [surface for surface in find_session(tree, sid)["surfaces"] if surface["kind"] == "left"]
+        assert left.get("lead") == role, left
+        return True
+
+    leads.__qualname__ = f"the left pane of {sid} reading {role}"
+    return leads
+
+
+def _presented(tree, sid):
+    assert find_session(tree, sid).get("presenters", {}).get("presenter") is True, find_session(tree, sid)
+    return True
+
+
+def _ask_from_the_pane(remote_origin, origin, sid, home):
+    """`ngtermctl ask` typed into the session's pane, aimed at its own session as an agent there aims it: its answer
+    goes to a file in the origin's home."""
+    (home / ANSWER_FILE).unlink(missing_ok=True)
+    command = (
+        f"{remote_origin.adapter.ctl_name} ask Proceed? --button yes --button no "
+        f'--target "${origin.instance.variable("SESSION_ID")}" > {shlex.quote(ANSWER_FILE)} 2>&1\n'
+    )
+    assert_ok(origin.request("session.type", sid, text=command))
+
+    def opened(tree):
+        ask = find_session(tree, sid).get("ask")
+        assert ask, "no ask on the session"
+        return ask
+
+    return find_session(origin.wait_tree(opened), sid)["ask"]
+
+
+def _answer(home):
+    path = home / ANSWER_FILE
+
+    def written():
+        text = path.read_text() if path.exists() else ""
+        assert text.strip(), f"{path} is empty"
+        return text
+
+    return json.loads(wait_until(written))
+
+
+@pytest.mark.parametrize("remote_origin", ["instance", "headless"], indirect=True)
+@pytest.mark.covers("ask.open", "ask.cancel", "field:tree.session.ask")
+def test_an_ask_from_an_attached_pane_shows_on_the_viewer(remote_origin, remote_viewer):
+    origin = Ctl(remote_origin.instance)
+    home = remote_origin.instance.home
+    before = set(session_ids(origin.tree()))
+    sid = _origin_session(origin)
+    # a desktop origin's window leads the session it shows: it shows another one
+    assert_ok(origin.request("session.select", sorted(before)[0]))
+    local = _attach(remote_viewer, remote_origin.host, sid)
+    origin.wait_tree(lambda tree: _presented(tree, sid))
+    origin.wait_tree(_lead(sid, "follower"))
+
+    ask = _ask_from_the_pane(remote_origin, origin, sid, home)
+    assert ask.get("remote") is True, ask
+    remote_viewer.wait_tree(lambda tree: find_session(tree, local).get("ask") == {"id": ask["id"], "replica": True})
+    assert_ok(origin.request("ask.cancel", ask["id"]))
+    assert _answer(home) == {"result": "cancelled"}
+    remote_viewer.wait_tree(lambda tree: "ask" not in find_session(tree, local))
+
+    # the origin's own client takes the lead back, as a desktop origin's window does when the user works there
+    assert_ok(origin.request("session.lead", sid))
+    origin.wait_tree(_lead(sid, "leader"))
+    ask = _ask_from_the_pane(remote_origin, origin, sid, home)
+    if remote_origin.kind == "headless":
+        assert ask.get("remote") is True, f"a headless origin keeps the ask where nobody sees it: {ask}"
+        remote_viewer.wait_tree(lambda tree: find_session(tree, local).get("ask") == {"id": ask["id"], "replica": True})
+    else:
+        assert "remote" not in ask, f"a desktop origin that leads draws the ask itself: {ask}"
+    assert_ok(origin.request("ask.cancel", ask["id"]))
+    assert _answer(home) == {"result": "cancelled"}
+
+    assert_ok(remote_viewer.request("session.close", local))
+    assert_ok(origin.request("session.close", sid))

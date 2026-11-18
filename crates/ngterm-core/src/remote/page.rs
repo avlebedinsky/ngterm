@@ -214,7 +214,7 @@ pub(crate) fn open_remote_page(
         Ok(identity) => identity,
         Err(refusal) => return refusal,
     };
-    if !core.pages_presenter_only() && !core.follows_remotely(found, identity) {
+    if !core.presents_remotely(found, identity) {
         return RemotePageOpen::Local;
     }
     if !PAGE_KINDS
@@ -324,8 +324,7 @@ impl Core {
         let Some(found) = self.presented_session(session) else {
             return false;
         };
-        slot_identity(found, pane)
-            .is_ok_and(|identity| self.pages_presenter_only() || self.follows_remotely(found, identity))
+        slot_identity(found, pane).is_ok_and(|identity| self.presents_remotely(found, identity))
     }
 
     /// The page in `pane`'s slot of `session` shown on the presenting machine, if one is.

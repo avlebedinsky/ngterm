@@ -185,7 +185,7 @@ fn create(core: &mut Core, target: Option<&str>, args: &Args, source: HtmlSource
         return Err(ControlError::rejected(REMOTE_PARENT));
     }
     // a headless origin shows its page companions only through the machines viewing the parent
-    let presenter_only = core.pages_presenter_only();
+    let presenter_only = core.presenter_only();
     if presenter_only {
         if let HtmlSource::Url(url) = &opening.source
             && html::is_loopback(url.as_str())

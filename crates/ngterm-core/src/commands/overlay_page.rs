@@ -510,13 +510,14 @@ pub(crate) fn page_result(core: &mut Core, page: Uuid) -> Outcome {
 // MARK: - the frontend's hooks
 
 impl Core {
-    /// Routes pages to the session's presenter regardless of terminal leadership. A headless origin's newly
-    /// created split leads locally until a viewer attaches it, but its page still belongs on that viewer.
-    pub fn set_page_presenter_only(&mut self) {
+    /// Routes pages and asks to the session's presenter regardless of terminal leadership: a headless origin draws
+    /// neither. Its newly created split leads locally until a viewer attaches it, but what opens on it still belongs on
+    /// that viewer.
+    pub fn set_presenter_only(&mut self) {
         self.pages.presenter_only = true;
     }
 
-    pub(crate) fn pages_presenter_only(&self) -> bool {
+    pub(crate) fn presenter_only(&self) -> bool {
         self.pages.presenter_only
     }
 

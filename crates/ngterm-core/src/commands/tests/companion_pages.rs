@@ -785,7 +785,7 @@ fn a_url_attachment_has_a_channel_and_no_bridge() {
 /// A headless origin (no web views, pages always the presenter's) whose session a viewer listing `kinds` presents.
 fn headless(kinds: &[&str]) -> super::remote_page::Origin {
     let mut origin = super::remote_page::Origin::build(false, kinds, false);
-    origin.fixture().core.set_page_presenter_only();
+    origin.fixture().core.set_presenter_only();
     origin
 }
 

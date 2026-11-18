@@ -666,6 +666,27 @@ fn a_cancel_here_tells_the_presenter_and_a_local_ask_stays_without_a_follower() 
     );
 }
 
+#[test]
+fn a_headless_origin_hands_an_ask_to_its_presenter_whatever_the_lead() {
+    for style in ["terminal", "gui"] {
+        let (mut live, presenter) = live_unfollowed();
+        live.fixture.core.set_presenter_only();
+        let session = live.session;
+        let opened = ask(&mut live.fixture.core, session, style);
+        let id = opened.result.expect("the ask opens")["id"].as_str().unwrap().to_owned();
+        live.fixture.core.commit();
+        let request = presenter.last("ask.request").expect("the presenter gets the ask")["ask"].clone();
+        assert_eq!(
+            (request["id"].as_str(), request["style"].as_str()),
+            (Some(id.as_str()), Some(style))
+        );
+        assert_eq!(
+            node(&mut live.fixture, session)["ask"],
+            json!({"id": id, "remote": true})
+        );
+    }
+}
+
 /// A live session with a presenter whose primary pane has no remote lead.
 fn live_unfollowed() -> (Live, Viewer) {
     let mut live = live();

@@ -70,6 +70,12 @@ impl Core {
             .all(|pane| self.live.leads.role(*pane) == Some(LeadRole::Follower))
     }
 
+    /// Whether what opens in that place goes to the presenter (upstream's `presentsRemotely`): always on a presenter-only
+    /// (headless) origin, which draws nothing itself, else only where [`Self::follows_remotely`].
+    pub(super) fn presents_remotely(&self, session: &Session, pane_identity: Option<Uuid>) -> bool {
+        self.presenter_only() || self.follows_remotely(session, pane_identity)
+    }
+
     /// Hands a status sound to the presenter of session `session` instead of playing it here (upstream's
     /// `presentStatusSoundRemotely`): only while a viewer presents the session, the status pane `pane` names (none or
     /// left the primary, right the split or the primary without one) follows a remote lead, and the presenter's hello
@@ -394,7 +400,7 @@ pub(crate) fn present_ask_remotely(
         Err(error) => return Some(Err(error)),
     };
     let identity = resolved.map(|(identity, _)| identity);
-    if !core.follows_remotely(found, identity) {
+    if !core.presents_remotely(found, identity) {
         return None;
     }
     let owner = core.remote.hub.presenter_generation(session);

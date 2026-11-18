@@ -213,7 +213,7 @@ fn launch_presenter_only(dir: &Path) -> (Core, Uuid, Uuid) {
             persistence: Some(persistence),
         },
     );
-    core.set_page_presenter_only();
+    core.set_presenter_only();
     let _ = core.commit();
     let window = core.library().open_ids()[0];
     let session = core.library().store(window).expect("the window is open").workspaces()[0].sessions[0].id();

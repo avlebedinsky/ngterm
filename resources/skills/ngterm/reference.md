@@ -2486,7 +2486,10 @@ Nothing has to be set up beyond the `ngtermctl` PATH precondition above. What to
   An `ask open` or `session overlay open` newly aimed at it on the origin goes to the presenting Mac only
   when the target pane reports `follower` there, or every existing pane does for session-wide placement.
   Mixed, unknown or unowned roles stay local; one already open stays where it is when the lead changes.
-  The caller on the origin gets the answer or the exit status as usual.
+  An `ngterm-headless` origin draws nothing, so it hands an `ask open` to the presenting Mac whatever the roles.
+  The caller on the origin gets the answer or the exit status as usual. A program in the attached session aims the
+  ask at its own session with `--target "$NGTERM_SESSION_ID"`: without a target the ask goes to the session the
+  origin has selected.
 - A `session status` sound (`--sound`, or the blocked default) plays on the presenting Mac instead of the
   origin under the same rule for the status pane; a `scratch` status, or a presenter too old for it, keeps
   it on the origin. The blocked default is the presenting Mac's own Settings choice.
