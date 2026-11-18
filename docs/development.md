@@ -633,6 +633,11 @@ its Linux starting directory; otherwise WSL translates the Windows launch direct
 one-shot commands or management options (for example CMD `/C` or WSL `--shutdown`) open ordinary sessions,
 as the menu/settings indicate, rather than silently dropping their options.
 
+A Windows pane sends each key in its legacy encoding, also when its program pushes the Kitty keyboard flags or
+`modifyOtherKeys` (Claude Code pushes the flags). ConPTY turns the input into console key events and drops the `CSI u`
+and `CSI 27` keys that it cannot parse, so Escape, Shift+Tab, Ctrl+C and Alt+<key> would not reach the program
+(`PaneConfig::legacy_keys`). The pane still reports the pushed flags to a program that queries them.
+
 Live CMD adds an OSC 7 directory report to `PROMPT`, preserving the inherited or profile-defined prompt text.
 Replacing `PROMPT` inside CMD replaces that integration too. This reports the directory at each prompt; it does
 not add command start/end markers. CMD has no equivalent of Bash/Zsh's command hooks, so complete command
