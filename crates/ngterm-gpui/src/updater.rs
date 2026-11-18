@@ -18,7 +18,7 @@ use ngterm_proto::command::SessionCmd;
 use ngterm_proto::{Args, Command, Request};
 use ngterm_update::{
     Installation, Prepared, PrivilegedInstall, PromptOutcome, RELEASES_URL, Source, TerminalInstall, TerminalStatus,
-    Trust,
+    Trigger, Trust,
 };
 
 use crate::chrome::button::Button;
@@ -195,14 +195,11 @@ fn start_check(manual: Option<AnyWindowHandle>, cx: &mut App) {
     cx.global_mut::<Updater>().status = Status::Checking;
     let cancelled = Arc::new(AtomicBool::new(false));
     let updater = cx.global_mut::<Updater>();
-    updater.origin = if manual.is_some() {
-        Origin::Manual
-    } else {
-        Origin::Automatic
-    };
+    updater.origin = manual.map_or(Origin::Automatic, |_| Origin::Manual);
     updater.cancelled = Some(Arc::clone(&cancelled));
     cx.refresh_windows();
     let Releases { source, trust } = cx.global::<Updater>().releases.clone();
+    let trigger = manual.map_or(Trigger::Automatic, |_| Trigger::Manual);
     let task = cx.spawn(async move |cx| {
         let checked = cx
             .background_spawn({
@@ -211,7 +208,7 @@ fn start_check(manual: Option<AnyWindowHandle>, cx: &mut App) {
                     let _ = installation.cleanup_stale();
                     let trust = trust()?;
                     source
-                        .check(&installation, env!("CARGO_PKG_VERSION"), &trust)
+                        .check(&installation, env!("CARGO_PKG_VERSION"), &trust, trigger)
                         .map(|release| release.map(|release| (release, trust)))
                 }
             })

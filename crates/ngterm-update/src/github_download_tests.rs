@@ -104,15 +104,29 @@ fn no_token_and_failed_authentication_stop_with_a_useful_error() {
     let error = metadata_response(&test_agent(), &server.url, || None)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("rate limit"));
-    assert!(error.contains("Retry in 0 seconds"));
+    assert_eq!(
+        error,
+        "GitHub's API rate limit was reached. Retry in 0 seconds. Check local GitHub authentication or use Release \
+         Downloads."
+    );
     server.finish();
-    for second in ["401 Unauthorized", LIMITED] {
+    let refused = "GitHub's API rate limit was reached. Retry in 0 seconds. GitHub refused the local token \
+                   (GH_TOKEN, GITHUB_TOKEN or gh auth token). Check local GitHub authentication or use Release \
+                   Downloads.";
+    for (second, expected) in [
+        ("401 Unauthorized", refused),
+        ("403 Forbidden", refused),
+        (
+            LIMITED,
+            "GitHub's API rate limit was reached. Retry in 0 seconds. Check local GitHub authentication or use \
+             Release Downloads.",
+        ),
+    ] {
         let server = Server::new(vec![LIMITED, second]);
         let error = metadata_response(&test_agent(), &server.url, || Some("secret-token".into()))
             .unwrap_err()
             .to_string();
-        assert!(!error.contains("secret-token"));
+        assert_eq!(error, expected);
         assert_eq!(server.finish().len(), 2);
     }
 }
@@ -145,13 +159,27 @@ fn a_credential_that_is_not_a_header_value_is_never_sent() {
 }
 
 #[test]
+fn only_the_github_api_reads_credentials() {
+    assert_eq!(github_only(API, || Some("token".into())), Some("token".into()));
+    assert_eq!(github_only(API, || None), None);
+    assert_eq!(
+        github_only("https://api.github.com/other", || panic!("not GitHub's API")),
+        None
+    );
+    let server = crate::fakes::Server::start().unwrap();
+    assert_eq!(github_only(&server.source().api, || panic!("not GitHub's API")), None);
+}
+
+#[test]
 fn a_source_other_than_github_reports_the_limit_without_credentials() {
     let server = crate::fakes::Server::start().unwrap();
     server.route("/latest", LIMITED, "{}");
     let install = crate::tests::installation(std::path::Path::new("/tmp/ngterm"));
     let error = server
         .source()
-        .check(&install, "0.1.0", &Trust::default())
+        .check_with(&install, "0.1.0", &Trust::default(), || {
+            panic!("must not read credentials")
+        })
         .unwrap_err()
         .to_string();
     assert!(error.starts_with("GitHub's API rate limit was reached. Retry in 0 seconds."));

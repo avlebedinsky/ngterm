@@ -5,8 +5,11 @@ use std::time::{Duration, Instant};
 const TOKEN_LIMIT: usize = 4096;
 const GH_TIMEOUT: Duration = Duration::from_secs(3);
 
-pub(crate) fn local_token() -> Option<String> {
-    resolve(env_var, gh_token)
+/// The local GitHub token: `GH_TOKEN`, then `GITHUB_TOKEN`, then, only when `cli` is set, `gh auth token`. Only a
+/// check that the user starts sets `cli`, because gh can read its token from an OS keyring, and a locked keyring can
+/// ask the user to unlock it.
+pub(crate) fn local_token(cli: bool) -> Option<String> {
+    resolve(env_var, cli, gh_token)
 }
 
 fn env_var(name: &str) -> Option<String> {
@@ -25,11 +28,11 @@ fn gh_command() -> Command {
     command
 }
 
-fn resolve(env: impl Fn(&str) -> Option<String>, cli: impl FnOnce() -> Option<String>) -> Option<String> {
+fn resolve(env: impl Fn(&str) -> Option<String>, cli: bool, gh: impl FnOnce() -> Option<String>) -> Option<String> {
     ["GH_TOKEN", "GITHUB_TOKEN"]
         .into_iter()
         .find_map(|name| env(name).as_deref().and_then(valid_token))
-        .or_else(cli)
+        .or_else(|| cli.then(gh).flatten())
 }
 
 fn valid_token(value: &str) -> Option<String> {
@@ -86,18 +89,18 @@ mod tests {
     #[test]
     fn explicit_tokens_take_precedence_and_invalid_values_are_skipped() {
         assert_eq!(
-            resolve(|_| Some("first".into()), || panic!("unneeded CLI")),
+            resolve(|_| Some("first".into()), true, || panic!("unneeded CLI")),
             Some("first".into())
         );
         assert_eq!(
-            resolve(|key| (key == "GITHUB_TOKEN").then(|| "second".into()), || None),
+            resolve(|key| (key == "GITHUB_TOKEN").then(|| "second".into()), true, || None),
             Some("second".into())
         );
         assert_eq!(
-            resolve(|_| Some("bad\nheader".into()), || Some("cli".into())),
+            resolve(|_| Some("bad\nheader".into()), true, || Some("cli".into())),
             Some("cli".into())
         );
-        assert_eq!(resolve(|_| None, || None), None);
+        assert_eq!(resolve(|_| None, true, || None), None);
         assert_eq!(valid_token(" token\r\n"), Some("token".into()));
         for value in [
             String::new(),
@@ -108,6 +111,16 @@ mod tests {
         ] {
             assert!(valid_token(&value).is_none());
         }
+    }
+
+    #[test]
+    fn an_automatic_check_never_runs_the_cli() {
+        assert_eq!(resolve(|_| None, false, || panic!("gh must not run")), None);
+        assert_eq!(
+            resolve(|_| Some("env".into()), false, || panic!("gh must not run")),
+            Some("env".into())
+        );
+        assert_eq!(local_token(false), resolve(env_var, false, || None));
     }
 
     fn shell(script: &str) -> Command {

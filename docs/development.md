@@ -117,8 +117,10 @@ These installs happen only from the button, since a quit can't ask for a passwor
 
 Release metadata is requested anonymously first. A primary GitHub API limit (`403` or `429` with
 `X-RateLimit-Remaining: 0`, without `Retry-After`) permits one authenticated retry using `GH_TOKEN`, then
-`GITHUB_TOKEN`, then `gh auth token --hostname github.com`. The CLI lookup is non-interactive and limited to three
-seconds; it creates no console window on Windows. Credentials are kept in memory, used only for the fixed GitHub
+`GITHUB_TOKEN`, then `gh auth token --hostname github.com`. Only a check that the user starts (Check for Updates)
+runs gh: gh runs with its prompts disabled, but a token that gh keeps in a locked OS keyring can still ask the user
+to unlock the keyring, so the hourly background checks use only the two variables. The gh lookup is limited to three
+seconds and creates no console window on Windows. When GitHub refuses the token on the retry, the error says so. Credentials are kept in memory, used only for the fixed GitHub
 metadata endpoint, and never attached to release downloads or redirects. A missing credential or exhausted limit
 leaves manual downloads available; when GitHub supplies a reset timestamp, the error includes the remaining wait.
 

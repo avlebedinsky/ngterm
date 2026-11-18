@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use semver::Version;
 
-pub use download::{Release, Source};
+pub use download::{Release, Source, Trigger};
 pub use install::Prepared;
 pub use privileged::{PrivilegedInstall, PromptOutcome, TerminalInstall, TerminalStatus};
 

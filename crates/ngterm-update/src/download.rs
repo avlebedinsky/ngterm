@@ -75,14 +75,32 @@ impl Source {
     }
 
     /// Queries the latest stable release. Never installs prereleases, downgrades or the running version. With a
-    /// trusted signing key, a release without `SHA256SUMS.minisig` is refused.
+    /// trusted signing key, a release without `SHA256SUMS.minisig` is refused. After a primary rate limit, the
+    /// GitHub source retries once with a local token; only a [`Trigger::Manual`] check asks `gh` for it.
     ///
     /// # Errors
     /// Returns network, metadata or incompatible release errors.
-    pub fn check(&self, installation: &Installation, current: &str, trust: &Trust) -> Result<Option<Release>, Error> {
-        let mut response = metadata_response(&self.agent, &self.api, || {
-            (self.api == API).then(crate::github_auth::local_token).flatten()
-        })?;
+    pub fn check(
+        &self,
+        installation: &Installation,
+        current: &str,
+        trust: &Trust,
+        trigger: Trigger,
+    ) -> Result<Option<Release>, Error> {
+        self.check_with(installation, current, trust, || {
+            crate::github_auth::local_token(trigger == Trigger::Manual)
+        })
+    }
+
+    /// [`Source::check`] with the token lookup that it uses after a rate limit.
+    pub(crate) fn check_with(
+        &self,
+        installation: &Installation,
+        current: &str,
+        trust: &Trust,
+        lookup: impl FnOnce() -> Option<String>,
+    ) -> Result<Option<Release>, Error> {
+        let mut response = metadata_response(&self.agent, &self.api, || github_only(&self.api, lookup))?;
         let bytes = bounded_read(response.body_mut().as_reader(), METADATA_LIMIT)?;
         select(
             &serde_json::from_slice(&bytes)?,
@@ -92,6 +110,20 @@ impl Source {
             trust,
         )
     }
+}
+
+/// Who starts a release check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    /// A background check: it uses only `GH_TOKEN` or `GITHUB_TOKEN`, never `gh`.
+    Automatic,
+    /// A check that the user starts: it can also ask `gh` for its token.
+    Manual,
+}
+
+/// The token lookup runs only for GitHub's own API, so no other source ever gets a local token.
+fn github_only(api: &str, lookup: impl FnOnce() -> Option<String>) -> Option<String> {
+    (api == API).then(lookup).flatten()
 }
 
 fn metadata_request(
@@ -126,29 +158,43 @@ fn metadata_response(
         && let Ok(mut authorization) = ureq::http::HeaderValue::try_from(format!("Bearer {token}"))
     {
         authorization.set_sensitive(true);
+        let reset = limit_reset(&response);
         response = metadata_request(agent, url, Some(authorization))?;
+        if matches!(response.status().as_u16(), 401 | 403) && !primary_limit(&response) {
+            return Err(limit_error(
+                reset,
+                " GitHub refused the local token (GH_TOKEN, GITHUB_TOKEN or gh auth token).",
+            ));
+        }
     }
     if primary_limit(&response) {
-        let reset = response
-            .headers()
-            .get("x-ratelimit-reset")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok());
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let retry = reset.map_or_else(String::new, |reset| {
-            format!(" Retry in {} seconds.", reset.saturating_sub(now))
-        });
-        return Err(error(format!(
-            "GitHub's API rate limit was reached.{retry} Check local GitHub authentication or use Release Downloads."
-        )));
+        return Err(limit_error(limit_reset(&response), ""));
     }
     if !response.status().is_success() {
         return Err(ureq::Error::StatusCode(response.status().as_u16()).into());
     }
     Ok(response)
+}
+
+fn limit_reset(response: &ureq::http::Response<ureq::Body>) -> Option<u64> {
+    response
+        .headers()
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn limit_error(reset: Option<u64>, note: &str) -> Error {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let retry = reset.map_or_else(String::new, |reset| {
+        format!(" Retry in {} seconds.", reset.saturating_sub(now))
+    });
+    error(format!(
+        "GitHub's API rate limit was reached.{retry}{note} Check local GitHub authentication or use Release Downloads."
+    ))
 }
 
 fn primary_limit(response: &ureq::http::Response<ureq::Body>) -> bool {

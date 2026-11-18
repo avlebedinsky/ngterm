@@ -359,10 +359,16 @@ fn a_newer_release_is_checked_downloaded_verified_and_staged_beside_the_installa
     server.publish_archive("0.2.0", &archive);
     let source = server.source();
     assert!(
-        source.check(&install, "0.2.0", &Trust::default()).unwrap().is_none(),
+        source
+            .check(&install, "0.2.0", &Trust::default(), Trigger::Automatic)
+            .unwrap()
+            .is_none(),
         "the running version is current"
     );
-    let release = source.check(&install, "0.1.0", &Trust::default()).unwrap().unwrap();
+    let release = source
+        .check(&install, "0.1.0", &Trust::default(), Trigger::Automatic)
+        .unwrap()
+        .unwrap();
     let asset = fakes::asset("0.2.0");
     assert_eq!(release.version, Version::parse("0.2.0").unwrap());
     assert_eq!(release.url, server.url(&format!("/download/v0.2.0/{asset}")));
@@ -415,7 +421,7 @@ fn a_check_reports_transport_and_metadata_failures_with_their_messages() {
     let source = server.source();
     let check = |source: &Source| {
         source
-            .check(&install, "0.1.0", &Trust::default())
+            .check(&install, "0.1.0", &Trust::default(), Trigger::Automatic)
             .unwrap_err()
             .to_string()
     };
@@ -456,7 +462,7 @@ fn a_check_reports_transport_and_metadata_failures_with_their_messages() {
     assert_eq!(server.requests().len(), before);
     drop(server);
     assert!(matches!(
-        source.check(&install, "0.1.0", &Trust::default()),
+        source.check(&install, "0.1.0", &Trust::default(), Trigger::Automatic),
         Err(Error::Http(_))
     ));
 }
@@ -487,7 +493,10 @@ fn prepare_refuses_a_manifest_whose_signature_is_missing_unreachable_or_from_ano
     };
     // a release checked with no key carries no signature, so a build that trusts one refuses it
     server.publish_archive("0.2.0", b"archive");
-    let unsigned = source.check(&install, "0.1.0", &Trust::default()).unwrap().unwrap();
+    let unsigned = source
+        .check(&install, "0.1.0", &Trust::default(), Trigger::Automatic)
+        .unwrap()
+        .unwrap();
     assert_eq!(prepare(&unsigned), REFUSED);
     untouched(fixture.path(), "0.1.0");
     for (signature, expected) in [
@@ -512,7 +521,10 @@ fn prepare_refuses_a_manifest_whose_signature_is_missing_unreachable_or_from_ano
                 ("SHA256SUMS.minisig", signature),
             ],
         );
-        let release = source.check(&install, "0.1.0", &trust).unwrap().unwrap();
+        let release = source
+            .check(&install, "0.1.0", &trust, Trigger::Automatic)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             release.signature_url,
             Some(server.url("/download/v0.2.0/SHA256SUMS.minisig"))
@@ -521,7 +533,10 @@ fn prepare_refuses_a_manifest_whose_signature_is_missing_unreachable_or_from_ano
         untouched(fixture.path(), "0.1.0");
     }
     server.route("/download/v0.2.0/SHA256SUMS.minisig", "404 Not Found", "");
-    let release = source.check(&install, "0.1.0", &trust).unwrap().unwrap();
+    let release = source
+        .check(&install, "0.1.0", &trust, Trigger::Automatic)
+        .unwrap()
+        .unwrap();
     assert_eq!(prepare(&release), "http status: 404");
     untouched(fixture.path(), "0.1.0");
 }
@@ -536,7 +551,10 @@ fn prepare_refuses_an_archive_the_manifest_or_the_release_does_not_vouch_for() {
     let asset = fakes::asset("0.2.0");
     let archive = fakes::archive("0.2.0").unwrap();
     let prepare = || {
-        let release = source.check(&install, "0.1.0", &Trust::default()).unwrap().unwrap();
+        let release = source
+            .check(&install, "0.1.0", &Trust::default(), Trigger::Automatic)
+            .unwrap()
+            .unwrap();
         let refused = source
             .prepare(&install, &release, &Trust::default(), |_, _| true)
             .unwrap_err()
