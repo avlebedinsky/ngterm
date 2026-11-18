@@ -33,8 +33,12 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
     private static let switchPress: TimeInterval = 0.6
     private static let tries = 3
 
+    // past this a test fails: on a simulator that answers a minute late, waits counted in reads take hours
+    private static let timeLimit: TimeInterval = 1_200
+
     @MainActor
     internal func testAOnARealMachineAKeyIsExportedBehindTheOwnerCheckUnderAPassphrase() throws {
+        executionTimeAllowance = Self.timeLimit
         let machine = try E2EMachine.fromEnvironment()
         ExportedKeyFiles.removeAll()
         Biometrics.enroll(for: self)
@@ -45,14 +49,12 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         FakeApp.expect(app.navigationBars["Settings"], "Settings")
 
         // a face or finger that doesn't match, then Cancel: nothing opens
-        ExportPage.tapExport(in: app)
-        ExportPage.refuseOwnerCheck()
+        ExportPage.refuseOwnerCheck(in: app)
         ExportPage.pause(Self.beat)
         XCTAssertFalse(app.navigationBars["Export private key"].exists, "a refused check opened the export")
         shot("refused", app)
 
         // a match opens the export, which shows the key's fingerprint
-        ExportPage.tapExport(in: app)
         ExportPage.passOwnerCheck(in: app)
         let page = app.scrollViews["export-key-page"]
         FakeApp.expect(page, "the export page")
@@ -104,6 +106,7 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
 
     @MainActor
     internal func testBAfterAReinstallTheExportedFileImportsBackAndSignsInToTheSameMachine() throws {
+        executionTimeAllowance = Self.timeLimit
         let machine = try E2EMachine.fromEnvironment()
         addTeardownBlock {
             ExportedKeyFiles.removeAll()
@@ -125,8 +128,8 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
 
         // a wrong passphrase is refused, and the key stays out
         let field = app.secureTextFields["passphrase"]
-        field.tap()
-        field.typeText(Self.wrong + "\n")
+        SecureEntry.type(Self.wrong, into: field)
+        field.typeText("\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(
             FakeApp.element(containing: "That passphrase doesn't open this key.", in: app),
@@ -135,9 +138,8 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["public-key-page"].firstMatch.exists)
         shot("wrong-passphrase", app)
 
-        field.tap()
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: Self.wrong.count))
-        field.typeText(Self.passphrase + "\n")
+        SecureEntry.type(Self.passphrase, into: field)
+        field.typeText("\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
         FakeApp.expect(FakeApp.element(containing: machine.fingerprint, in: app), "the exported key's fingerprint")
@@ -175,8 +177,8 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         field.tap()
         field.typeText(machine.key.trimmingCharacters(in: .whitespacesAndNewlines))
         let secret = app.secureTextFields["passphrase"]
-        secret.tap()
-        secret.typeText(machine.passphrase + "\n")
+        SecureEntry.type(machine.passphrase, into: secret)
+        secret.typeText("\n")
         app.buttons["import-key-action"].tap()
         FakeApp.expect(app.descendants(matching: .any)["public-key-page"].firstMatch, "the imported key's public half")
         closePublicKey(in: app)

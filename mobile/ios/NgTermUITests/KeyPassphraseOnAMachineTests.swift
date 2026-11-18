@@ -21,8 +21,12 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
     private static let pageWait: TimeInterval = 5
     private static let tries = 3
 
+    // past this a test fails: on a simulator that answers a minute late, waits counted in reads take hours
+    private static let timeLimit: TimeInterval = 1_200
+
     @MainActor
     internal func testOnARealMachineNoScreenOffersToKeepTheKeysPassphrase() throws {
+        executionTimeAllowance = Self.timeLimit
         // an offer takes the next tap: the steps after it are not what they say
         continueAfterFailure = false
         let machine = try E2EMachine.fromEnvironment()
@@ -87,12 +91,8 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
             field.typeText(key.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         let secret = app.secureTextFields["passphrase"]
-        secret.tap()
-        let old = (secret.value as? String ?? "").count
-        if old > 0, secret.value as? String != secret.placeholderValue {
-            secret.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old))
-        }
-        secret.typeText(passphrase + "\n")
+        SecureEntry.type(passphrase, into: secret)
+        secret.typeText("\n")
         app.buttons["import-key-action"].tap()
     }
 
@@ -131,7 +131,6 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
     private func exportUnderAPassphrase(in app: XCUIApplication) {
         app.buttons["settings"].tap()
         FakeApp.expect(app.navigationBars["Settings"], "Settings")
-        ExportPage.tapExport(in: app)
         ExportPage.passOwnerCheck(in: app)
         ExportPage.typePassphrase(Self.exportPassphrase, in: app)
         FileScreen.open(with: app.buttons["export-save"], in: app)

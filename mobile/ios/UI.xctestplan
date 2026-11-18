@@ -9,13 +9,15 @@
     }
   ],
   "defaultOptions" : {
+    "defaultTestExecutionTimeAllowance" : 1800,
     "language" : "en",
     "region" : "US",
     "targetForVariableExpansion" : {
       "containerPath" : "container:NgTerm.xcodeproj",
       "identifier" : "4E0000000000000000000010",
       "name" : "NgTerm"
-    }
+    },
+    "testTimeoutsEnabled" : true
   },
   "testTargets" : [
     {
