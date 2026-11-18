@@ -782,7 +782,7 @@ attached row per session holds the presenter role: an `ask open` or `session ove
 the session on the origin is handed to it only when the target pane reports `follower` there, or every
 existing pane does for session-wide placement. Mixed, unknown or unowned roles stay local; one already
 open stays where it is when the lead changes. An `ngterm-headless` origin hands an ask over whatever the roles.
-In an attached session, pass `--target "$NGTERM_SESSION_ID"` to `ask`: the default is the origin's selected session. The overlay's program still runs once on the origin, and a remote
+In an attached session, pass `--target "$NGTERM_SESSION_ID"` to `ask`: without it a terminal ask goes to the origin's selected session, and a GUI one is centred in the origin's window and never handed over. The overlay's program still runs once on the origin, and a remote
 `overlay close` replies when the cancel is requested
 ([details](reference.md#restore)). Both run ssh non-interactively, so key-based auth must already work, and
 the far side needs `ngtermctl` installed by the Help action: the remote call runs it on the ssh `PATH` plus

@@ -14,8 +14,9 @@
 //! - the presenter's work (upstream's `AppStore+RemoteAsk.swift`, `AppStore+RemoteOverlay.swift` and the server's
 //!   `presentAskRemotely`/`takeBackRemoteAsk`/`receivePresenterFrame`): an ask, a program overlay or a page
 //!   (`page`, upstream's `AppStore+RemotePage.swift`) opened on a session whose panes follow a remote lead goes to its
-//!   presenter instead of being drawn here; a handed-over page's files and bridge calls come back over the channel its
-//!   presenter's helper claims ([`page_serve`]);
+//!   presenter instead of being drawn here, and on a presenter-only origin (`ngterm-headless`) an ask or a page goes
+//!   to it whatever the lead; a handed-over page's files and bridge calls come back over the channel its presenter's
+//!   helper claims ([`page_serve`]);
 //! - on the presenter, the pages an origin handed over ([`replica_page`]) and their end of that channel
 //!   ([`page_channel`]);
 //! - a remote row's companions, which its origin creates and this machine attaches under the row ([`companions`]), a

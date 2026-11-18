@@ -2488,8 +2488,8 @@ Nothing has to be set up beyond the `ngtermctl` PATH precondition above. What to
   Mixed, unknown or unowned roles stay local; one already open stays where it is when the lead changes.
   An `ngterm-headless` origin draws nothing, so it hands an `ask open` to the presenting Mac whatever the roles.
   The caller on the origin gets the answer or the exit status as usual. A program in the attached session aims the
-  ask at its own session with `--target "$NGTERM_SESSION_ID"`: without a target the ask goes to the session the
-  origin has selected.
+  ask at its own session with `--target "$NGTERM_SESSION_ID"`: without a target a terminal ask goes to the session
+  the origin has selected, and a GUI one is centred in the origin's window and never handed over.
 - A `session status` sound (`--sound`, or the blocked default) plays on the presenting Mac instead of the
   origin under the same rule for the status pane; a `scratch` status, or a presenter too old for it, keeps
   it on the origin. The blocked default is the presenting Mac's own Settings choice.

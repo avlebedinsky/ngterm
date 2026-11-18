@@ -58,7 +58,7 @@ def _ask_from_the_pane(remote_origin, origin, sid, home):
     goes to a file in the origin's home."""
     (home / ANSWER_FILE).unlink(missing_ok=True)
     command = (
-        f"{remote_origin.adapter.ctl_name} ask Proceed? --button yes --button no "
+        f"{remote_origin.adapter.ctl_name} ask {shlex.quote('Proceed?')} --button yes --button no "
         f'--target "${origin.instance.variable("SESSION_ID")}" > {shlex.quote(ANSWER_FILE)} 2>&1\n'
     )
     assert_ok(origin.request("session.type", sid, text=command))

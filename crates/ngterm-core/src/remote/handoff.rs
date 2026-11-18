@@ -4,9 +4,11 @@
 //! sounds (`AppStore+Presentation.swift`'s `presentStatusSoundRemotely`). Pages have a module of their own
 //! ([`super::page`]); their slots share the program overlays' reservations, closes and presenter loss here.
 //!
-//! An ask or overlay opened on a session whose panes follow a remote lead goes to its presenter: the ask keeps the
-//! session's slot and its result here, marked remote, so every cancel and teardown path that ends an ask ends it and
-//! tells the presenter; the overlay reserves its slot for a job the presenter's helper runs.
+//! An ask opened on a session that presents remotely ([`Core::presents_remotely`]: its panes follow a remote lead, or
+//! any session on a presenter-only origin such as `ngterm-headless`), or an overlay on one whose panes follow a remote
+//! lead, goes to its presenter: the ask keeps the session's slot and its result here, marked remote, so every cancel
+//! and teardown path that ends an ask ends it and tells the presenter; the overlay reserves its slot for a job the
+//! presenter's helper runs.
 
 use ngterm_proto::{ControlAskOutcome, ControlAskResult, ControlResult};
 use uuid::Uuid;
