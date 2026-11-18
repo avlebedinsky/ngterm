@@ -1,7 +1,7 @@
-Keep an agent that another agent started inside a pane from painting the spawner's row, an ngterm extension (upstream guards only the Claude adapter). The Codex hook stays silent with a second agent above its Codex inside the pane (the Claude adapter's ancestor walk, with its agent names and its pane boundary) and for a Codex that runs without its TUI (`codex exec`, `codex review`), told from its argv in /proc, else from the words `ps` joined where a value with a space, split in them, cannot mislead (no option before the first positional, `resume` or `fork` reports; `exec resume` with `--last` among its options or a session id as its first positional is silent, later words being the prompt's), and for other words or with no process table from the `source` of its rollout's session_meta (still wrong by the words, behind an option value with a space: a resume in either direction, and a `codex exec` whose split leaves `resume` or `fork` first; a `codex exec resume` of a TUI session by a thread name or with `--last` behind its prompt; and a TUI session whose prompt starts with `exec resume --last` or `exec resume <session id>`, which is silent): a reviewer's `codex exec` under a Claude Code worker inherited the worker's NGTERM_* and its Stop painted that session `blocked`. The shared wrapper's POSIX form makes the same walk for what reports through it alone (the Pi extension, the OpenCode plugins), unless an adapter that has walked says so (NGTERM_STATUS_WALKED). Applied after 0010-origin-pane-boundary.patch.
+Keep an agent that another agent started inside a pane from painting the spawner's row, an ngterm extension (upstream guards only the Claude adapter). The Codex hook stays silent with a second agent above its Codex inside the pane (the Claude adapter's ancestor walk, with its agent names, omp among them, and its pane boundary) and for a Codex that runs without its TUI (`codex exec`, `codex review`), told from its argv in /proc, else from the words `ps` joined where a value with a space, split in them, cannot mislead (no option before the first positional, `resume` or `fork` reports; `exec resume` with `--last` among its options or a session id as its first positional is silent, later words being the prompt's), and for other words or with no process table from the `source` of its rollout's session_meta (still wrong by the words, behind an option value with a space: a resume in either direction, and a `codex exec` whose split leaves `resume` or `fork` first; a `codex exec resume` of a TUI session by a thread name or with `--last` behind its prompt; and a TUI session whose prompt starts with `exec resume --last` or `exec resume <session id>`, which is silent): a reviewer's `codex exec` under a Claude Code worker inherited the worker's NGTERM_* and its Stop painted that session `blocked`. The shared wrapper's POSIX form makes the same walk for what reports through it alone (the Pi and Oh My Pi extensions, the OpenCode plugins), unless an adapter that has walked says so (NGTERM_STATUS_WALKED). Applied after 0012-oh-my-pi.patch.
 
 diff --git a/ngterm-agent-status.sh b/ngterm-agent-status.sh
-index 24092db1..3f038961 100755
+index 24092db1..5b45f243 100755
 --- a/ngterm-agent-status.sh
 +++ b/ngterm-agent-status.sh
 @@ -27,6 +27,61 @@ set -u
@@ -11,13 +11,13 @@ index 24092db1..3f038961 100755
 +# ngterm's spawner guard (an ngterm extension: upstream's wrapper has none). An agent that another agent started
 +# inside a pane inherits that pane's NGTERM_*, so its reports would paint the spawner's row. The Claude and Codex
 +# adapters decide that themselves and say so (NGTERM_STATUS_WALKED); everything else that reports through this wrapper
-+# alone (the Pi extension, the OpenCode plugins: a `pi -p` or an `opencode run` under another agent) is decided here,
-+# by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same agent names and the same
-+# pane boundary: keep them in step. A second agent above the caller and below the pane's origin makes the call a
-+# worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has no such walk yet: a
-+# process-table read there is slow next to the one second the Pi extension gives a report.
++# alone (the Pi and Oh My Pi extensions, the OpenCode plugins: a `pi -p`, an `omp` or an `opencode run` under another
++# agent) is decided here, by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same
++# agent names and the same pane boundary: keep them in step. A second agent above the caller and below the pane's
++# origin makes the call a worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has
++# no such walk yet: the cost of a process-table read there, on each report, is not measured.
 +is_agent() {
-+  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
++  case "$1" in claude | codex | kimi | opencode | pi | omp | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
 +  if [ -n "${NGTERM_AGENT_RE:-}" ]; then
 +    [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
 +  fi
@@ -67,10 +67,10 @@ index 24092db1..3f038961 100755
  # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
  state=$1
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 123e297a..38bf7d87 100755
+index 0d2551b7..93d69f3d 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -118,6 +118,8 @@ report_agent() {
+@@ -120,6 +120,8 @@ report_agent() {
    printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
  }
  
@@ -80,7 +80,7 @@ index 123e297a..38bf7d87 100755
    active | blocked)
      if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index 3f400dc2..c65bd954 100755
+index 380edce0..40680b02 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -48,7 +48,8 @@ case "$action" in
@@ -122,7 +122,7 @@ index 3f400dc2..c65bd954 100755
 +#   Codex's shared daemon fires its hooks from one.
 +# Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
 +is_agent() {
-+  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
++  case "$1" in claude | codex | kimi | opencode | pi | omp | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
 +  if [ -n "${NGTERM_AGENT_RE:-}" ]; then
 +    [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
 +  fi

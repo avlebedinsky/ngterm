@@ -666,6 +666,7 @@ fn run_under(stub: &Stub, mut command: Command, chain: &str, script: &Path, args
         "claude",
         "codex",
         "pi",
+        "omp",
         "opencode",
         "shell",
         "ngterm",
@@ -994,6 +995,9 @@ fn a_codex_under_another_agent_in_the_pane_reports_nothing() {
     };
     assert_codex_silent("ngterm shell claude shell codex-exec", &setup);
     assert_codex_silent("ngterm shell claude shell codex", &setup);
+    // Pi and Oh My Pi are agents above it too
+    assert_codex_silent("ngterm shell pi shell codex", &setup);
+    assert_codex_silent("ngterm shell omp shell codex", &setup);
 }
 
 /// A `codex exec` run has no user at its end, whoever started it: it reports nothing even alone in a pane.
@@ -1232,14 +1236,14 @@ fn wrapper_under(chain: &str, vars: &[(&str, &str)]) -> Option<String> {
     fs::read_to_string(&call).ok()
 }
 
-/// Pi and `OpenCode` report through the shared wrapper alone, and a headless run of either (`pi -p`, `opencode run`)
-/// that another agent started inside a pane inherits the pane's `NGTERM_*`: the wrapper's own ancestor walk keeps it
-/// silent, with the Claude adapter's rule and pane boundary. An adapter that has already walked says so.
+/// Pi, Oh My Pi and `OpenCode` report through the shared wrapper alone, and a run of one of them (`pi -p`, `omp`,
+/// `opencode run`) that another agent started inside a pane inherits the pane's `NGTERM_*`: the wrapper's own ancestor
+/// walk keeps it silent, with the Claude adapter's rule and pane boundary. An adapter that has already walked says so.
 #[cfg(unix)]
 #[test]
 fn the_wrapper_reports_nothing_for_an_agent_under_another_agent_in_the_pane() {
     const CALL: &str = "session status active --target S --blink";
-    for agent in ["pi", "opencode"] {
+    for agent in ["pi", "omp", "opencode"] {
         let alone = wrapper_under(&format!("ngterm-session shell {agent}"), &[]);
         assert_eq!(alone.as_deref(), Some(CALL), "{agent}: the pane's agent");
         let worker = wrapper_under(&format!("ngterm-session shell claude shell {agent}"), &[]);
@@ -1250,6 +1254,15 @@ fn the_wrapper_reports_nothing_for_an_agent_under_another_agent_in_the_pane() {
             Some(CALL),
             "{agent}: an agent above the pane's origin"
         );
+    }
+    // Oh My Pi is an agent above the caller too, and a Codex or a Pi above an OMP silences it
+    for chain in [
+        "ngterm-session shell omp shell pi",
+        "ngterm-session shell omp shell opencode",
+        "ngterm-session shell codex shell omp",
+        "ngterm-session shell pi shell omp",
+    ] {
+        assert_eq!(wrapper_under(chain, &[]), None, "{chain}: a worker under another agent");
     }
     let walked = wrapper_under("ngterm shell claude shell pi", &[("NGTERM_STATUS_WALKED", "1")]);
     assert_eq!(walked.as_deref(), Some(CALL), "the caller's walk stands");

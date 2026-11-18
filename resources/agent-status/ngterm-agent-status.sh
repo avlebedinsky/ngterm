@@ -30,13 +30,13 @@ set -u
 # ngterm's spawner guard (an ngterm extension: upstream's wrapper has none). An agent that another agent started
 # inside a pane inherits that pane's NGTERM_*, so its reports would paint the spawner's row. The Claude and Codex
 # adapters decide that themselves and say so (NGTERM_STATUS_WALKED); everything else that reports through this wrapper
-# alone (the Pi extension, the OpenCode plugins: a `pi -p` or an `opencode run` under another agent) is decided here,
-# by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same agent names and the same
-# pane boundary: keep them in step. A second agent above the caller and below the pane's origin makes the call a
-# worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has no such walk yet: a
-# process-table read there is slow next to the one second the Pi extension gives a report.
+# alone (the Pi and Oh My Pi extensions, the OpenCode plugins: a `pi -p`, an `omp` or an `opencode run` under another
+# agent) is decided here, by the Claude adapter's ancestor walk (ngterm-claude-status.sh explains it), with the same
+# agent names and the same pane boundary: keep them in step. A second agent above the caller and below the pane's
+# origin makes the call a worker's, which is dropped; an unreadable chain reports (fail open). The PowerShell form has
+# no such walk yet: the cost of a process-table read there, on each report, is not measured.
 is_agent() {
-  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
+  case "$1" in claude | codex | kimi | opencode | pi | omp | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
   if [ -n "${NGTERM_AGENT_RE:-}" ]; then
     [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
   fi

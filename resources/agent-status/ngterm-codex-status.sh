@@ -82,7 +82,7 @@ esac
 #   Codex's shared daemon fires its hooks from one.
 # Whatever cannot be read means reporting (fail open). The blocker watcher is this hook's own child and is not asked.
 is_agent() {
-  case "$1" in claude | codex | kimi | opencode | pi | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
+  case "$1" in claude | codex | kimi | opencode | pi | omp | gemini | cursor-agent | aider | crush | goose) return 0 ;; esac
   if [ -n "${NGTERM_AGENT_RE:-}" ]; then
     [[ $1 =~ $NGTERM_AGENT_RE ]] 2>/dev/null && return 0
   fi

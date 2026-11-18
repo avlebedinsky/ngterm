@@ -62,8 +62,8 @@ Linux build unless it names another OS.
   agent above its Codex (the Claude adapter's walk, ending at the same pane boundary) and for a run without the TUI
   (`codex exec`, `codex review`); `resources/agent-status/ngterm-codex-status.sh` holds the details. On Windows, where
   the hook runs under Git Bash with no process table, only the `codex exec` rule applies. The shared status wrapper
-  makes the same walk for what reports through it alone (the Pi extension, the OpenCode plugins), in its POSIX form
-  only.
+  makes the same walk for what reports through it alone (the Pi and Oh My Pi extensions, the OpenCode plugins), in its
+  POSIX form only.
 - Another extension beyond upstream: a viewer makes and ends another machine's sessions, where upstream's only attaches
   and detaches. Attach Remote's picker ends with New Session, also offered when the machine has nothing to attach, and
   an attached row's menu has New Session on HOST and End Session on HOST… (`crates/ngterm-core/src/remote/origin_sessions.rs`).
