@@ -238,6 +238,57 @@ fn a_stale_pane_overlay_close_keeps_its_local_replacement() {
     );
 }
 
+/// A Windows origin's sshd runs a handed-over job's helper in a pseudoconsole, as it does a pane's attach: the replica
+/// overlay, session-wide or over a pane, takes the legacy key encodings there, and on no other origin.
+#[test]
+fn a_windows_origins_replica_overlays_take_legacy_keys() {
+    for (executable, socket_directory, windows) in [
+        (
+            r"C:\Program Files\ngterm\ngterm-session.exe",
+            r"C:\Users\u\AppData\Local\ngterm\live",
+            true,
+        ),
+        ("/usr/bin/ngterm-session", "/run/user/1000/ngterm/live", false),
+    ] {
+        let (mut core, window, session) = core();
+        let found = core
+            .library_mut()
+            .store_mut(window)
+            .unwrap()
+            .session_mut(session)
+            .unwrap();
+        let remote = found
+            .remote_presentation()
+            .unwrap()
+            .binding
+            .remote_pane(found.pane_identity)
+            .unwrap();
+        found.remote_presentation.as_mut().unwrap().binding.origin = Some(crate::model::RemoteOrigin {
+            host: "origin".into(),
+            session_name: "remote".into(),
+            endpoint: ngterm_proto::ControlLiveEndpoint {
+                peer: None,
+                executable: executable.into(),
+                socket_directory: socket_directory.into(),
+                attach_bridge: None,
+            },
+        });
+        let session_wide: PresentationOverlay =
+            serde_json::from_value(json!({"job":"whole", "wait":false, "follow":false})).unwrap();
+        assert!(core.show_replica_overlay(&session_wide, session));
+        assert_eq!(
+            core.library().held_session(session).unwrap().overlay.legacy_keys,
+            windows
+        );
+        let pane: PresentationOverlay =
+            serde_json::from_value(json!({"job":"pane", "pane": uuid_string(remote), "wait":false, "follow":false}))
+                .unwrap();
+        assert!(core.show_replica_overlay(&pane, session));
+        let found = core.library().held_session(session).unwrap();
+        assert_eq!(found.pane_overlay(OverlayPane::Left).unwrap().legacy_keys, windows);
+    }
+}
+
 #[test]
 fn reconnect_replacements_rotate_the_expected_nonce_and_disable_it_for_old_endpoints() {
     let (mut core, window, session) = core();

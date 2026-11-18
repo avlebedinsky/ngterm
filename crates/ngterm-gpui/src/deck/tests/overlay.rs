@@ -224,6 +224,38 @@ fn a_pane_overlay_covers_its_pane_and_gives_the_keyboard_back_when_closed(cx: &m
     assert!(h.focused(session, &token), "the pane takes the keyboard back");
 }
 
+/// A replica of a job on a Windows origin runs in that origin's pseudoconsole: its overlay's launch, session-wide or
+/// over a pane, takes the program's legacy keys, and a local program's does not.
+#[gpui_kit::test]
+fn an_overlay_launches_with_its_programs_legacy_keys(cx: &mut TestAppContext) {
+    let (mut h, session, _) = overlay_harness(cx);
+    for legacy_keys in [true, false] {
+        let program = || ngterm_core::model::OverlayProgram {
+            command: "exec cat".to_owned(),
+            legacy_keys,
+            ..ngterm_core::model::OverlayProgram::default()
+        };
+        assert!(h.store().open_overlay(session, program()));
+        h.turn();
+        let launch = h.launches.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(launch.legacy_keys, legacy_keys, "the session-wide program");
+        assert!(h.store().close_overlay(session));
+        h.turn();
+
+        h.store()
+            .open_pane_overlay(session, ngterm_core::model::OverlayPane::Left, program())
+            .unwrap();
+        h.turn();
+        let launch = h.launches.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(launch.legacy_keys, legacy_keys, "the pane overlay");
+        assert!(
+            h.store()
+                .close_pane_overlay(session, ngterm_core::model::OverlayPane::Left)
+        );
+        h.turn();
+    }
+}
+
 #[gpui_kit::test]
 fn a_held_program_waits_for_a_key_before_its_overlay_closes(cx: &mut TestAppContext) {
     let (mut h, session, _) = overlay_harness(cx);

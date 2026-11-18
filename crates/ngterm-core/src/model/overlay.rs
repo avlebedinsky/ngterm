@@ -71,6 +71,10 @@ pub struct HudState {
 
 /// The session-wide overlay slot (upstream's `overlayActive` and its companions).
 #[derive(Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one slot, each read by its own part of the overlay"
+)]
 pub struct OverlaySlot {
     /// The slot is occupied, by a program or page that covers, or by a passive HUD.
     pub active: bool,
@@ -80,6 +84,9 @@ pub struct OverlaySlot {
     pub cwd: Option<String>,
     /// Hold the surface after the command exits.
     pub wait: bool,
+    /// The occupant's keys always take their legacy encodings: a replica of a job on a Windows origin, which that
+    /// origin's sshd runs in a pseudoconsole ([`crate::remote::origin::needs_legacy_keys`]).
+    pub legacy_keys: bool,
     /// A floating occupant's share of the pane (a HUD's WIDTH); `None` is a full-pane cover.
     pub size_percent: Option<i64>,
     /// A floating program or page's per-axis point overrides of `size_percent` (upstream's `overlayPoints`); empty
@@ -182,6 +189,7 @@ impl OverlaySlot {
         self.command = None;
         self.cwd = None;
         self.wait = false;
+        self.legacy_keys = false;
         self.size_percent = None;
         self.points = OverlayPointSize::default();
         self.background_color = None;
@@ -253,6 +261,9 @@ pub struct OverlayProgram {
     pub points: OverlayPointSize,
     /// The overlay's own `#rrggbb` background.
     pub background_color: Option<String>,
+    /// The terminal's keys always take their legacy encodings: a replica of a job on a Windows origin, which that
+    /// origin's sshd runs in a pseudoconsole ([`crate::remote::origin::needs_legacy_keys`]).
+    pub legacy_keys: bool,
 }
 
 /// What opening a HUD takes besides its spec (upstream's `openHud` arguments).
@@ -291,6 +302,7 @@ impl AppStore {
         slot.command = Some(program.command);
         slot.cwd = program.cwd;
         slot.wait = program.wait;
+        slot.legacy_keys = program.legacy_keys;
         slot.exit_code = None;
         slot.code_file = code_file;
         slot.size_percent = program.size_percent.map(|percent| percent.clamp(1, 100));

@@ -426,6 +426,7 @@ fn open(core: &mut Core, target: Option<&str>, args: &Args) -> Outcome {
         size_percent: args.size_percent,
         points,
         background_color: args.color.clone(),
+        legacy_keys: false,
     };
     let resolved = Resolver::new(core.library()).session(target, args.window.as_deref())?;
     refuse_hidden_slot(core, resolved.window, resolved.session, pane)?;

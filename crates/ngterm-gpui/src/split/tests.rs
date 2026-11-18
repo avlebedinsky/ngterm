@@ -200,6 +200,7 @@ pub(crate) fn pane_overlay(session: &mut Session, pane: OverlayPane, generation:
         cwd: None,
         background_color: None,
         wait: false,
+        legacy_keys: false,
         generation,
         code_file: None,
         html: None,

@@ -526,6 +526,8 @@ struct Program {
     wait: bool,
     background: Option<String>,
     code_file: Option<PathBuf>,
+    /// A replica of a job on a Windows origin: its keys take the legacy encodings ([`ngterm_term::Launch::legacy_keys`]).
+    legacy_keys: bool,
 }
 
 impl Program {
@@ -537,6 +539,7 @@ impl Program {
                 wait: overlay.wait,
                 background: overlay.background_color.clone(),
                 code_file: overlay.code_file.clone(),
+                legacy_keys: overlay.legacy_keys,
             };
         }
         let slot = &session.overlay;
@@ -546,6 +549,7 @@ impl Program {
             wait: slot.wait,
             background: slot.background_color.clone(),
             code_file: slot.code_file.clone(),
+            legacy_keys: slot.legacy_keys,
         }
     }
 }
@@ -586,7 +590,7 @@ fn launch(session: &Session, program: &Program, hud: &HudContext<'_>) -> ngterm_
         painter: None,
         status_file: surface.terminal_records_status.then_some(code_file),
         remote: false,
-        legacy_keys: false,
+        legacy_keys: program.legacy_keys,
         shell_profile: None,
     }
 }

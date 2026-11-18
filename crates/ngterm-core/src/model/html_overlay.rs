@@ -247,6 +247,7 @@ impl Session {
                 cwd: None,
                 background_color,
                 wait: false,
+                legacy_keys: false,
                 generation,
                 code_file: None,
                 html: Some(overlay),
@@ -263,6 +264,7 @@ impl Session {
         slot.command = None;
         slot.cwd = None;
         slot.wait = false;
+        slot.legacy_keys = false;
         slot.size_percent = size.percent.map(|percent| percent.clamp(1, 100));
         slot.points = if slot.size_percent.is_some() {
             size.points

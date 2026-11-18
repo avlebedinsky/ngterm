@@ -31,6 +31,9 @@ pub struct PaneOverlay {
     pub background_color: Option<String>,
     /// Hold the terminal after the program exits.
     pub wait: bool,
+    /// The terminal's keys always take their legacy encodings: a replica of a job on a Windows origin, which that
+    /// origin's sshd runs in a pseudoconsole ([`crate::remote::origin::needs_legacy_keys`]).
+    pub legacy_keys: bool,
     /// Unique within the session, minted at the open; the frontend keys the overlay's terminal by it.
     pub generation: u64,
     /// Where the wrapper writes the program's exit status, read when the terminal is torn down; `None` for a page.
@@ -266,6 +269,7 @@ impl AppStore {
             cwd: program.cwd,
             background_color: program.background_color,
             wait: program.wait,
+            legacy_keys: program.legacy_keys,
             generation,
             code_file: Some(mint_code_file()),
             html: None,

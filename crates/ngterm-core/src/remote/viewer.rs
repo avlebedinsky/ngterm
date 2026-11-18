@@ -783,6 +783,7 @@ impl Core {
             size_percent: overlay.size_percent,
             points: overlay.points(),
             background_color: overlay.background_color.clone(),
+            legacy_keys: found.remote_origin_needs_legacy_keys(),
             ..OverlayProgram::default()
         };
         let (pane, generation) = if overlay.pane.is_some() {

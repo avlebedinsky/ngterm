@@ -669,7 +669,8 @@ A Windows pane sends each key in its legacy encoding, also when its program push
 and `CSI 27` keys that it cannot parse, so Escape, Shift+Tab, Ctrl+C and Alt+<key> would not reach the program
 (`PaneConfig::legacy_keys`). The pane still reports the pushed flags to a program that queries them. A viewer's pane
 of a session on a Windows origin (a desktop on any OS, Android, iOS) does the same, as the origin's OpenSSH server
-runs the attach in a ConPTY too (`ngterm_core::remote::origin::needs_legacy_keys`).
+runs the attach in a ConPTY too (`ngterm_core::remote::origin::needs_legacy_keys`). A desktop viewer's overlay that
+runs a job of a Windows origin (a replica overlay) does the same, for the same reason.
 
 Live CMD adds an OSC 7 directory report to `PROMPT`, preserving the inherited or profile-defined prompt text.
 Replacing `PROMPT` inside CMD replaces that integration too. This reports the directory at each prompt; it does

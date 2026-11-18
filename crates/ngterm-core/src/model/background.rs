@@ -457,6 +457,7 @@ mod tests {
             cwd: None,
             background_color: background_color.map(str::to_owned),
             wait: false,
+            legacy_keys: false,
             generation: 1,
             code_file: None,
             html: None,
