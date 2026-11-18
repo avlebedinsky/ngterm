@@ -219,11 +219,7 @@ exit 0
         write_stub(&stubs, "xcrun", &xcrun_stub(world));
         let simctl_dir = developer_dir.join("usr/bin");
         fs::create_dir_all(&simctl_dir).unwrap();
-        write_stub(
-            &simctl_dir,
-            "simctl",
-            &format!("exec '{}' simctl \"$@\"\n", stubs.join("xcrun").display()),
-        );
+        write_stub(&simctl_dir, "simctl", "exec \"$STUB_DIR/stubs/xcrun\" simctl \"$@\"\n");
         let mut command = Command::new("bash");
         command
             .arg(repo_root().join("scripts").join(script))
