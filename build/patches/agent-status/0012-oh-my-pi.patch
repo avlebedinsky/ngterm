@@ -1,4 +1,4 @@
-Add Oh My Pi's native lifecycle extension and recognize omp as a parent agent, so a Claude worker cannot reset its pane. Both forms. OMP uses agent_end.willContinue, not Pi's agent_settled event. The extension reports only for the top-level session (ctx.agent.kind), as OMP runs it again in each subagent. Applied after 0010-origin-pane-boundary.patch.
+Add Oh My Pi's native lifecycle extension and recognize omp as a parent agent, so a Claude worker cannot reset its pane. Both forms. OMP uses agent_end.willContinue, not Pi's agent_settled event. The extension reports only for the top-level session (ctx.agent.kind), as OMP runs it again in each subagent. Applied after 0011-codex-windows-watcher.patch.
 
 diff --git a/ngterm-claude-status.ps1 b/ngterm-claude-status.ps1
 index cccd891..e126a4b 100644
