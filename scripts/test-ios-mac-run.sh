@@ -247,6 +247,24 @@ run "$runner" cancel
 check "cancel sends no signal to the stored pids of an ended run" '((status == 0)) && kill -0 "$stranger" 2>/dev/null'
 run "$runner" clean
 check "clean does not take a stored pid of an ended run for a live run" '((status == 0)) && [[ ! -e "$scratch" ]]'
+# A run whose job died has no exit status. Its stored pids, which the system gave again to a different process
+# (another start time), are not the run's.
+lost_run() {
+  mkdir -p "$scratch/run"
+  for name in pid cmdpid; do
+    echo "$stranger" >"$scratch/run/$name"
+    echo "Thu Jan  1 00:00:00 1970" >"$scratch/run/$name.start"
+  done
+}
+lost_run
+run "$runner" clean
+check "clean does not take a pid of a lost run that names a different process for a live run" \
+  '((status == 0)) && [[ ! -e "$scratch" ]] && kill -0 "$stranger" 2>/dev/null'
+lost_run
+run "$runner" cancel
+check "cancel sends no signal to a pid of a lost run that names a different process" \
+  '((status == 0)) && kill -0 "$stranger" 2>/dev/null && [[ "$(cat "$scratch/run/exit")" == 143 ]]'
+run "$runner" clean
 kill "$stranger" 2>/dev/null || true
 wait "$stranger" 2>/dev/null || true
 run "$runner" run --clean -- true
@@ -335,6 +353,25 @@ mkdir -p "$cache/.tmp-dddd" "$cache/eeee"
 cache_call ios_core_cache_prune "$cache" 100000
 check "a prune removes stopped stores and incomplete entries" \
   '[[ ! -e "$cache/.tmp-dddd" && ! -e "$cache/eeee" && -d "$cache/bbbb" ]]'
+
+# --- the fingerprint of Generated/ in the test-build stamp (files_fingerprint, lib/native.sh) ------------------------
+
+generated="$work/generated"
+mkdir -p "$work/core-a" "$work/core-b"
+printf 'one\n' >"$work/core-a/lib.a"
+printf 'two\n' >"$work/core-b/lib.a"
+fingerprint() {
+  bash -c 'source "$1/scripts/lib/native.sh"; files_fingerprint "$2"' fp "$source_root" "${1:-$generated}"
+}
+# as build-ios.sh's step 7 writes Generated/ (sync_dir)
+rsync -r --checksum --delete "$work/core-a/" "$generated/"
+print1="$(fingerprint)"
+sleep 0.1
+rsync -r --checksum --delete "$work/core-a/" "$generated/"
+check "Generated/ with the same core keeps its fingerprint" '[[ -n "$print1" && "$(fingerprint)" == "$print1" ]]'
+rsync -r --checksum --delete "$work/core-b/" "$generated/"
+check "Generated/ with a different core has a different fingerprint" '[[ "$(fingerprint)" != "$print1" ]]'
+check "the fingerprint of a missing directory fails" '! fingerprint "$work/none" 2>/dev/null'
 
 if ((failures)); then
   echo "$failures check(s) failed" >&2

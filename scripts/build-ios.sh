@@ -65,9 +65,9 @@
 #
 # For the shared Mac (scripts/ios-mac-run.sh sets them):
 #   --only CLASS[/METHOD]  the ui action runs only these UI tests (repeat the option for more), as a fix round does;
-#   BUILD_IOS_TREE_STAMP   a checksum of the whole source tree: a plan that was built from the same stamp, profile and
-#                    Xcode, with no other build after it, keeps its build, and its runs only test it
-#                    (test-without-building), so a repeat run and the other simulator's run rebuild nothing;
+#   BUILD_IOS_TREE_STAMP   a checksum of the whole source tree: a plan that was built from the same stamp, profile,
+#                    Xcode and Generated/ files, with no other build after it, keeps its build, and its runs only
+#                    test it (test-without-building), so a repeat run and the other simulator's run rebuild nothing;
 #   BUILD_IOS_BUILD_NUMBER the archive's build number (CURRENT_PROJECT_VERSION; default: the commit count of HEAD),
 #                    for a copy of the tree with no Git history;
 #   BUILD_IOS_CORE_CACHE   a directory of prebuilt cores (lib/ios-core-cache.sh), keyed by the core's inputs: a core
@@ -471,11 +471,16 @@ run_test_plan() {
 
 # Builds test plan $1 for testing, unless the products are its build from this tree already. The plans build into one
 # set of products with other settings (Unit has code coverage, UI has not), so one record, $BUILD_DIR/built-tree, names
-# the plan, BUILD_IOS_TREE_STAMP, the profile and the Xcode of the last build, and each other build removes it
-# (project_xcodebuild, test-ios-e2e.sh). The plan's test run file must still be in the derived data.
+# the plan, BUILD_IOS_TREE_STAMP, the profile, the Xcode and the Generated/ files of the last build, and each other
+# build removes it (project_xcodebuild, test-ios-e2e.sh). The tree stamp does not include Generated/: a core with
+# other settings (--env RUSTFLAGS=..., another cached core) changes only Generated/, and step 7 writes a changed file
+# again, which changes its fingerprint. The plan's test run file must still be in the derived data.
 build_test_plan() {
-  local plan="$1" built="$BUILD_DIR/built-tree" stamp="" start status=0
-  [[ -z "${BUILD_IOS_TREE_STAMP:-}" ]] || stamp="$plan $BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-}"
+  local plan="$1" built="$BUILD_DIR/built-tree" stamp="" generated start status=0
+  if [[ -n "${BUILD_IOS_TREE_STAMP:-}" ]] &&
+    generated="$(files_fingerprint "$CORE_GENERATED" "$DESIGN_GENERATED")"; then
+    stamp="$plan $BUILD_IOS_TREE_STAMP $PROFILE ${DEVELOPER_DIR:-} $generated"
+  fi
   if [[ -n "$stamp" && -f "$built" && "$(cat "$built")" == "$stamp" ]] &&
     compgen -G "$DERIVED_DATA/Build/Products/NgTerm_${plan}_iphonesimulator*.xctestrun" >/dev/null; then
     echo "build-ios.sh: the $plan plan was built from this tree already (BUILD_IOS_TREE_STAMP): no new build" >&2

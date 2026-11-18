@@ -1218,6 +1218,7 @@ run, so the Mac is not busy for a run that nobody waits for. The command gets th
 - `BUILD_IOS_TREE_STAMP`, the checksum of the tree. `build-ios.sh` builds a test plan once for each tree. The run
   on the second simulator and a repeat run with no change only test that build (`test-without-building`). A
   different build into the same products (the other plan, `build`, `lint`, `test-ios-e2e.sh`) makes it build again.
+  A change in `Generated/` (for example a core with a different `RUSTFLAGS`) also makes it build again.
 - `BUILD_IOS_CORE_CACHE`, a cache of prebuilt Rust cores on the Mac (`scripts/lib/ios-core-cache.sh`). The key
   covers the inputs of the core: the files of the local crates that `ngterm-mobile` builds from, the files that
   their sources include from outside them (`include_str!`, `include_bytes!`), the lock file, the pins, the build

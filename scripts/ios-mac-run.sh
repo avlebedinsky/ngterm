@@ -170,8 +170,20 @@ CORE_CACHE="$HOME/.cache/ngterm/ios-core"
 
 CLAIM="$SCRATCH/claim"
 
-# Whether the run lives: it has no exit status yet and its job is there (a stored pid of an ended run is no proof).
-alive() { [[ ! -f "$RUN/exit" && -s "$RUN/pid" ]] && kill -0 "$(cat "$RUN/pid")" 2>/dev/null; }
+# The start time of process $1, empty when it is gone. A pid and its start time name one process: a pid that the
+# system gives again (after a restart, or when the pids wrap) has a different start time.
+started() { ps -o lstart= -p "$1" 2>/dev/null || true; }
+# Whether the pid of file $1 is still the process that it named: alive, with the start time in file $1.start.
+recorded_alive() {
+  local pid
+  [[ -s "$1" && -s "$1.start" ]] || return 1
+  pid="$(cat "$1")"
+  kill -0 "$pid" 2>/dev/null && [[ "$(started "$pid")" == "$(cat "$1.start")" ]]
+}
+
+# Whether the run lives: it has no exit status yet and its job is there. A stored pid of an ended run is no proof,
+# and the stored pid of a run whose job died (no exit status) is only its job while the start time is the same.
+alive() { [[ ! -f "$RUN/exit" ]] && recorded_alive "$RUN/pid"; }
 
 # The claim of the scratch, "<id> <epoch>": the launch of that id copies into it, runs in it or collects from it. It
 # holds while its run lives, else for an hour after its last renewal (prepare, verify, start and each poll renew it),
@@ -328,6 +340,7 @@ eval "set -- \$(cat "\$run/command")"
 cd $(printf %q "$SCRATCH/tree")
 perl -e "setpgrp(0, 0); exec @ARGV or die qq(cannot run \\\$ARGV[0]: \\\$!\\\\n)" -- "\$@" </dev/null >>"\$run/command.log" 2>&1 &
 pid=\$!
+ps -o lstart= -p "\$pid" >"\$run/cmdpid.start" 2>/dev/null || true
 echo "\$pid" >"\$run/cmdpid"
 elapsed=0 stopped=0
 while kill -0 "\$pid" 2>/dev/null; do
@@ -370,6 +383,7 @@ mv "\$run/exit.tmp" "\$run/exit"
 EOF
   : >"$RUN/command.log"
   nohup perl -e "setpgrp(0, 0); exec @ARGV or die" -- /bin/bash "$RUN/job.sh" </dev/null >"$RUN/job.log" 2>&1 &
+  started "$!" >"$RUN/pid.start"
   echo "$!" >"$RUN/pid"
   echo "$RUN_ID" >"$RUN/id"
   claim_renew "$RUN_ID"
@@ -415,7 +429,8 @@ op_poll() {
 op_cancel() {
   local grace=0 pid
   [[ ! -d "$RUN" || -f "$RUN/exit" ]] || : >"$RUN/cancelled"
-  if [[ -s "$RUN/cmdpid" && ! -f "$RUN/status" && ! -f "$RUN/exit" ]]; then
+  # only the command of a run with no exit status, and only while its pid names the process that it named then
+  if [[ ! -f "$RUN/status" && ! -f "$RUN/exit" ]] && recorded_alive "$RUN/cmdpid"; then
     pid="$(cat "$RUN/cmdpid")"
     kill -TERM -- "-$pid" 2>/dev/null || true
     while ((grace < 30)) && kill -0 -- "-$pid" 2>/dev/null; do

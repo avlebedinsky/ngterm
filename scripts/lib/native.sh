@@ -212,6 +212,22 @@ size_and_mtime_ns() {
   printf '%s\n' "$stat" | sed -e 's/\.//' -e 's/ 0*\([0-9]\)/ \1/'
 }
 
+# A fingerprint of the files and links below the directories given: the sha256 of the path, size and modification time
+# of each one, in path order. A file that is written again gets a new time, so a change of content changes the
+# fingerprint, but the cost is one stat for each file, not a read of each file.
+# It fails when a directory is not there.
+files_fingerprint() {
+  local paths path line text=""
+  paths="$(find "$@" \( -type f -o -type l \) -print)" || return 1
+  paths="$(LC_ALL=C sort <<<"$paths")"
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    line="$(size_and_mtime_ns "$path")" || return 1
+    text="$text$line $path"$'\n'
+  done <<<"$paths"
+  printf '%s' "$text" | sha256_of
+}
+
 # Whether FILE's sha256 is SHA.
 sha256_matches() {
   local sha="$1" file="$2" actual
