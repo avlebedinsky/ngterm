@@ -8,9 +8,10 @@
 //!
 //! A packaged program that a pane's process starts (`pwsh` typed in a `cmd.exe` pane) escapes too, and Windows puts
 //! it into its package's job at once. A process in another job cannot join the pane's job, which holds processes
-//! outside that one. So it is held without the job: [`super::Killer::kill_tree`] terminates it with the job, and what
-//! it starts is taken back as from any process of the tree. The job's close does not end it, but a program on the
-//! pane's console ends with that console.
+//! outside that one. So a pass holds it without the job: [`super::Killer::kill_tree`] terminates it with the job,
+//! and the pass takes back what it starts as from any process of the tree. The job's close does not end it (after a
+//! handoff, another process holds the job and the tree runs on), but a program on the pane's console ends with that
+//! console.
 //!
 //! The process table is a snapshot, and an id in it can name another process by the time it is read: one that took
 //! the id of a process that ended since. So the table only names the candidates. A [`Tree`] holds each process of
@@ -23,10 +24,11 @@
 //! ended (what a process of the tree started as it ended), and the job's last close before it kills the tree. The
 //! close cannot wait for the tree to end (after a handoff, another process holds the job and the tree runs on), so
 //! what a process of the tree starts outside the job between that pass and the kill stays out.
-//! [`watch`] repeats the pass every [`TICK`] for the job of a packaged program, so what it starts joins the job
-//! before the pane ends, the app exits or a program reads the pane's foreground. A program that a short-lived
-//! escaped process starts and leaves behind between two passes stays outside the job: its parent is gone, and the
-//! process table names it no more.
+//! [`watch`] looks at each pane's job every [`TICK`], and does a pass when the process table lists a process that a
+//! process of the job created outside it. So what escapes joins the job before the pane ends, the app exits or a
+//! program reads the pane's foreground, also when the process that started it (a packaged program in its package's
+//! job) ends first. A program that a short-lived escaped process starts and leaves behind between two looks stays
+//! outside the job: its parent is gone, and the process table names it no more.
 
 use std::collections::HashSet;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -34,8 +36,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
-use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, FILETIME, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFamilyName;
+use windows_sys::Win32::Foundation::{FILETIME, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
@@ -116,8 +117,12 @@ impl Tree {
     /// Each process that `job` holds now, opened: one that cannot be opened (another user's, an elevated one) or
     /// that holds the id of one that left the job is not held.
     pub(super) fn of(job: &OwnedHandle) -> Self {
-        let held = super::job_process_ids(job)
-            .unwrap_or_default()
+        Self::of_ids(job, super::job_process_ids(job).unwrap_or_default())
+    }
+
+    /// [`Tree::of`] for `pids`, the processes that `job` holds now.
+    fn of_ids(job: &OwnedHandle, pids: Vec<u32>) -> Self {
+        let held = pids
             .into_iter()
             .filter_map(|pid| {
                 let process = open(pid, HELD)?;
@@ -215,17 +220,8 @@ fn in_job(process: &OwnedHandle, job: &OwnedHandle) -> Option<bool> {
     (read != 0).then_some(inside != 0)
 }
 
-/// Whether `process` runs with a package's identity (an MSIX package, such as PowerShell from the Microsoft Store):
-/// what it starts then leaves the job.
-pub(super) fn packaged(process: std::os::windows::io::BorrowedHandle<'_>) -> bool {
-    let mut length = 0_u32;
-    // SAFETY: with a length of zero and no buffer the call only reports the name's length into a live local.
-    let status = unsafe { GetPackageFamilyName(process.as_raw_handle(), &raw mut length, std::ptr::null_mut()) };
-    status == ERROR_INSUFFICIENT_BUFFER
-}
-
-/// Take back what escapes `job` every [`TICK`], for as long as something else holds it open, on one thread for
-/// every job watched in this process.
+/// Take back what escapes `job` every [`TICK`] ([`escaped`]), for as long as something else holds it open, on one
+/// thread for every job watched in this process.
 pub(super) fn watch(job: &Arc<Job>) {
     let watcher = watcher();
     lock(&watcher.jobs).push(Arc::downgrade(job));
@@ -246,7 +242,7 @@ fn watcher() -> &'static Watcher {
             .name("ngterm-pty-job-watch".into())
             .spawn(|| watch_forever(watcher()));
         if let Err(err) = spawned {
-            tracing::warn!(%err, "no thread takes back what leaves a packaged program's job");
+            tracing::warn!(%err, "no thread takes back what leaves a pane's job");
         }
         Watcher::default()
     })
@@ -257,12 +253,27 @@ fn watch_forever(watcher: &Watcher) {
         let jobs = live_jobs(watcher);
         let processes = processes();
         for job in &jobs {
-            Tree::of(&job.handle).adopt(&job.handle, &processes);
+            let Some(pids) = super::job_process_ids(&job.handle) else {
+                continue;
+            };
+            if escaped(&pids, &processes) {
+                Tree::of_ids(&job.handle, pids).adopt(&job.handle, &processes);
+            }
         }
         // the last holder may be this thread: the job's close then runs here, its last pass included
         drop(jobs);
         std::thread::sleep(TICK);
     }
+}
+
+/// Whether `processes` lists a process that one of `pids` (the processes of a job) created, but that is not in the
+/// job: a candidate for a pass. The look costs no handle, so each job is looked at every tick and a pass opens
+/// processes only when there is something to take back. A false candidate (a process that got the id of one that
+/// ended) only costs a pass, which leaves it alone.
+fn escaped(pids: &[u32], processes: &[Entry]) -> bool {
+    processes
+        .iter()
+        .any(|entry| pids.contains(&entry.parent) && !pids.contains(&entry.pid))
 }
 
 /// The watched jobs still open, once there is one; the closed ones are forgotten.

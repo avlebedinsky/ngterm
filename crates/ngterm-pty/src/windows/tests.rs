@@ -2,8 +2,8 @@
 //! retired killer, handles without the rights a call needs, a job holding more processes than a first read of its
 //! list has room for, the spawn's and the master's refusals, each shell's tree in its job, the suspended start's
 //! failures, panes of one package that end alone, and the processes that left a job taken back into it (or, in
-//! another job, ended with its kill), but not a process that got a listed one's id. An actor reads each child's output away, so the console never waits on its
-//! pipe.
+//! another job, ended with its kill), but not a process that got a listed one's id. An actor reads each child's
+//! output away, so the console never waits on its pipe.
 
 use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::CommandExt;
@@ -56,8 +56,12 @@ struct Running {
 }
 
 fn run(program: &str, args: &[&str]) -> Running {
-    let Spawned { master, child } =
-        crate::spawn(&command(program, args), Size::cells(24, 80)).expect("a child on a pseudoconsole");
+    run_command(&command(program, args))
+}
+
+/// `command` on a pseudoconsole, its output read away.
+fn run_command(command: &Command) -> Running {
+    let Spawned { master, child } = crate::spawn(command, Size::cells(24, 80)).expect("a child on a pseudoconsole");
     Running {
         child,
         _actor: drain(master),
@@ -369,7 +373,7 @@ fn a_child_and_what_it_starts_are_in_its_job() {
         view.process_ids().is_some_and(|pids| pids.len() >= 3)
     });
     assert!(view.process_ids().expect("the job's processes").contains(&child.pid()));
-    assert!(!escapees::packaged(child.process().expect("the process handle")));
+    assert!(!packaged(child.process().expect("the process handle")));
     child.killer().kill_tree().expect("the kill");
     assert_eq!(child.wait().expect("the exit").exit_code(), 1);
     wait_until("the tree ended", || {
@@ -454,7 +458,7 @@ fn a_ping_that_a_shells_child_starts_is_in_the_job() {
     for (shell, args) in shells.into_iter().filter(found) {
         let Running { child, _actor } = run(shell, args);
         assert!(
-            !escapees::packaged(child.process().expect("the process handle")),
+            !packaged(child.process().expect("the process handle")),
             "{shell} is packaged"
         );
         let view = child.job_view();
@@ -567,7 +571,7 @@ fn the_end_of_a_pane_leaves_the_panes_of_its_package_running() {
 
 /// What a packaged shell leaves, made without a package: `line` run by a `cmd.exe` outside any job of the test's
 /// own, and that `cmd.exe` then put alone into a new kill-on-close job once it started `program`, so what it started
-/// is outside the job.
+/// is outside the job. The job is not watched ([`escapees::watch`]) unless a test makes it so.
 struct Escaped {
     job: Arc<Job>,
     shell: std::process::Child,
@@ -575,21 +579,24 @@ struct Escaped {
 
 impl Escaped {
     fn new(line: &str, program: &str) -> Self {
+        Self::with(line, program, |_| {}, |handle| Arc::new(Job { handle }))
+    }
+
+    /// [`Escaped::new`] that calls `prepare` with the id of `program`'s process before the shell joins the job, which
+    /// `hold` then makes the [`Job`] of.
+    fn with(line: &str, program: &str, prepare: impl FnOnce(u32), hold: impl FnOnce(OwnedHandle) -> Arc<Job>) -> Self {
         let shell = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", line])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .expect("a shell");
         // what the shell starts is in no job of the test's yet
-        child_of(shell.id(), program);
+        prepare(child_of(shell.id(), program));
         let job = kill_on_close_job().expect("a job");
         // SAFETY: both handles are open, the process one in `shell`.
         let joined = unsafe { AssignProcessToJobObject(job.as_raw_handle(), shell.as_raw_handle()) };
         assert_ne!(joined, 0, "{}", io::Error::last_os_error());
-        Self {
-            job: Job::holding(job, false),
-            shell,
-        }
+        Self { job: hold(job), shell }
     }
 
     fn killer(&self) -> Killer {
@@ -667,27 +674,34 @@ fn pid_of(process: &OwnedHandle) -> u32 {
 }
 
 /// What escaped a job and is then put into another job, as Windows puts a packaged program a pane's process starts
-/// into its package's: `line`'s `cmd.exe`, the inner one, in a job of its own, after it started a ping.
-fn escaped_into_another_job() -> (Escaped, OwnedHandle, OwnedHandle, OwnedHandle) {
+/// into its package's: `line`'s `cmd.exe`, the inner one, in a job of its own, after it started a ping. The inner
+/// shell joins that job before the outer one joins the pane's, which `hold` makes the [`Job`] of.
+fn escaped_into_another_job(
+    hold: impl FnOnce(OwnedHandle) -> Arc<Job>,
+) -> (Escaped, OwnedHandle, OwnedHandle, OwnedHandle) {
     use windows_sys::Win32::System::Threading::{PROCESS_SET_QUOTA, PROCESS_TERMINATE};
-    let escaped = Escaped::new("cmd /d /c ping -n 300 127.0.0.1 >nul", "cmd.exe");
-    let inner = child_of(escaped.shell.id(), "cmd.exe");
-    let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
-    // SAFETY: opens a process by id; no memory is passed.
-    let raw = unsafe {
-        OpenProcess(
-            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-            0,
-            inner,
-        )
-    };
-    assert!(!raw.is_null(), "{}", io::Error::last_os_error());
-    // SAFETY: a fresh handle nothing else owns.
-    let inner = unsafe { OwnedHandle::from_raw_handle(raw) };
     let package = package_job();
-    // SAFETY: both handles are open, the process one with the rights an assignment needs.
-    let joined = unsafe { AssignProcessToJobObject(package.as_raw_handle(), inner.as_raw_handle()) };
-    assert_ne!(joined, 0, "{}", io::Error::last_os_error());
+    let mut held = None;
+    let prepare = |inner: u32| {
+        let ping = watched(child_of(inner, "ping.exe")).expect("the ping");
+        // SAFETY: opens a process by id; no memory is passed.
+        let raw = unsafe {
+            OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                inner,
+            )
+        };
+        assert!(!raw.is_null(), "{}", io::Error::last_os_error());
+        // SAFETY: a fresh handle nothing else owns.
+        let inner = unsafe { OwnedHandle::from_raw_handle(raw) };
+        // SAFETY: both handles are open, the process one with the rights an assignment needs.
+        let joined = unsafe { AssignProcessToJobObject(package.as_raw_handle(), inner.as_raw_handle()) };
+        assert_ne!(joined, 0, "{}", io::Error::last_os_error());
+        held = Some((inner, ping));
+    };
+    let escaped = Escaped::with("cmd /d /c ping -n 300 127.0.0.1 >nul", "cmd.exe", prepare, hold);
+    let (inner, ping) = held.expect("the inner shell and its ping");
     (escaped, package, inner, ping)
 }
 
@@ -695,7 +709,7 @@ fn escaped_into_another_job() -> (Escaped, OwnedHandle, OwnedHandle, OwnedHandle
 /// starts is in its package's) ends with the kill of the tree, and what it started is taken back and ends too.
 #[test]
 fn a_process_of_the_tree_in_another_job_ends_with_its_kill() {
-    let (escaped, _package, inner, ping) = escaped_into_another_job();
+    let (escaped, _package, inner, ping) = escaped_into_another_job(|handle| Arc::new(Job { handle }));
     let pid = pid_of(&inner);
     escapees::Tree::of(&escaped.job.handle).adopt(&escaped.job.handle, &escapees::processes());
     assert!(!escaped.holds(pid), "the inner shell joined the job");
@@ -709,13 +723,29 @@ fn a_process_of_the_tree_in_another_job_ends_with_its_kill() {
 /// process itself is left to its console, which a pane's close ends.
 #[test]
 fn the_close_of_a_job_ends_what_a_process_in_another_job_started() {
-    let (escaped, _package, inner, ping) = escaped_into_another_job();
+    let (escaped, _package, inner, ping) = escaped_into_another_job(|handle| Arc::new(Job { handle }));
     drop(escaped);
     // a kill on close ends a process with the exit code 0
     assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
     // the inner shell ends with its ping, or ends here; one that ended already fails harmlessly
     // SAFETY: terminates a process this test holds open with `PROCESS_TERMINATE`.
     unsafe { TerminateProcess(inner.as_raw_handle(), 1) };
+}
+
+/// A pane's job is watched whatever its own program is (a `cmd.exe` pane, not a packaged one): what a process of its
+/// tree in another job (a Store PowerShell typed in the pane) starts is taken back while that process runs. So it
+/// ends with the pane also when that process ended first, and nothing names it as the tree's then.
+#[test]
+fn a_panes_job_takes_back_what_a_process_in_another_job_started_before_it_ends() {
+    let (escaped, _package, inner, ping) = escaped_into_another_job(Job::holding);
+    wait_until("the job took the ping back", || escaped.holds(pid_of(&ping)));
+    // SAFETY: terminates a process this test holds open with `PROCESS_TERMINATE`.
+    let ended = unsafe { TerminateProcess(inner.as_raw_handle(), 1) };
+    assert_ne!(ended, 0, "{}", io::Error::last_os_error());
+    assert_eq!(exit_code_of(&inner), Some(1));
+    drop(escaped);
+    // a kill on close ends a process with the exit code 0
+    assert_eq!(exit_code_of(&ping), Some(0), "the ping outlived its job");
 }
 
 /// A process table read before a process ended can name its id as a child of the tree, after another process got
@@ -819,6 +849,16 @@ fn store_test() -> std::sync::MutexGuard<'static, ()> {
     STORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Whether `process` runs with a package's identity (an MSIX package, such as PowerShell from the Microsoft Store).
+fn packaged(process: BorrowedHandle<'_>) -> bool {
+    use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+    use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFamilyName;
+    let mut length = 0_u32;
+    // SAFETY: with a length of zero and no buffer the call only reports the name's length into a live local.
+    let status = unsafe { GetPackageFamilyName(process.as_raw_handle(), &raw mut length, std::ptr::null_mut()) };
+    status == ERROR_INSUFFICIENT_BUFFER
+}
+
 /// The Store PowerShell's app execution alias.
 fn store_powershell() -> String {
     let local = std::env::var("LOCALAPPDATA").expect("the local app data folder");
@@ -830,7 +870,7 @@ fn store_powershell() -> String {
 fn store_powershell_pane() -> (Running, Vec<OwnedHandle>) {
     let line = "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; ping -n 300 127.0.0.1";
     let pane = run(&store_powershell(), &["-NoLogo", "-NoProfile", "-Command", line]);
-    assert!(escapees::packaged(pane.child.process().expect("the process handle")));
+    assert!(packaged(pane.child.process().expect("the process handle")));
     let pings = pings_of(&pane.child);
     (pane, pings)
 }
@@ -841,7 +881,7 @@ fn store_powershells() -> Vec<u32> {
         .into_iter()
         .filter(|entry| {
             watched(entry.pid).is_some_and(|process| {
-                image_name(&process).eq_ignore_ascii_case("pwsh.exe") && escapees::packaged(process.as_handle())
+                image_name(&process).eq_ignore_ascii_case("pwsh.exe") && packaged(process.as_handle())
             })
         })
         .map(|entry| entry.pid)
@@ -958,12 +998,13 @@ fn a_pane_whose_program_started_the_package_ends(kill: bool) {
         "Start-Process -WindowStyle Hidden ping -ArgumentList '-n','300','127.0.0.1'; Start-Sleep 300",
     )
     .expect("the script");
+    // `/s`: cmd.exe takes off the outer quotes and keeps the inner ones, so a path with a space stays one argument
     let line = format!(
-        "{} -NoLogo -NoProfile -ExecutionPolicy Bypass -File {}",
+        r#"""{}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "{}"""#,
         store_powershell(),
         script.display()
     );
-    let first = run("cmd.exe", &["/d", "/c", &line]);
+    let first = run_command(&command("cmd.exe", &["/d", "/s", "/c"]).raw_arg(line));
     let mut started = Vec::new();
     wait_until("the cmd pane's program started a Store PowerShell", || {
         started = store_powershells();

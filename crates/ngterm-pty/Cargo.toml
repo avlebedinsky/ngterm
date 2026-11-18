@@ -20,13 +20,12 @@ libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The child tree's kill-on-close job, the cancel of a blocked pipe read, the Ctrl+C its children inherit, and the
-# process table and package identity through which the job takes back what a packaged program's children escape.
+# process table through which the job takes back what a packaged program's children escape.
 windows-sys = { workspace = true, features = [
     # a process's creator, read through its handle (`NtQueryInformationProcess`, `PROCESS_BASIC_INFORMATION`)
     "Wdk_System_Threading",
     "Win32_Foundation",
     "Win32_Security",
-    "Win32_Storage_Packaging_Appx",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
@@ -37,6 +36,10 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+# a process's package identity, which the Store PowerShell tests check
+windows-sys = { workspace = true, features = ["Win32_Storage_Packaging_Appx"] }
 
 [lints]
 workspace = true

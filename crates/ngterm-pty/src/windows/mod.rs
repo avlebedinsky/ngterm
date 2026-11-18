@@ -84,8 +84,9 @@ pub struct Child {
     job: Arc<Job>,
 }
 
-/// A child's kill-on-close job. Its close first takes back what escaped it ([`escapees::Tree::adopt`]), so the tree
-/// that ends with it is whole.
+/// A child's kill-on-close job. Its close first takes back what escaped it ([`escapees::Tree::adopt`]), so what
+/// escaped ends with the tree. A process of the tree that cannot join it (one in another job) does not end with the
+/// close: after a handoff, another process holds the job and the tree runs on. [`Killer::kill_tree`] ends it.
 #[derive(Debug)]
 struct Job {
     handle: OwnedHandle,
@@ -98,12 +99,10 @@ impl Drop for Job {
 }
 
 impl Job {
-    /// The job of a child's tree, watched for what escapes it when the child is a `packaged` program.
-    fn holding(handle: OwnedHandle, packaged: bool) -> Arc<Self> {
+    /// The job of a child's tree, watched for what escapes it ([`escapees::watch`]).
+    fn holding(handle: OwnedHandle) -> Arc<Self> {
         let job = Arc::new(Self { handle });
-        if packaged {
-            escapees::watch(&job);
-        }
+        escapees::watch(&job);
         job
     }
 }
@@ -190,7 +189,7 @@ impl Child {
         if pid == 0 {
             return Err(io::Error::last_os_error());
         }
-        let job = Job::holding(job, escapees::packaged(process.as_handle()));
+        let job = Job::holding(job);
         Ok(Self {
             inner: Box::new(HandedProcess { process }),
             pid,
@@ -459,12 +458,8 @@ fn spawn_with(
     let pid = child
         .process_id()
         .ok_or_else(|| io::Error::other("the PTY child has no process id"))?;
-    // SAFETY: the child's process handle, which `child` keeps open for the call.
-    let packaged = child
-        .as_raw_handle()
-        .is_some_and(|raw| escapees::packaged(unsafe { BorrowedHandle::borrow_raw(raw) }));
     // on an error from here the job's close ends the child
-    let job = Job::holding(job, packaged);
+    let job = Job::holding(job);
     let master = Master::new(conpty)?;
     Ok(Spawned {
         master,
