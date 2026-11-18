@@ -446,17 +446,19 @@ EOF
 # a script, not a function: run starts it under timeout(1)
 sim_cache_call="$work/sim-cache.sh"
 printf 'source %q\nsource %q\n"$@"\n' "$native" "$source_root/scripts/lib/ios-sim-cache.sh" >"$sim_cache_call"
+phone_store="$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore"
+phone_poster="$phone_store/61/Extensions/poster/configurations"
 check "the cache dirs are found below the wallpaper store" \
-  '[[ "$(bash "$sim_cache_call" ios_sim_cache_dirs "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore" |
-    wc -l | tr -d " ")" == 4 ]]'
+  '[[ "$(bash "$sim_cache_call" ios_sim_cache_dirs "$phone_store" | wc -l | tr -d " ")" == 4 ]]'
 # 1 MiB: the phone (1.6 MiB) and the leftover simulator (1.2 MiB with its renamed dir) are over it, SMALL is not
 run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 1 <"$work/devices.json"
 check "the bound runs" '((status == 0))' || cat "$err" >&2
 check "a shut-down pinned simulator over the bound loses its cache dirs" \
-  '[[ "$(cache_dirs_of PHONE)" == 0 ]] && grep -q "simulator PHONE: wallpaper cache 1 MiB, over the bound of 1 MiB: removed 4 dirs, 0 MiB left" "$err"'
+  '[[ "$(cache_dirs_of PHONE)" == 0 ]] &&
+    grep -q "simulator PHONE: wallpaper cache 1 MiB, over the bound of 1 MiB: removed 4 dirs, 0 MiB left" "$err"'
 check "the rest of its wallpaper store and its data stay" \
-  '[[ -f "$sims/PHONE/data/app.bin" && -f "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster/configurations/descriptor.plist" &&
-    -d "$sims/PHONE/data/Library/Application Support/PRBPosterExtensionDataStore/61/Extensions/poster/configurations/0/versions/1/scratch" ]]'
+  '[[ -f "$sims/PHONE/data/app.bin" && -f "$phone_poster/descriptor.plist" &&
+    -d "$phone_poster/0/versions/1/scratch" ]]'
 check "a booted simulator keeps its cache" \
   '[[ "$(cache_dirs_of BOOTED)" == 4 ]] && grep -q "simulator BOOTED is Booted: its wallpaper cache stays" "$err"'
 check "a simulator of another name keeps its cache" '[[ "$(cache_dirs_of OTHERNAME)" == 4 ]]'
@@ -467,8 +469,8 @@ check "a simulator under the bound keeps its cache" \
 make_sim PHONE 2
 run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 1 <"$work/devices.json"
 check "a cache at the bound stays" '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
-printf '{"devices": {"%s": [%s]}}' "$runtime" "$(device ngterm-phone PHONE Shutdown | sed "s#$sims/PHONE/data#$sims/PHONE#")" \
-  >"$work/odd.json"
+odd="$(device ngterm-phone PHONE Shutdown | sed "s#$sims/PHONE/data#$sims/PHONE#")"
+printf '{"devices": {"%s": [%s]}}' "$runtime" "$odd" >"$work/odd.json"
 run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" 0 <"$work/odd.json"
 check "a data path that is not <udid>/data is left alone" '((status == 0)) && [[ "$(cache_dirs_of PHONE)" == 2 ]]'
 run bash "$sim_cache_call" ios_sim_cache_bound ngterm-phone "$runtime" lots <"$work/devices.json"
