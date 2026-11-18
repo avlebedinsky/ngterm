@@ -4,7 +4,12 @@ else (capability `windows-shells`).
 Each Windows pane child joins a kill-on-close job of its own before it runs (`ngterm-pty`'s `windows` module). A
 program that the shell starts outside the pane's console (`Start-Process -WindowStyle Hidden`, `start ""`) does not
 end with the console: only the job ends it. The close of one session must not end another session's programs, nor a
-program that was not started in a pane (issue 19: the first pane's job once took the shells of the later ones)."""
+program that was not started in a pane (issue 19: the first pane's job once took the shells of the later ones).
+
+The `pwsh-store` case is PowerShell from the Microsoft Store (a packaged app, issue 19). Windows starts the programs of
+a packaged shell outside every job, so only the pass that takes them back into the pane's job ends its hidden ping.
+That case alone fails when the pass is gone. The other cases are not packaged: their pings stay in the job. CI has no
+Store PowerShell, so that case skips there, and its id is not in the Windows ratchet."""
 
 import os
 import random
@@ -30,13 +35,21 @@ TREE_END = 15.0
 
 
 def _windows_shell(name):
-    """The full path of the Windows shell `name` (`powershell` 5.1 and `cmd` from the system directory, `pwsh` 7 from
-    `PATH`), or None when this machine has none."""
+    """The full path of the Windows shell `name`, or None when this machine has none: `powershell` 5.1 and `cmd` from
+    the system directory, `pwsh` 7 from `PATH` but not a packaged one, `pwsh-store` as the Store PowerShell's app
+    execution alias."""
     system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
-    path = {
-        "powershell": os.path.join(system, "WindowsPowerShell", "v1.0", "powershell.exe"),
-        "cmd": os.path.join(system, "cmd.exe"),
-    }.get(name) or shutil.which("pwsh")
+    if name == "powershell":
+        path = os.path.join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
+    elif name == "cmd":
+        path = os.path.join(system, "cmd.exe")
+    elif name == "pwsh-store":
+        path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WindowsApps", "pwsh.exe")
+    else:
+        # `PATH` can give the Store alias first: then this case would be the packaged one, as `pwsh-store`
+        folders = os.environ.get("PATH", "").split(os.pathsep)
+        unpackaged = os.pathsep.join(f for f in folders if f and "windowsapps" not in os.path.normcase(f))
+        path = shutil.which("pwsh", path=unpackaged)
     return path if path and os.path.isfile(path) else None
 
 
@@ -85,7 +98,7 @@ def _start_pings(ctl, sid, shell, hidden, console):
 
 @WINDOWS_SHELLS
 @pytest.mark.covers("session.close")
-@pytest.mark.parametrize("shell", ["powershell", "pwsh", "cmd"])
+@pytest.mark.parametrize("shell", ["powershell", "pwsh", "pwsh-store", "cmd"])
 def test_a_session_close_ends_its_hidden_programs_and_leaves_the_others(launch, shell):
     path = _windows_shell(shell)
     if path is None:
