@@ -322,6 +322,40 @@ def test_a_search_step_pauses_a_following_log_page(ctl):
         ctl.request("session.close", sid)
 
 
+# SGR colors, another CSI, a charset switch, an APC, tmux passthrough (with a color and a hyperlink inside) and a DCS
+# cut off at the end, as upstream's testColorEscapesBecomeStyledTextAndSearchReadsTheShownText writes them; the page
+# shows "bugs+impl started\nfail red plain\ngreen\nok still xy\nend"
+COLORED = (
+    "\x1b[36mbugs+impl\x1b[39m started\n\x1b[1;38;5;196mfail\x1b[22m red\x1b[0m \x1b(B\x1b[2Kplain\n"
+    "\x1b[1;38:2::0:128:0mgreen\x1b[0m\n"
+    "\x1b[32mok\x1b[>4;1m still\x1b[0m \x1b_Gf=1;AA\x1b\\x\x1bPtmux;\x1b\x1b[31mhidden\x1b\\y"
+    "\x1bPtmux;\x1b\x1b]8;;http://x\x1b\x1b\\label\x1b\x1b]8;;\x1b\x1b\\\x1b\\\nend\x1bP1+r6b"
+)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.search", "session.overlay.open", "field:tree.session.htmlOverlays")
+@pytest.mark.parametrize("log", [False, True], ids=["text", "log"])
+def test_a_colored_page_searches_only_the_text_it_shows(ctl, log):
+    # a text or log page shows what its escape sequences draw and drops the sequences themselves, so search finds
+    # the shown text, also across a dropped sequence, and nothing inside one
+    path = _file(ctl, "agents.log", COLORED)
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path, **({"tail": 50} if log else {}))
+        _text(ctl, sid)
+        for query, matches in [("impl started", 1), ("red plain", 1), ("ok still xy", 1), ("[36m", 0), ("38;5", 0),
+                               ("hidden", 0), ("label", 0), ("tmux", 0), ("Gf=1", 0), ("r6b", 0), ("\x1b", 0)]:
+            assert assert_ok(ctl.request("session.overlay.search", sid, text=query)) == {"id": sid}
+            # a step carries its query, so its answer counts that query on the page
+            step = _once_loaded(ctl, "session.overlay.search", sid, to="next")
+            assert assert_ok(step) == {"id": sid, "text": f"{matches} of {matches}"}, query
+            _text(ctl, sid, lambda text, query=query, matches=matches: text.get("search") == {
+                "query": query, "matches": matches, "current": matches})
+    finally:
+        ctl.request("session.close", sid)
+
+
 # -- session.overlay.changes
 
 # two changes, one per hunk, short enough to fit on screen
