@@ -20,6 +20,7 @@ run_test_plan() { printf '%s\n' "$*"; }
 report_retried_tests() { return 0; }
 coverage_summarize() { return 0; }
 case "$4" in
+  expected) printf ' -only-testing:NgTermUITests/%s' "${UI_SMOKE_TESTS[@]}" ;;
   ui) action_smoke; action_ui ;;
   test) action_smoke; action_test ;;
   filter)
@@ -45,23 +46,35 @@ EOF
 run() {
   bash "$work/run.sh" "$work/functions.sh" "$source_root/mobile/ios" "$work/build" "$1"
 }
-smoke="$(run ui)"
-smoke="${smoke%%$'\n'*}"
-[[ "$smoke" == "UI -retry-tests-on-failure -test-iterations 2 "* ]]
-[[ "$(tr ' ' '\n' <<<"$smoke" | grep -c '^-only-testing:NgTermUITests/')" == 4 ]]
-full="UI -retry-tests-on-failure -test-iterations 2"
-[[ "$(run ui)" == "$smoke"$'\n'"$full" ]]
-echo "ok: smoke ui runs the full UI plan after the smoke set"
-[[ "$(run test)" == "$smoke"$'\nUnit\n'"$full" ]]
-echo "ok: smoke test runs the Unit plan and the full UI plan after the smoke set"
-[[ "$(run filter)" == "$smoke"$'\n'"$full -only-testing:NgTermUITests/SettingsTests" ]]
-echo "ok: smoke preserves an existing UI filter"
-for invalid in wrong-class missing-class missing-method; do
-  if run "$invalid" >"$work/out" 2>"$work/err"; then
-    echo "FAIL: $invalid must fail" >&2
-    exit 1
+failures=0
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    printf 'ok: %s\n' "$name"
+  else
+    printf 'FAIL: %s\n' "$name" >&2
+    failures=$((failures + 1))
   fi
-  [[ ! -s "$work/out" ]]
-  grep -q 'the smoke test .* is not in mobile/ios/NgTermUITests' "$work/err"
-  echo "ok: $invalid stops before the UI plan"
+}
+full="UI -retry-tests-on-failure -test-iterations 2"
+smoke="$full$(run expected)"
+check "smoke ui runs the configured set, then the full UI plan" \
+  test "$(run ui)" = "$smoke"$'\n'"$full"
+check "smoke test runs the configured set, then the Unit and full UI plans" \
+  test "$(run test)" = "$smoke"$'\nUnit\n'"$full"
+check "smoke preserves an existing UI filter" \
+  test "$(run filter)" = "$smoke"$'\n'"$full -only-testing:NgTermUITests/SettingsTests"
+for invalid in wrong-class missing-class missing-method; do
+  status=0
+  run "$invalid" >"$work/out" 2>"$work/err" || status=$?
+  check "$invalid returns a failure" test "$status" -ne 0
+  check "$invalid stops before the UI plan" test ! -s "$work/out"
+  check "$invalid reports the invalid smoke test" \
+    grep -q 'the smoke test .* is not in mobile/ios/NgTermUITests' "$work/err"
 done
+if ((failures)); then
+  echo "$failures check(s) failed" >&2
+  exit 1
+fi
+echo "all checks passed"
