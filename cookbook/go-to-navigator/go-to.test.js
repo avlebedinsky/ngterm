@@ -67,7 +67,18 @@ test("a split pane without the status reads unknown when an agent runs there", (
 test("a session's title matches its primary pane only", () => {
   const t = structuredClone(tree);
   t.workspaces[0].sessions[1].title = "fix autostart";
-  assert.deepEqual(lines(rows(workspacesOf(t, {}), "autostart", null)), ["api", "└─review", "  └─codex · review [codex blocked]"]);
+  const list = rows(workspacesOf(t, {}), "autostart", null);
+  assert.deepEqual(lines(list), ["api", "└─review", "  └─codex · review [codex blocked]"]);
+  assert.equal(list[2].hint, "fix autostart", "the row shows the title it matched by");
+});
+
+test("a match hint shows only what the row does not already show", () => {
+  const ws = workspacesOf(tree, branches);
+  const byCwd = rows(ws, "docs", null).find(r => r.pane);
+  assert.equal(byCwd.hint, "/src/api/docs");
+  assert.ok(rows(ws, "server", null).every(r => !r.hint), "a label match needs no hint");
+  assert.ok(rows(ws, "api", null).every(r => !r.hint), "a workspace match keeps its panes without hints");
+  assert.ok(rows(ws, "", null).every(r => !r.hint));
 });
 
 test("status filters keep their panes and hide empty workspaces", () => {

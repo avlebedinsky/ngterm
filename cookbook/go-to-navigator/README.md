@@ -15,7 +15,7 @@ Keys:
 | ↑ ↓, `j` `k` | move one row; Ctrl+U and Ctrl+D (or Page Up/Down) move eight |
 | ← → | jump to the previous or next workspace |
 | Home, End or `G` | first pane row, last row |
-| `/` | search: type words, each must be in one field (session, label, cwd, agent, title, or the workspace name and branch); Esc leaves the search |
+| `/` | search: type words, each must be in one field (session, label, cwd, agent, the pane's terminal title, or the workspace name and branch); a row kept by its title or cwd shows that text dimmed after its label; Esc leaves the search |
 | `b` `w` `i` `d` | show only blocked, working, idle or done panes |
 | `t` | show the top-level sessions only, a split one as one row |
 | `a`, Backspace | drop the filter (`a` also clears the search) |

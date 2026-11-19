@@ -101,7 +101,8 @@ const GoTo = (() => {
   function paneRow(ws, p, tree) {
     const session = `${ws.name} / ${p.sessionName}`;
     return { target: target.pane(p.session, p.pane), workspace: false, tree, label: paneLabel(p),
-             detail: p.split ? `${session} / ${kind(p)}` : session, meta: p.cwd, pane: columns(p), terminals: 1 };
+             detail: p.split ? `${session} / ${kind(p)}` : session, meta: p.cwd, pane: columns(p), terminals: 1,
+             title: p.title };
   }
 
   function sessionRows(rows, ws, node, rails, last) {
@@ -147,11 +148,19 @@ const GoTo = (() => {
       const sessions = nodes(ws).map(n => kept(n, keeps)).filter(Boolean);
       if (!narrowing || sessions.length || (!status && wsMatches)) {
         out.push(workspaceRow(ws));
+        const first = out.length;
         sessions.forEach((n, i) => {
           const last = i === sessions.length - 1;
           if (filter === "t") out.push(topLevelRow(ws, n, branchLine([], last)));
           else sessionRows(out, ws, n, [], last);
         });
+        // a pane kept by its title or cwd, neither on its row, shows the text that matched
+        if (words.length && !wsMatches) {
+          for (const r of out.slice(first)) {
+            if (!r.pane || matches(r.label)) continue;
+            r.hint = [r.title, r.meta].find(v => v && matches(v)) || null;
+          }
+        }
       }
     }
     return out;

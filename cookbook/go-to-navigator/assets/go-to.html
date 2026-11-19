@@ -30,7 +30,7 @@
   .row.ws:first-child { margin-top: 0; }
   .row .tree { opacity: .45; }
   .row .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .row .branch { opacity: .55; font-weight: 400; }
+  .row .branch, .row .hint { opacity: .55; font-weight: 400; }
   .row .agent { opacity: .7; min-width: 9ch; text-align: right; }
   .row .status { min-width: 9ch; }
   .row .cur { color: var(--ngterm-color-6, #4cc); }
@@ -105,6 +105,7 @@ function render() {
     if (r.tree.length) el.append(span("tree", r.tree.join("") + " "));
     const label = span("label", r.label);
     if (r.workspace && r.branch) label.append(span("branch", `  ${r.branch}`));
+    if (r.hint) label.append(span("hint", `  ${r.hint}`));
     el.append(label);
     if (r.pane) {
       el.append(span("cur", r.pane.current ? "●" : " "));
