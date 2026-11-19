@@ -27,7 +27,8 @@
 //!   value leaves the attach unmanaged): the client leads only by claiming and writes its role as the title
 //!   `OSC 2;ngterm-live-role;<nonce>:<role>:<generation>` (`server::lead`). `NGTERM_LIVE_MANAGED_CLAIM` with it
 //!   claims the lead at the attach. A Windows pseudoconsole between the client and its terminal passes on only the
-//!   latest title it holds when it paints, so there a role title the program's own title follows at once is lost.
+//!   latest title it holds when it paints, so there a role title the program's own title follows at once is lost; a
+//!   Windows client under the attach bridge also sends each report as a bridge envelope, which it passes as written.
 //!
 //! `attach <name> [argv]` is create-only: a session that exists is attached to and the argv ignored; one that does not
 //! is created running the argv (the login shell without one), in the client's working directory and environment (a live

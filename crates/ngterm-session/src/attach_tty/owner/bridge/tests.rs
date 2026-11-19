@@ -393,3 +393,44 @@ fn viewer_messages_other_than_replies_and_pastes_complete_nothing() {
     relay.bridge_answer(denied_reply(request), &mut fx);
     assert_eq!(fx.outgoing.len(), 1);
 }
+
+/// What a managed bridge client writes for one role change, after its hello.
+fn role_written(roles_in_bridge: bool) -> Vec<u8> {
+    let now = Instant::now();
+    let mut relay = Relay::new(Some("n1".into()), GridSize { cols: 80, rows: 24 }, None);
+    relay.enable_bridge(Some("connection".into()));
+    relay.report_roles_in_bridge(roles_in_bridge);
+    let mut fx = Effects::default();
+    relay.start(false, now, &mut fx);
+    let mut fx = Effects::default();
+    relay.role(LeadRole::Leader, 5, now, &mut fx);
+    fx.stdout
+}
+
+#[test]
+fn a_client_behind_conpty_sends_its_role_in_the_bridge_after_the_title() {
+    let written = role_written(true);
+    let title = b"\x1b]2;ngterm-live-role;n1:leader:5\x1b\\";
+    let parts = ngterm_core::attach_bridge::Decoder::default().feed(&written);
+    let [
+        ngterm_core::attach_bridge::Part::Bytes(bytes),
+        ngterm_core::attach_bridge::Part::Envelope(envelope),
+    ] = parts.as_slice()
+    else {
+        panic!("{parts:?}");
+    };
+    assert_eq!(bytes, title);
+    assert_eq!(
+        envelope,
+        &Envelope {
+            version: VERSION,
+            nonce: "connection".into(),
+            message: Message::Role("ngterm-live-role;n1:leader:5".into()),
+        }
+    );
+}
+
+#[test]
+fn a_client_in_a_posix_terminal_sends_its_role_as_the_title_only() {
+    assert_eq!(role_written(false), b"\x1b]2;ngterm-live-role;n1:leader:5\x1b\\");
+}

@@ -66,6 +66,9 @@ pub enum Message {
         reply: DelegatedReply,
     },
     Paste(ClipboardPaste),
+    /// A managed attach's role report, the text of its role title: `ConPTY` sends only the last title of a frame, so a
+    /// title the snapshot's own title follows never reaches a viewer of a Windows origin.
+    Role(String),
 }
 impl Envelope {
     #[must_use]

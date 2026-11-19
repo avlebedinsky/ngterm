@@ -351,6 +351,7 @@ impl<'a> Loop<'a> {
         let size = tty.size();
         let mut relay = Relay::new(nonce, size.grid, size.pixels);
         relay.enable_bridge(session.bridge_nonce.clone());
+        relay.report_roles_in_bridge(cfg!(windows));
         Self {
             tty,
             relay,

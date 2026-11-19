@@ -288,6 +288,67 @@ fn a_viewer_reconnect_rejects_old_connection_requests() {
     assert_eq!(fixture.out.next(Some(Duration::from_millis(10))), Ok(None));
 }
 
+/// What a viewer of a Windows origin reads at a claiming attach: `ConPTY` sent the snapshot's title (OSC 0, BEL) in
+/// place of the role title before it, and passed the bridge's envelopes as they were.
+fn conpty_attach(nonce: &str, role: &Envelope) -> Vec<u8> {
+    [
+        b"\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H\x1b]0;Administrator: C:\\WINDOWS\\system32\\conhost.exe\x07\x1b[?25h"
+            .as_slice(),
+        &envelope(nonce, Message::Hello).encode(),
+        b"\x1b[?2031h\x1b[16t\x1b[?996n",
+        &role.encode(),
+        b"\x1b]0;Administrator: C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07\x1b[2J\x1b[?1004h",
+        b"\x1b]7;kitty-shell-cwd://WIN11/C:/Users/admin\x1b\\PS C:\\Users\\admin> ",
+    ]
+    .concat()
+}
+
+fn titles_after_attach(nonce: &str, role: &Envelope) -> Vec<String> {
+    let fixture = stream(PaneConfig {
+        attach_bridge: Some(nonce.into()),
+        ..PaneConfig::new(SIZE)
+    });
+    fixture.feed.deliver(&conpty_attach(nonce, role));
+    fixture.screen_until("PS C:");
+    fixture
+        .pane
+        .take_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            PaneEvent::Title(title) => Some(title),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_role_report_in_the_bridge_reaches_the_frontend_when_conpty_replaced_its_title() {
+    let report = "ngterm-live-role;n1:leader:5";
+    let titles = titles_after_attach("n1", &envelope("n1", Message::Role(report.into())));
+    assert_eq!(
+        titles,
+        [
+            "Administrator: C:\\WINDOWS\\system32\\conhost.exe",
+            report,
+            "Administrator: C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+        ]
+    );
+}
+
+#[test]
+fn a_bridge_role_is_only_a_role_report_of_the_bridges_connection() {
+    for role in [
+        envelope("n1", Message::Role("my title".into())),
+        envelope("old", Message::Role("ngterm-live-role;old:leader:5".into())),
+    ] {
+        let titles = titles_after_attach("n1", &role);
+        assert!(
+            !titles.iter().any(|title| !title.starts_with("Administrator: ")),
+            "{titles:?}"
+        );
+    }
+}
+
 #[test]
 fn bridge_pastes_report_backpressure_and_an_empty_queue_accepts_a_large_paste() {
     let fixture = peer();

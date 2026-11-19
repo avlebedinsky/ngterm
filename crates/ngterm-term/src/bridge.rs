@@ -3,6 +3,7 @@ use crate::pane::{Pane, Worker};
 use crate::{ClipboardAnswer, ClipboardLocation, ClipboardReadRequest, PaneEvent, ReadScope};
 use ngterm_core::attach_bridge::{Envelope, Message, VERSION};
 use ngterm_core::clipboard_wire as wire;
+use ngterm_core::live::lead::LeadNotice;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use wire::{DelegatedReply, DelegatedRequest};
@@ -245,6 +246,17 @@ impl Peer {
 }
 
 impl Worker {
+    /// A role report the origin's attach client also sent through the bridge, as its title may not arrive: reported as
+    /// that title, which the frontend reads as a role report.
+    fn bridge_role<Peer>(&self, peer: Peer, report: String) -> bool {
+        drop(peer);
+        if LeadNotice::parse(&report).is_some() {
+            self.shared.send(PaneEvent::Title(report));
+            self.shared.wake();
+        }
+        true
+    }
+
     pub(crate) fn bridge_envelope(&mut self, envelope: Envelope) -> bool {
         let mut peer = self
             .shared
@@ -262,7 +274,11 @@ impl Worker {
         if peer.nonce.as_ref() != Some(&envelope.nonce) {
             return true;
         }
-        let Message::Request { id, epoch, request } = envelope.message else {
+        let message = match envelope.message {
+            Message::Role(report) => return self.bridge_role(peer, report),
+            message => message,
+        };
+        let Message::Request { id, epoch, request } = message else {
             return true;
         };
         let fetched = if let DelegatedRequest::ClipboardReadMime {

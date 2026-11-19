@@ -985,6 +985,43 @@ fn shown_panes_gate_the_bridge_on_the_endpoint_and_keep_old_peer_pastes_plain() 
     }
 }
 
+#[test]
+fn a_follower_of_a_windows_origin_is_covered_by_the_role_conpty_sent_only_in_the_bridge() {
+    use ngterm_core::attach_bridge::{Envelope, Message, VERSION};
+    let mut script = listing(true);
+    let mut body: serde_json::Value = serde_json::from_slice(&script.stdout).unwrap();
+    body["result"]["remote"]["endpoint"]["attachBridge"] = serde_json::json!(VERSION);
+    script.stdout = body.to_string().into_bytes();
+    let mut fixture = Fixture::connected_with(vec![script]);
+    fixture.show();
+    let opened = fixture.attach();
+    let lead = lead_of(&opened.command);
+    fixture.attached();
+    assert_eq!(fixture.lead(), (None, false));
+    let envelope = |message| {
+        Envelope {
+            version: VERSION,
+            nonce: lead.nonce.clone(),
+            message,
+        }
+        .encode()
+    };
+    // ConPTY sent the snapshot's title in place of the role title written just before it
+    let attach = [
+        b"\x1b[?9001h\x1b[?1004h\x1b[2J\x1b]0;Administrator: C:\\WINDOWS\\system32\\conhost.exe\x07".as_slice(),
+        &envelope(Message::Hello),
+        &envelope(Message::Role(format!(
+            "{}{}:follower:3",
+            LeadNotice::PREFIX,
+            lead.nonce
+        ))),
+        b"\x1b]0;Administrator: C:\\Program Files\\PowerShell\\7\\pwsh.exe\x07PS C:\\Users\\admin> ",
+    ]
+    .concat();
+    send(&opened.peer, &attach);
+    assert_eq!(fixture.lead(), (Some(PaneRole::Follower), true));
+}
+
 /// An agterm Mac's listing of the session, as its `agtermctl zmx tree` answers.
 fn agterm_listing() -> Script {
     use ngterm_core::remote::peer::{AGTERM_ANSWER, RemotePeer, daemon_name};

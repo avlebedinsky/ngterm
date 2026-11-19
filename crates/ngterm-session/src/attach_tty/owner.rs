@@ -8,7 +8,8 @@
 //! - The role title of a managed attach (`server::lead::role_title`), the newest replacing one not yet written: zmx's
 //!   relay (`role.zig` of upstream's `scripts/zmx-patches/0001-explicit-leadership.patch`). A sequence that stays
 //!   unfinished for [`INJECT_WAIT`] is ended with CAN, which only a terminal whose client is changing role or relaying
-//!   sees.
+//!   sees. On Windows an attach under the bridge also sends the report as a bridge envelope right after the title
+//!   ([`Relay::report_roles_in_bridge`]).
 //! - A probe at the start, when the client runs in a terminal: OSC 10, 11 and 12, OSC 4 for the 256 colours, `CSI 16
 //!   t` (the cell's pixels), `CSI ? 996 n` (dark or light), a Kitty graphics query, and DA1 last, whose answer (the
 //!   fence) says every answer before it is in. Mode 2031 is turned on in the outer terminal, so a change of its
@@ -62,7 +63,7 @@ use super::filter::OutputFilter;
 use super::input::{Answer, Dynamic};
 use crate::client::{Barrier, Delegated};
 use crate::protocol::{ColorScheme, DelegatedReply, DelegatedRequest, GridSize, LeadRole, ReplyMetadata, Rgb};
-use crate::server::lead::role_title;
+use crate::server::lead::{role_report, role_title};
 use crate::server::replies::DELEGATION_WAIT;
 
 mod bridge;
@@ -207,6 +208,13 @@ struct Draft {
     scheme: Option<ColorScheme>,
 }
 
+/// Where a managed client writes its role reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoleChannel {
+    Title,
+    TitleAndBridge,
+}
+
 /// The attach client's state between the session and the outer terminal (module docs).
 #[derive(Debug)]
 pub struct Relay {
@@ -234,6 +242,8 @@ pub struct Relay {
     native_clipboard: clipboard::Native,
     reply_owner: bool,
     bridge_nonce: Option<String>,
+    /// Where role reports go besides the title ([`Relay::report_roles_in_bridge`]).
+    role_channel: RoleChannel,
     bridge_hello_sent: bool,
     /// Viewer request ids remain unique across server handoffs, which restart server ids and epochs.
     bridge_next_id: u64,
@@ -268,6 +278,7 @@ impl Relay {
             native_clipboard: clipboard::Native::default(),
             reply_owner: false,
             bridge_nonce: None,
+            role_channel: RoleChannel::Title,
             bridge_hello_sent: false,
             bridge_next_id: 1,
             bridge_pending: None,
@@ -705,6 +716,7 @@ impl Relay {
         if let (Some((role, generation)), Some(nonce)) = (self.role.take(), &self.nonce) {
             fx.stdout
                 .extend_from_slice(role_title(nonce, role, generation).as_bytes());
+            self.bridge_role(role_report(nonce, role, generation), fx);
         }
         for injection in std::mem::take(&mut self.pending) {
             fx.stdout.extend_from_slice(&injection.bytes);

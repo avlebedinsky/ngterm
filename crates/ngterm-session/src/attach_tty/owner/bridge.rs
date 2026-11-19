@@ -13,6 +13,32 @@ impl Relay {
     pub fn enable_bridge(&mut self, nonce: Option<String>) {
         self.bridge_nonce = nonce;
     }
+    /// Sends each role report through the bridge as well as in the role title: an outer terminal that is `ConPTY`
+    /// sends only the last title of a frame, so the snapshot's title would replace the report.
+    pub fn report_roles_in_bridge(&mut self, on: bool) {
+        self.role_channel = if on {
+            RoleChannel::TitleAndBridge
+        } else {
+            RoleChannel::Title
+        };
+    }
+    pub(super) fn bridge_role(&mut self, report: String, fx: &mut Effects) {
+        let Some(nonce) = self
+            .bridge_nonce
+            .as_ref()
+            .filter(|_| self.role_channel == RoleChannel::TitleAndBridge)
+        else {
+            return;
+        };
+        fx.stdout.extend(
+            Envelope {
+                version: VERSION,
+                nonce: nonce.clone(),
+                message: Message::Role(report),
+            }
+            .encode(),
+        );
+    }
     pub(super) fn bridge_hello(&mut self, fx: &mut Effects) {
         let Some(nonce) = &self.bridge_nonce else {
             return;
