@@ -274,7 +274,7 @@ fn an_ios_archive_is_checked_for_its_platform_and_minimum_ios() {
 }
 
 #[test]
-fn a_build_installs_and_caches_under_its_own_out_dir() {
+fn a_build_installs_under_its_own_out_dir_and_caches_in_the_shared_zig_cache() {
     let linux_out = Path::new("/target/debug/build/ngterm-ghostty-vt-sys-1/out");
     let arm_out = Path::new("/target/aarch64-unknown-linux-gnu/debug/build/ngterm-ghostty-vt-sys-2/out");
     for (out_dir, target, zig_target) in [
@@ -283,8 +283,9 @@ fn a_build_installs_and_caches_under_its_own_out_dir() {
     ] {
         let build = plan(out_dir, target, None);
         assert_eq!(after(&build.args, "--prefix"), out_dir.join("zig-out"));
-        assert_eq!(after(&build.args, "--cache-dir"), out_dir.join("zig-cache"));
-        // the one shared directory: Zig's global cache, from the stamp, never the user's own
+        // the one shared directory: Zig's global cache, from the stamp, never the user's own; the local cache too,
+        // so a build in another OUT_DIR with the same inputs reuses the library
+        assert_eq!(after(&build.args, "--cache-dir"), Path::new("/vendor/zig-cache-0.17.0"));
         assert_eq!(build.env, [global_cache()]);
         assert_eq!(build.archive, out_dir.join("zig-out/lib/libghostty-vt.a"));
         assert_eq!(build.link_dir, out_dir.join("zig-out/lib"));

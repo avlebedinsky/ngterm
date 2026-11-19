@@ -499,10 +499,11 @@ prefix's `bin/` first, as CI does).
 
 Each script also takes `--print-prefix` and `--verify`. No cargo build reaches the network: `ngterm-ghostty-vt-sys`'s
 build script runs `zig build -Demit-lib-vt` over the libghostty-vt prefix's tree for cargo's target (as herdr's does),
-with the pinned zig the prefix's stamp names, installing and caching under its `OUT_DIR` and sharing Zig's global
-cache in the vendor root (`zig-cache-<version>`), and fails with "run scripts/build-ghostty-vt.sh" when the prefix is
-missing; `ngterm-gpui` fails with "run scripts/fetch-fonts.sh". A fresh `OUT_DIR` (a new target dir or profile) builds
-the library again, a few minutes.
+with the pinned zig the prefix's stamp names, installing under its `OUT_DIR` and caching in Zig's global cache in the
+vendor root (`zig-cache-<version>`), and fails with "run scripts/build-ghostty-vt.sh" when the prefix is
+missing; `ngterm-gpui` fails with "run scripts/fetch-fonts.sh". Zig keys that cache by every input of the build: the
+first build for a target takes a few minutes, and a fresh `OUT_DIR` (another profile, feature set, target dir or
+worktree) with the same inputs takes the library from it in seconds. The cache keeps the builds of each pin.
 libghostty-vt builds the same way on macOS and Windows ([macOS and Windows](#macos-and-windows)).
 `NGTERM_GHOSTTY_VT_PREFIX` names a prepared prefix and skips the script on any OS.
 The patches `scripts/build-ghostty-vt.sh` applies to the pinned source (`build/patches/ghostty-vt/`, in name order,

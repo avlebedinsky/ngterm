@@ -6,7 +6,7 @@
 //! SIMD, `-Dtarget`, `-Dversion-string`), the Apple link directory and the MSVC archive name. Changed: herdr builds a
 //! source tree vendored in its repository with the zig on `PATH`; here the tree, its Zig packages and the pinned zig
 //! come from the prefix `scripts/build-ghostty-vt.sh` prepared (its stamp names the zig and the Zig global cache), the
-//! local cache goes under `OUT_DIR` too, the map adds Linux's glibc floor, the macOS and iOS deployment targets (the
+//! local cache is that global cache too, the map adds Linux's glibc floor, the macOS and iOS deployment targets (the
 //! iOS simulator a target of its own) and Android's API level with the NDK cargo-ndk links with, the CPU is `baseline`
 //! (never the build host's), and the optimize mode and SIMD are fixed.
 
@@ -418,9 +418,11 @@ pub struct Build {
     pub env: Vec<(OsString, OsString)>,
 }
 
-/// The build of `inputs`: `zig build -Demit-lib-vt` over the prefix's tree, installing into and caching under
-/// `OUT_DIR` (so builds for different targets or profiles never share an install), with the global cache the stamp
-/// names. `-Doptimize=fast` (Zig 0.17's name for `ReleaseFast`): Debug's terminal integrity checks make sustained PTY
+/// The build of `inputs`: `zig build -Demit-lib-vt` over the prefix's tree, installing into `OUT_DIR` (so builds for
+/// different targets or profiles never share an install), with the global cache the stamp names as its local cache
+/// too: Zig's cache is keyed by every input and locked for concurrent builds, so another `OUT_DIR` (a profile, a
+/// feature set, a target dir) with the same inputs reuses the library instead of building it again for minutes, and
+/// CI's vendor cache carries it from one run to the next. `-Doptimize=fast` (Zig 0.17's name for `ReleaseFast`): Debug's terminal integrity checks make sustained PTY
 /// output unusably slow.
 ///
 /// # Errors
@@ -435,7 +437,7 @@ pub fn plan(inputs: &Inputs<'_>) -> Result<Build, String> {
     )?;
     let install = inputs.out_dir.join("zig-out");
     let mut args: Vec<OsString> = vec!["build".into(), "--prefix".into(), install.clone().into()];
-    args.extend(["--cache-dir".into(), inputs.out_dir.join("zig-cache").into()]);
+    args.extend(["--cache-dir".into(), inputs.stamp.global_cache.clone().into()]);
     args.extend(
         [
             "-Demit-lib-vt=true".to_owned(),

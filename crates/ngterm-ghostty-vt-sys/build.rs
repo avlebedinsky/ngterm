@@ -4,8 +4,8 @@
 //! the one place that knows how it is keyed, run with bash (Git Bash on Windows, found explicitly, with the printed
 //! MSYS path converted by `cygpath -m`: `script.rs`). The script prepares it (the pinned, patched source tree with
 //! its Zig packages, the headers, Ghostty's resources and a stamp naming the pinned zig); this script runs `zig build
-//! -Demit-lib-vt` over that tree (`zig_build.rs`, ported from herdr's build script), installing into and caching
-//! under `OUT_DIR`, and never reaches the network. A missing prefix fails the build with a pointer to the script.
+//! -Demit-lib-vt` over that tree (`zig_build.rs`, ported from herdr's build script), installing into `OUT_DIR` and
+//! caching in the stamp's Zig cache, and never reaches the network. A missing prefix fails the build with a pointer to the script.
 //!
 //! The archive needs no system library beyond the C runtime Rust links anyway: on Linux and macOS
 //! (`libghostty-vt-static.pc` lists no `Libs.private` at `LIBGHOSTTY_VT_REV`) and on Windows MSVC, where
