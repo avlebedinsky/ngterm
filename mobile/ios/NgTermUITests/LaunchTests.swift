@@ -7,10 +7,8 @@ internal final class LaunchTests: XCTestCase {
 
     @MainActor
     private func launch() -> XCUIApplication {
-        let app = XCUIApplication()
         // with a key, so the first run is over (FirstRunTests walk through it)
-        app.launchArguments = ["-ngterm-fake-core", "-ngterm-fake-key", FakeApp.stillArgument]
-        app.launch()
+        let app = FakeApp.launch(withKey: true, for: self)
         let firstScreen = app.buttons
             .matching(NSPredicate(format: "identifier == 'settings' OR label == 'Show machines'"))
             .firstMatch
@@ -49,8 +47,8 @@ internal final class LaunchTests: XCTestCase {
         let app = launch()
         try FakeApp.audit(app)
         openSettings(in: app)
-        // Settings is a form: a list, audited as the machine form is
-        try FakeApp.auditForm(app)
+        // Settings is a form, audited as the machine form is; on an iPad on its side it runs past the sheet's foot
+        try FakeApp.auditForm(app, page: app.collectionViews["settings-form"])
     }
 
     deinit {
