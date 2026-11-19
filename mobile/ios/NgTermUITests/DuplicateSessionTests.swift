@@ -115,7 +115,10 @@ internal final class DuplicateSessionTests: XCTestCase {
     private static func closeSessionWindows(in app: XCUIApplication) {
         var isMoreMissed = false
         for _ in 0..<closeTries {
-            let count = contentWindows(of: app).count
+            // a failed snapshot shows no windows: the count comes only from a snapshot that completed
+            guard let count = windowCountNow(in: app) else {
+                break
+            }
             guard count > 1 else {
                 return
             }
@@ -141,7 +144,22 @@ internal final class DuplicateSessionTests: XCTestCase {
                 ScreenRead.isGone(contentWindows(of: app).element(boundBy: count - 1))
             }
         }
-        XCTAssertEqual(contentWindows(of: app).count, 1, "the session windows stayed: \(app.debugDescription)")
+        expectWindows(1, in: app)
+    }
+
+    // the count of the app's own windows, from the next snapshot that completes; nil when none completed until the
+    // limit
+    @MainActor
+    private static func windowCountNow(in app: XCUIApplication) -> Int? {
+        var count: Int?
+        _ = ScreenRead.now {
+            guard let snapshot = try? app.snapshot() else {
+                return .failed
+            }
+            count = contentWindowCount(under: snapshot)
+            return .holds
+        }
+        return count
     }
 
     // detaches the first of the sessions `names` whose row's context menu offers Detach; false when none does
