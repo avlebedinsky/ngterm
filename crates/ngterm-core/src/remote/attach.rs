@@ -43,6 +43,9 @@ pub(super) const ERROR_SECONDS: f64 = 5.0;
 pub(super) const PROGRESS_SECONDS: f64 = 30.0;
 /// The id of the session picker's Attach All row, which a far session's upper-case UUID never equals.
 const ATTACH_ALL_ID: &str = "attach-all";
+/// The session picker's rows that are not sessions and not the hint: Attach All and New Session, whose places the
+/// picker's cap keeps.
+const ACTION_ROWS: usize = 2;
 /// The id of the session picker's row saying why agterm there lists nothing.
 const NOT_LIVE_ID: &str = "agterm-not-live";
 /// How long that row's panel stays up once chosen: its text is long.
@@ -363,8 +366,13 @@ pub(super) enum Step {
     Attaching { request: AttachRequest, answer: Answer },
     /// A selected parent attaches its freshly discovered companion group.
     AttachingGroup(super::group_attach::GroupRun),
-    /// The machine is being listed again for Attach All, so what attaches is what it offers now.
-    AttachingAll { host: String, answer: Answer },
+    /// The machine is being listed again for Attach All, so what attaches is what it offers now; `unattached` is what
+    /// the picker's row counted.
+    AttachingAll {
+        host: String,
+        answer: Answer,
+        unattached: usize,
+    },
     /// The machine creates a session, which attaches here once it is attachable ([`super::origin_sessions`]).
     CreatingSession(CreateRun),
 }
@@ -379,6 +387,8 @@ pub(super) struct ChoosingSession {
     parents: HashSet<String>,
     /// Why the host's agterm lists no session ([`super::not_live::hint`]), which its own row says.
     hint: Option<String>,
+    /// The sessions listed that no row here shows, which the Attach All row counts.
+    unattached: usize,
 }
 
 /// Where an action's HUD goes: over `session` in `window`, its message headed by `action`.
@@ -469,6 +479,15 @@ fn pick_item(session: &ControlRemoteSession) -> PickItem {
 /// picker has no place for.
 fn pickable(app: &ControlRemoteTree) -> impl Iterator<Item = &ControlRemoteSession> {
     app.sessions.iter().filter(|session| is_pickable(session))
+}
+
+/// What the Attach All row says of the `count` listed sessions no row here shows.
+fn unattached_subtitle(count: usize) -> String {
+    match count {
+        0 => "all sessions are attached here".to_owned(),
+        1 => "1 session not attached here".to_owned(),
+        _ => format!("{count} sessions not attached here"),
+    }
 }
 
 /// The picker's row saying `hint`: its first clause over the rest, as the rows truncate; choosing it shows it whole.
@@ -662,12 +681,20 @@ impl Core {
                     None
                 }
             },
-            Step::AttachingAll { host, answer } => {
+            Step::AttachingAll {
+                host,
+                answer,
+                unattached,
+            } => {
                 let Some(result) = take_answer(&answer) else {
-                    flow.step = Step::AttachingAll { host, answer };
+                    flow.step = Step::AttachingAll {
+                        host,
+                        answer,
+                        unattached,
+                    };
                     return Some(flow);
                 };
-                self.finish_attach_all(&mut flow, &host, &result);
+                self.finish_attach_all(&mut flow, &host, &result, unattached);
                 None
             }
             Step::CreatingSession(run) => self.advance_origin_session(flow, run),
@@ -685,7 +712,9 @@ impl Core {
                 self.attach_hint(&mut flow, choosing.hint.as_deref().unwrap_or_default());
                 None
             }
-            Picked::Chosen(session, _) if session == ATTACH_ALL_ID => self.start_attach_all(flow, choosing.host),
+            Picked::Chosen(session, _) if session == ATTACH_ALL_ID => {
+                self.start_attach_all(flow, choosing.host, choosing.unattached)
+            }
             Picked::Chosen(session, _) if session == NEW_SESSION_ID => {
                 self.start_origin_session(flow, choosing.host, choosing.peer, None)
             }
@@ -706,8 +735,9 @@ impl Core {
                 return None;
             }
         };
+        let hint = super::not_live::hint(&remote);
         let offered: usize = remote.apps().map(|app| pickable(app).count()).sum();
-        if offered > MAX_PICK_ITEMS {
+        if offered + ACTION_ROWS + usize::from(hint.is_some()) > MAX_PICK_ITEMS {
             self.attach_failed(&mut flow, &format!("{host} offers too many sessions"));
             return None;
         }
@@ -716,8 +746,7 @@ impl Core {
         if !self.library().is_open(flow.window) {
             return None;
         }
-        let hint = super::not_live::hint(&remote);
-        let items = self.session_items(&remote, host, hint.as_deref());
+        let (items, unattached) = self.session_items(&remote, host, hint.as_deref());
         let pick = self.open_internal_pick(flow.window, items, &format!("Attach from {host}"))?;
         flow.step = Step::ChoosingSession(ChoosingSession {
             host: host.to_owned(),
@@ -730,44 +759,43 @@ impl Core {
                 .map(|row| row.id.clone())
                 .collect(),
             hint,
+            unattached,
         });
         Some(flow)
     }
 
-    /// The session picker's rows: each listed session, then an Attach All row when it would attach more than one, a
-    /// row saying `hint`, why agterm there lists nothing, and a New Session row while the picker has room. Last, as the
-    /// picker's selection goes to the first row on opening and on every filter edit, and Enter takes it; with nothing
-    /// to attach, the hint or New Session is the first row. On a host that runs both apps the other app's sessions
-    /// follow ngterm's, each naming its app.
-    fn session_items(&self, tree: &ControlRemoteTree, host: &str, hint: Option<&str>) -> Vec<PickItem> {
-        let mut missing = 0;
-        let mut items: Vec<PickItem> = Vec::new();
+    /// The session picker's rows and the count of listed sessions no row here shows. The actions go first, as the
+    /// picker selects the first row on opening and Enter takes it: Attach All, which only attaches, when the host lists
+    /// a session, then New Session, then a row saying `hint`, why agterm there lists nothing. The sessions follow,
+    /// ngterm's before the other app's on a host that runs both, each of those naming its app. A typed filter ranks the
+    /// rows by their labels alone, so a typed session name still selects that session.
+    fn session_items(&self, tree: &ControlRemoteTree, host: &str, hint: Option<&str>) -> (Vec<PickItem>, usize) {
+        let mut unattached = 0;
+        let mut sessions: Vec<PickItem> = Vec::new();
         for app in tree.apps() {
             let rows = self.rows_attached_from(host, &app.endpoint);
-            missing += pickable(app).filter(|session| !rows.contains_key(&session.id)).count();
+            unattached += pickable(app).filter(|session| !rows.contains_key(&session.id)).count();
             let named = tree.beside.is_some().then(|| app.endpoint.peer());
-            items.extend(app_items(app, named.filter(|peer| *peer != RemotePeer::Ngterm)));
+            sessions.extend(app_items(app, named.filter(|peer| *peer != RemotePeer::Ngterm)));
         }
-        if missing > 1 && items.len() < MAX_PICK_ITEMS {
+        let mut items = Vec::with_capacity(sessions.len() + ACTION_ROWS + 1);
+        if !sessions.is_empty() {
             items.push(PickItem {
                 id: ATTACH_ALL_ID.to_owned(),
                 label: "Attach All".to_owned(),
-                subtitle: Some(format!("{missing} sessions not attached here")),
+                subtitle: Some(unattached_subtitle(unattached)),
                 ..PickItem::default()
             });
         }
-        if let Some(hint) = hint.filter(|_| items.len() < MAX_PICK_ITEMS) {
-            items.push(hint_item(hint));
-        }
-        if items.len() < MAX_PICK_ITEMS {
-            items.push(PickItem {
-                id: NEW_SESSION_ID.to_owned(),
-                label: NEW_SESSION.to_owned(),
-                subtitle: Some(format!("create a session on {host} and attach it")),
-                ..PickItem::default()
-            });
-        }
-        items
+        items.push(PickItem {
+            id: NEW_SESSION_ID.to_owned(),
+            label: NEW_SESSION.to_owned(),
+            subtitle: Some(format!("create a session on {host} and attach it")),
+            ..PickItem::default()
+        });
+        items.extend(hint.map(hint_item));
+        items.extend(sessions);
+        (items, unattached)
     }
 
     /// The rows of every open window attached from `host`'s ngterm at `endpoint`, by the origin's session id.
@@ -787,11 +815,15 @@ impl Core {
             .collect()
     }
 
-    fn start_attach_all(&mut self, mut flow: AttachFlow, host: String) -> Option<AttachFlow> {
+    fn start_attach_all(&mut self, mut flow: AttachFlow, host: String, unattached: usize) -> Option<AttachFlow> {
         self.attach_progress(&mut flow, "attaching all sessions…");
         match start_tree_read(self, &host) {
             Ok(answer) => {
-                flow.step = Step::AttachingAll { host, answer };
+                flow.step = Step::AttachingAll {
+                    host,
+                    answer,
+                    unattached,
+                };
                 Some(flow)
             }
             Err(error) => {
@@ -802,8 +834,15 @@ impl Core {
     }
 
     /// The new listing arrived: reports what Attach All left unattached. A partial failure's panel goes over the row
-    /// the attach selected, since the one the progress panel went over is out of view by then.
-    fn finish_attach_all(&mut self, flow: &mut AttachFlow, host: &str, result: &RemoteCommandResult) {
+    /// the attach selected, since the one the progress panel went over is out of view by then. With nothing to attach
+    /// it reports an error only when the picker's row counted a session: a row that said all are attached did no wrong.
+    fn finish_attach_all(
+        &mut self,
+        flow: &mut AttachFlow,
+        host: &str,
+        result: &RemoteCommandResult,
+        unattached: usize,
+    ) {
         let report = match read_remote_tree(result, host) {
             Ok(tree) => self.attach_all(&tree, host, flow.window),
             Err(error) => {
@@ -812,7 +851,7 @@ impl Core {
             }
         };
         if report.failures.is_empty() {
-            if report.attached == 0 {
+            if report.attached == 0 && unattached > 0 {
                 self.attach_failed(flow, &format!("nothing to attach on {host}"));
             } else {
                 self.attach_close_hud(flow);

@@ -65,8 +65,12 @@ Linux build unless it names another OS.
   makes the same walk for what reports through it alone (the Pi and Oh My Pi extensions, the OpenCode plugins), in its
   POSIX form only.
 - Another extension beyond upstream: a viewer makes and ends another machine's sessions, where upstream's only attaches
-  and detaches. Attach Remote's picker ends with New Session, also offered when the machine has nothing to attach, and
+  and detaches. Attach Remote's picker offers New Session, also when the machine has nothing to attach, and
   an attached row's menu has New Session on HOST and End Session on HOST… (`crates/ngterm-core/src/remote/origin_sessions.rs`).
+- Another extension beyond upstream, in an order that is the user's choice (2026-11-19): Attach Remote's picker
+  starts with Attach All, then New Session, then the sessions, so Enter on an untouched picker attaches all. Attach All
+  shows whenever the machine lists a session; with all of them attached here it attaches nothing and shows no error.
+  A typed session name still selects that session (`session_items` in `crates/ngterm-core/src/remote/attach.rs`).
 - Another extension beyond upstream: attached rows come back after a relaunch. Each window's file lists them, and the
   next launch lists each machine once and attaches every row it still offers where it stood; a machine that does not
   answer is listed again on the reconnect schedule for up to a week, and a session gone there is named in a banner

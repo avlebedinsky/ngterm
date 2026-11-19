@@ -2422,10 +2422,12 @@ Companions created on the origin later are not followed.
 File ▸ Attach Remote… is the same flow in the GUI and has no command of its own: it offers the machines in
 `<config dir>/remotes.conf` (one `destination [label]` per line, `#` comments), asks which in the picker
 when there are several, then lists that machine's sessions and attaches the picked one with its companions
-when it is a top-level session. With two or more
-sessions not attached here yet, an Attach All row follows them: it lists the machine again and attaches
-each of those, companions under their parents' rows and the rest in the current workspace, skipping page
-companions. A New Session row ends the list, and is its only row when the machine has nothing to attach: that machine
+when it is a top-level session. Two action rows come before the sessions, so Enter on an untouched picker
+takes the first; a typed session name still selects that session. Attach All is first whenever the machine
+lists a session, its subtitle the count of sessions not attached here yet: it lists the machine again and
+attaches each of those, companions under their parents' rows and the rest in the current workspace, skipping
+page companions. When every session is attached here, it attaches nothing and shows no error. New Session is
+next, and is the first row when the machine has nothing to attach: that machine
 creates a session (its own selection stays put), and once it is attachable it attaches here, selected. The machine must
 be running in `live` mode; otherwise New Session says so and creates nothing. It is the
 `attach_remote` keymap action, on Cmd-Shift-R unless `keymap.conf` maps another chord. A script composes

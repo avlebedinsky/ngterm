@@ -1172,15 +1172,16 @@ fn attach_remote_lists_the_machines_sessions_in_the_picker_and_attaches_the_chos
     settle(&mut fixture.core);
     let sessions = pending(&fixture.core).expect("which session?");
     assert_eq!(sessions.prompt.as_deref(), Some("Attach from origin"));
-    assert_eq!(sessions.items[0].label, "build");
+    // Attach All and New Session go before the sessions
+    assert_eq!(sessions.items[2].label, "build");
     assert_eq!(
-        sessions.items[0].subtitle.as_deref(),
+        sessions.items[2].subtitle.as_deref(),
         Some("main/dev  ·  /repo  ·  vim")
     );
     let before = fixture.store().sessions().count();
     fixture
         .core
-        .resolve_pick(window, &sessions.id, sessions.picked(0).unwrap());
+        .resolve_pick(window, &sessions.id, sessions.picked(2).unwrap());
     settle(&mut fixture.core);
     assert_eq!(fixture.store().sessions().count(), before + 1);
     let attached = fixture.store().sessions().last().unwrap();

@@ -23,6 +23,8 @@ use crate::settings_model::SettingsChange;
 use crate::sidebar_actions::SidebarAction;
 
 const REMOTE_SESSION: &str = "0A0B0C0D-0000-0000-0000-0000000000B1";
+/// The session picker's first session row: Attach All and New Session go before the sessions.
+const FIRST_SESSION: usize = 2;
 
 // MARK: - fakes
 
@@ -444,6 +446,8 @@ fn the_progress_panel_is_gone_before_the_session_picker_and_the_attach_closes_it
     assert_eq!(
         sessions.items,
         [
+            attach_all_row("1 session not attached here"),
+            new_session_row(),
             ngterm_proto::PickItem {
                 id: REMOTE_SESSION.to_owned(),
                 label: "build".to_owned(),
@@ -452,11 +456,10 @@ fn the_progress_panel_is_gone_before_the_session_picker_and_the_attach_closes_it
                 status_color: Some("#ff8800".to_owned()),
                 status_shape: Some("star".to_owned()),
             },
-            new_session_row()
         ],
         "the row carries the far session's status for its glyph"
     );
-    attach.resolve(&sessions, sessions.picked(0).unwrap());
+    attach.resolve(&sessions, sessions.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     assert_eq!(attach.hud(), Some(progress("attaching build…")));
     assert!(attach.pending().is_none());
@@ -494,7 +497,7 @@ fn a_refused_attach_shows_a_timed_error_panel() {
     attach.runner.answer(0, listing(&[build_session()]));
     attach.drive("the session picker opens", |attach| attach.pending().is_some());
     let sessions = attach.pending().unwrap();
-    attach.resolve(&sessions, sessions.picked(0).unwrap());
+    attach.resolve(&sessions, sessions.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     // the session went away between the listing and the attach
     attach.runner.answer(1, listing(&[]));
@@ -644,7 +647,7 @@ fn a_window_switch_while_choosing_the_mac_keeps_the_attach_in_the_starting_windo
             .is_none()
     );
     let sessions = attach.pending().unwrap();
-    attach.resolve(&sessions, sessions.picked(0).unwrap());
+    attach.resolve(&sessions, sessions.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     let before = attach.fixture.store().sessions().count();
     attach.runner.answer(1, listing(&[build_session()]));
@@ -713,26 +716,69 @@ impl Attach {
     }
 }
 
-#[test]
-fn a_single_session_offers_no_attach_all() {
-    let mut attach = Attach::new(Some("studio\n"));
-    let picker = attach.open_session_picker(0, &[build_session()]);
-    assert_eq!(picker.items.len(), 2);
-    assert_eq!(picker.items[1], new_session_row());
-    assert_eq!(picker.selection, None);
+fn attach_all_row(subtitle: &str) -> ngterm_proto::PickItem {
+    ngterm_proto::PickItem {
+        id: "attach-all".to_owned(),
+        label: "Attach All".to_owned(),
+        subtitle: Some(subtitle.to_owned()),
+        ..ngterm_proto::PickItem::default()
+    }
 }
 
+fn labels(picker: &PendingPick) -> Vec<&str> {
+    picker.items.iter().map(|item| item.label.as_str()).collect()
+}
+
+/// The user's report: with one session not attached here, the picker had no Attach All row.
 #[test]
-fn attach_all_follows_the_sessions_so_enter_on_its_first_row_still_attaches_one() {
+fn a_single_session_offers_attach_all_first_then_new_session() {
+    let mut attach = Attach::new(Some("studio\n"));
+    let picker = attach.open_session_picker(0, &[build_session()]);
+    assert_eq!(labels(&picker), ["Attach All", "New Session", "build"]);
+    assert_eq!(picker.items[0], attach_all_row("1 session not attached here"));
+    assert_eq!(picker.items[1], new_session_row());
+}
+
+/// The picker selects its first row on opening (no caller selection), so Enter on an untouched picker is Attach All.
+#[test]
+fn attach_all_and_new_session_go_first_so_enter_on_an_untouched_picker_takes_attach_all() {
     let mut attach = Attach::new(Some("studio\n"));
     let sessions = [numbered_session("one", 1, None), numbered_session("two", 2, None)];
     let picker = attach.open_session_picker(0, &sessions);
-    assert_eq!(picker.items[0].label, "one");
+    assert_eq!(labels(&picker), ["Attach All", "New Session", "one", "two"]);
+    assert_eq!(picker.items[0], attach_all_row("2 sessions not attached here"));
     assert_eq!(picker.selection, None);
-    let all = &picker.items[2];
-    assert_eq!(all.id, "attach-all");
-    assert_eq!(all.label, "Attach All");
-    assert_eq!(all.subtitle.as_deref(), Some("2 sessions not attached here"));
+    attach.attach_all(1, &picker, &sessions);
+    assert_eq!(attach.remote_rows(), ["one", "two"]);
+}
+
+/// A typed filter ranks the rows by their labels, not by their places, so a typed session name selects the session.
+#[test]
+fn a_typed_session_name_ranks_the_session_above_the_action_rows() {
+    let mut attach = Attach::new(Some("studio\n"));
+    let sessions = [
+        numbered_session("attic", 1, None),
+        numbered_session("news", 2, None),
+        numbered_session("build", 3, None),
+    ];
+    let picker = attach.open_session_picker(0, &sessions);
+    let first = |query: &str| {
+        let ranked = crate::fuzzy::fuzzy_rank(query, picker.items.iter(), |item| {
+            crate::palette::palette_search_keys(&item.label, item.subtitle.as_deref(), true)
+        });
+        ranked.first().map(|item| item.label.clone())
+    };
+    let expected = [
+        ("attic", "attic"),
+        ("news", "news"),
+        ("build", "build"),
+        ("bu", "build"),
+        ("attach", "Attach All"),
+        ("new session", "New Session"),
+    ];
+    for (query, row) in expected {
+        assert_eq!(first(query).as_deref(), Some(row), "query {query:?}");
+    }
 }
 
 #[test]
@@ -770,7 +816,7 @@ fn attach_all_skips_what_is_already_attached_and_attaches_what_appeared_since_th
     let mut attach = Attach::new(Some("studio\n"));
     let first = [numbered_session("one", 1, None), numbered_session("two", 2, None)];
     let picker = attach.open_session_picker(0, &first);
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, listing(&first));
     attach.drive("the first session attaches", |attach| attach.remote_rows().len() == 1);
@@ -783,10 +829,7 @@ fn attach_all_skips_what_is_already_attached_and_attaches_what_appeared_since_th
         numbered_session("three", 3, None),
     ];
     let picker = attach.open_session_picker(2, &second);
-    assert_eq!(
-        picker.items[picker.items.len() - 2].subtitle.as_deref(),
-        Some("2 sessions not attached here")
-    );
+    assert_eq!(picker.items[0], attach_all_row("2 sessions not attached here"));
     let fresh = [
         numbered_session("one", 1, None),
         numbered_session("three", 3, None),
@@ -803,8 +846,8 @@ fn attach_all_skips_what_is_already_attached_and_attaches_what_appeared_since_th
         4,
         &[numbered_session("one", 1, None), numbered_session("five", 5, None)],
     );
-    assert_eq!(picker.items.len(), 3, "one session left to attach offers no Attach All");
-    assert_eq!(picker.items[2], new_session_row());
+    assert_eq!(labels(&picker), ["Attach All", "New Session", "one", "five"]);
+    assert_eq!(picker.items[0], attach_all_row("1 session not attached here"));
 }
 
 #[test]
@@ -858,6 +901,31 @@ fn attach_all_finding_nothing_left_says_so() {
     attach.attach_all(1, &picker, &[]);
     assert_eq!(attach.remote_rows(), Vec::<String>::new());
     assert_eq!(attach.hud(), Some(failure("nothing to attach on studio")));
+}
+
+/// With every listed session attached here, Attach All stays first and says so; choosing it attaches nothing and
+/// reports no error, and a session that appeared since the list still attaches.
+#[test]
+fn attach_all_with_every_session_attached_says_so_and_attaches_only_what_appeared_since() {
+    let mut attach = Attach::new(Some("studio\n"));
+    let first = [numbered_session("one", 1, None)];
+    let picker = attach.open_session_picker(0, &first);
+    attach.attach_all(1, &picker, &first);
+    assert_eq!(attach.remote_rows(), ["one"]);
+    attach.session = attach.fixture.store().selected_session_id().unwrap();
+
+    let picker = attach.open_session_picker(2, &first);
+    assert_eq!(labels(&picker), ["Attach All", "New Session", "one"]);
+    assert_eq!(picker.items[0], attach_all_row("all sessions are attached here"));
+    attach.attach_all(3, &picker, &first);
+    assert_eq!(attach.remote_rows(), ["one"], "nothing attaches twice");
+    assert_eq!(attach.hud(), None, "no error panel");
+
+    let picker = attach.open_session_picker(4, &first);
+    let fresh = [numbered_session("one", 1, None), numbered_session("two", 2, None)];
+    attach.attach_all(5, &picker, &fresh);
+    assert_eq!(attach.remote_rows(), ["one", "two"]);
+    assert_eq!(attach.hud(), None);
 }
 
 // MARK: - sessions made and ended on the machine
@@ -932,7 +1000,7 @@ impl Attach {
     /// One attached row, selected, and the remote command count it took.
     fn attached_row(&mut self) -> Uuid {
         let picker = self.open_session_picker(0, &[build_session()]);
-        self.resolve(&picker, picker.picked(0).unwrap());
+        self.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
         self.wait_for_runs(2);
         self.runner.answer(1, listing(&[build_session()]));
         self.drive("the attach lands", |attach| attach.remote_rows() == ["build"]);
@@ -954,27 +1022,29 @@ fn a_machine_with_nothing_to_attach_offers_only_new_session() {
 }
 
 #[test]
-fn a_picker_full_of_sessions_keeps_them_and_one_over_is_refused() {
+fn a_picker_full_of_sessions_keeps_its_action_rows_and_one_over_is_refused() {
     let many = |count: usize| -> Vec<serde_json::Value> {
         (1..=count)
             .map(|number| numbered_session("one", number as u128, None))
             .collect()
     };
+    // Attach All and New Session keep their places under the cap
+    let room = crate::modal::MAX_PICK_ITEMS - 2;
     let mut attach = Attach::new(Some("studio\n"));
-    let picker = attach.open_session_picker(0, &many(crate::modal::MAX_PICK_ITEMS));
+    let picker = attach.open_session_picker(0, &many(room));
     assert_eq!(picker.items.len(), crate::modal::MAX_PICK_ITEMS);
-    assert!(
-        picker.items.iter().all(|item| item.label == "one"),
-        "no room for another row"
+    assert_eq!(
+        picker.items[0],
+        attach_all_row(&format!("{room} sessions not attached here"))
     );
+    assert_eq!(picker.items[1], new_session_row());
+    assert!(picker.items[FIRST_SESSION..].iter().all(|item| item.label == "one"));
 
     let mut attach = Attach::new(Some("studio\n"));
     let window = attach.fixture.window;
     attach.core().attach_remote(window);
     attach.wait_for_runs(1);
-    attach
-        .runner
-        .answer(0, listing(&many(crate::modal::MAX_PICK_ITEMS + 1)));
+    attach.runner.answer(0, listing(&many(room + 1)));
     attach.drive("the error panel shows", |attach| {
         attach.hud().is_some_and(|hud| hud.spinner.is_none())
     });
@@ -1082,14 +1152,15 @@ fn an_agterm_outside_live_sessions_mode_is_asked_once_and_its_row_says_how_to_tu
     assert_eq!(
         picker.items,
         [
+            new_session_row_on("agterm:studio"),
             ngterm_proto::PickItem {
                 id: "agterm-not-live".to_owned(),
                 label: label.to_owned(),
                 subtitle: Some(subtitle.to_owned()),
                 ..ngterm_proto::PickItem::default()
             },
-            new_session_row_on("agterm:studio"),
-        ]
+        ],
+        "with no session listed there is nothing for Attach All to take"
     );
     assert_eq!(
         attach.runner.lines().len(),
@@ -1097,7 +1168,7 @@ fn an_agterm_outside_live_sessions_mode_is_asked_once_and_its_row_says_how_to_tu
         "nothing else is asked, and nothing is changed there"
     );
 
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(1).unwrap());
     attach.drive("the hint shows whole", |attach| attach.hud().is_some());
     assert_eq!(
         attach.hud(),
@@ -1128,7 +1199,7 @@ fn the_hint_row_chosen_after_its_session_closed_is_a_banner() {
     let session = attach.session;
     attach.fixture.store_mut().unwrap().close_session(session);
 
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(1).unwrap());
     attach.idle();
 
     assert_eq!(attach.banners(), [format!("agterm-not-live|Attach Remote|{NOT_LIVE}")]);
@@ -2161,7 +2232,7 @@ fn choosing_a_parent_rediscovers_its_group_even_when_the_picker_said_empty() {
     let mut old = numbered_session("one", 1, None);
     old["companions"] = json!([]);
     let picker = attach.open_session_picker(0, &[old]);
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     let mut fresh = numbered_session("one", 1, None);
     fresh["companions"] = json!([{ "id": Uuid::from_u128(3).to_string().to_uppercase(), "name": "logs" }]);
@@ -2185,8 +2256,8 @@ fn choosing_a_companion_attaches_it_alone_with_a_hierarchical_picker_label() {
     let mut attach = Attach::new(Some("studio\n"));
     let listed = [numbered_session("one", 1, None), numbered_session("logs", 3, Some(1))];
     let picker = attach.open_session_picker(0, &listed);
-    assert_eq!(picker.items[1].label, "one › logs");
-    attach.resolve(&picker, picker.picked(1).unwrap());
+    assert_eq!(picker.items[FIRST_SESSION + 1].label, "one › logs");
+    attach.resolve(&picker, picker.picked(FIRST_SESSION + 1).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, listing(&listed));
     attach.drive("only the companion attaches", |attach| attach.remote_rows().len() == 1);
@@ -2206,7 +2277,7 @@ fn a_partial_picked_group_moves_its_error_hud_to_the_attached_parent() {
     let mut parent = numbered_session("one", 1, None);
     parent["companions"] = json!([{ "id": "missing", "name": "logs" }]);
     let picker = attach.open_session_picker(0, &[parent.clone()]);
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, listing(&[parent]));
     attach.drive("the group error moves to the new row", |attach| {
@@ -2339,7 +2410,7 @@ fn a_destination_pinned_to_agterm_attaches_its_session_and_ends_it_there() {
     attach.drive("the session picker opens", |attach| attach.pending().is_some());
     let picker = attach.pending().unwrap();
     assert_eq!(picker.prompt.as_deref(), Some("Attach from agterm:studio"));
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, agterm_listing(&[agterm_build_session()]));
     attach.drive("the attach lands", |attach| attach.remote_rows() == ["build"]);
@@ -2373,7 +2444,7 @@ fn a_row_agterm_answered_keeps_its_app_when_a_later_listing_finds_ngterm() {
     attach.runner.answer(0, agterm_listing(&[agterm_build_session()]));
     attach.drive("the session picker opens", |attach| attach.pending().is_some());
     let picker = attach.pending().unwrap();
-    attach.resolve(&picker, picker.picked(0).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, agterm_listing(&[agterm_build_session()]));
     attach.drive("the attach lands", |attach| attach.remote_rows() == ["build"]);
@@ -2411,6 +2482,22 @@ fn agterm_notes_session() -> serde_json::Value {
     session
 }
 
+/// The picker of a Mac that runs both apps: the action rows, then ngterm's `build`, then agterm's `notes`, named as such.
+fn assert_both_apps_rows(picker: &PendingPick) {
+    let rows: Vec<(&str, &str)> = picker
+        .items
+        .iter()
+        .map(|item| (item.label.as_str(), item.subtitle.as_deref().unwrap_or_default()))
+        .collect();
+    assert_eq!(rows[0], ("Attach All", "2 sessions not attached here"));
+    assert_eq!(rows[1].0, "New Session");
+    assert_eq!(rows[2].0, "build");
+    assert!(!rows[2].1.contains("agterm"), "{rows:?}");
+    assert_eq!(rows[3].0, "notes");
+    assert!(rows[3].1.starts_with("agterm  ·  "), "{rows:?}");
+    assert_eq!(picker.items.len(), 4, "{rows:?}");
+}
+
 /// A Mac that runs both apps offers the sessions of both, agterm's named as such, and a picked agterm session
 /// attaches through agterm's zmx and keeps sending agterm its lines.
 #[test]
@@ -2424,19 +2511,9 @@ fn a_host_running_both_apps_offers_both_and_attaches_each_through_its_own_app() 
     attach.runner.answer(0, answer());
     attach.drive("the session picker opens", |attach| attach.pending().is_some());
     let picker = attach.pending().unwrap();
-    let rows: Vec<(&str, &str)> = picker
-        .items
-        .iter()
-        .map(|item| (item.label.as_str(), item.subtitle.as_deref().unwrap_or_default()))
-        .collect();
-    assert_eq!(rows[0].0, "build");
-    assert!(!rows[0].1.contains("agterm"), "{rows:?}");
-    assert_eq!(rows[1].0, "notes");
-    assert!(rows[1].1.starts_with("agterm  ·  "), "{rows:?}");
-    assert_eq!(rows[2], ("Attach All", "2 sessions not attached here"));
-    assert_eq!(picker.items.len(), 4, "{rows:?}");
+    assert_both_apps_rows(&picker);
 
-    attach.resolve(&picker, picker.picked(1).unwrap());
+    attach.resolve(&picker, picker.picked(FIRST_SESSION + 1).unwrap());
     attach.wait_for_runs(2);
     attach.runner.answer(1, answer());
     attach.drive("the attach lands", |attach| attach.remote_rows() == ["notes"]);

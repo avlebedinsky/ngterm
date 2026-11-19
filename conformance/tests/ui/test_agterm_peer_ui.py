@@ -190,8 +190,8 @@ def test_attach_remote_on_a_host_running_both_apps_lists_both_marks_agterms_and_
     adapter, launch, world, ui_for
 ):
     """File ▸ Attach Remote on a host that runs agterm and an ngterm (another instance of the build, Live on, with one
-    live session) offers the sessions of both; agterm's row says which app it is, ngterm's does not, and the agterm
-    session picked there attaches through the Mac's own zmx."""
+    live session) offers the sessions of both after Attach All and New Session; agterm's row says which app it is,
+    ngterm's does not, and the agterm session picked there by its typed name attaches through the Mac's own zmx."""
     mac = world.agterm_mac("both")
     origin = launch(settings={"restoreMode": "live"})
     mac.install_ngtermctl(adapter.ctl_path, origin.instance.state_dir)
@@ -207,18 +207,26 @@ def test_attach_remote_on_a_host_running_both_apps_lists_both_marks_agterms_and_
     def item(session):
         return ui.ui_ids.expand("palette-item-{item}", item=session["id"])
 
-    # ngterm's session first, then agterm's, each under its own name
+    # Attach All and New Session first, then ngterm's session, then agterm's, each under its own name
+    assert ui.text(ui.find(ui.ui_ids.expand("palette-item-{item}", item="attach-all"))) == "Attach All"
+    assert ui.text(ui.find(ui.ui_ids.expand("palette-item-{item}", item="new-session"))) == "New Session"
     assert ui.text(ui.find(item(own))) == own["name"]
     assert ui.text(ui.find(item(build))) == "from-agterm"
-    def two_subtitles():
+
+    def four_subtitles():
         texts = [ui.text(element) for element in ui.all("palette-subtitle")]
-        return texts if len(texts) > 1 else None
+        return texts if len(texts) > 3 else None
 
-    subtitles = wait_until(two_subtitles, timeout=ui.timeout)
-    assert "agterm" not in subtitles[0], subtitles
-    assert subtitles[1].startswith("agterm  ·  Main/work"), subtitles
+    subtitles = wait_until(four_subtitles, timeout=ui.timeout)
+    assert subtitles[0] == "2 sessions not attached here", subtitles
+    assert subtitles[1] == "create a session on both and attach it", subtitles
+    assert "agterm" not in subtitles[2], subtitles
+    assert subtitles[3].startswith("agterm  ·  Main/work"), subtitles
 
-    ui.press("down", "return")
+    # Enter would take Attach All: a typed name selects its session instead
+    ui.type_text("from-agterm")
+    wait_until(lambda: not ui.all(ui.ui_ids.expand("palette-item-{item}", item="attach-all")), timeout=ui.timeout)
+    ui.press("return")
     ui.absent("pick-palette")
     row = wait_until(lambda: next((s for s in _remote_rows(viewer) if s["name"] == "from-agterm"), None))
     assert row["remoteHost"] == "both"
