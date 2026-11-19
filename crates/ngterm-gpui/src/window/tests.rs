@@ -2216,3 +2216,22 @@ fn the_field_keeps_its_text_and_keyboard_through_a_selection_made_elsewhere(cx: 
     let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
     assert_eq!(text, "v");
 }
+
+#[gpui_kit::test]
+fn keys_typed_right_after_the_search_chord_reach_the_field(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    // no turn of the app between the chord and the keys: the window takes the chord itself
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f v a");
+    assert!(s.search_field_holds());
+    s.settle();
+    assert_eq!(s.sidebar_search(), "va");
+    assert!(
+        s.state.take_frontend_work().actions.is_empty(),
+        "the keymap does not run the action a second time"
+    );
+    // a second chord selects the text, so typing replaces it
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f u");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "u");
+}

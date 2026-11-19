@@ -36,6 +36,8 @@ pub const PLACEHOLDER: &str = "Search sessions";
 pub const HEIGHT: f32 = 24.;
 /// The field's text size.
 const TEXT_SIZE: f32 = 12.;
+/// The clear button's square.
+const CLEAR_SIZE: f32 = 18.;
 
 /// What a key in the field does beyond editing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +201,7 @@ impl Render for SearchField {
         let has_text = !self.input.read(cx).value().is_empty();
         let clear = Button::new("sidebar-search-clear")
             .flex_none()
-            .size(px(18.))
+            .size(px(CLEAR_SIZE))
             .rounded(px(4.))
             .cursor_pointer()
             .wash(ink)
@@ -244,7 +246,14 @@ impl Render for SearchField {
                         .text_color(ink),
                 ),
             )
-            .when(has_text, |row| row.child(clear))
+            // the button's room stays while the field is empty, so the text never reflows as it appears
+            .map(|row| {
+                if has_text {
+                    row.child(clear)
+                } else {
+                    row.child(div().flex_none().size(px(CLEAR_SIZE)))
+                }
+            })
     }
 }
 

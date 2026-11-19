@@ -20,8 +20,13 @@ def _rows(ui):
     return [ui.text(element) for element in ui.all("session-row")]
 
 
+def _search_of(tree):
+    """The tree's `sidebarSearch`, None while it is omitted."""
+    return tree["tree"].get("sidebarSearch")
+
+
 def _searched(ctl, text):
-    ctl.wait_tree(lambda tree: tree.get("sidebarSearch") == text)
+    ctl.wait_tree(lambda tree: _search_of(tree) == text)
 
 
 def _chord(ctl):
@@ -58,7 +63,7 @@ def test_the_search_field_narrows_the_rows_and_return_opens_the_first_match(ctl,
 
         ui.press("return")
         ctl.wait_tree(lambda tree: active_session_id(tree) == beta)
-        assert ctl.tree().get("sidebarSearch") == "SEARCH-B", "Return keeps the search"
+        assert _search_of(ctl.tree()) == "SEARCH-B", "Return keeps the search"
 
         # the chord selects the field's text, so typing replaces it
         ui.press(chord)
@@ -66,7 +71,7 @@ def test_the_search_field_narrows_the_rows_and_return_opens_the_first_match(ctl,
         _searched(ctl, "zz-none")
         ui.find("sidebar-search-empty")
         ui.click(ui.find("sidebar-search-empty-clear"))
-        ctl.wait_tree(lambda tree: "sidebarSearch" not in tree)
+        _searched(ctl, None)
         ui.absent("sidebar-search-empty")
 
         ui.type_text("alpha")
@@ -74,11 +79,11 @@ def test_the_search_field_narrows_the_rows_and_return_opens_the_first_match(ctl,
         ui.find("sidebar-search-clear")
         wait_until(lambda: "ui-search-alpha" in _rows(ui) and "ui-search-beta" not in _rows(ui))
         ui.press("escape")
-        ctl.wait_tree(lambda tree: "sidebarSearch" not in tree)
+        _searched(ctl, None)
         ui.absent("sidebar-search-clear")
         wait_until(lambda: {"ui-search-alpha", "ui-search-beta", "ui-plain"} <= set(_rows(ui)))
         assert active_session_id(ctl.tree()) == beta, "Escape keeps the selection"
     finally:
-        if ctl.tree().get("sidebarSearch"):
+        if _search_of(ctl.tree()):
             ui.press(_chord(ctl), "escape")
         assert_ok(ctl.request("workspace.delete", wid))

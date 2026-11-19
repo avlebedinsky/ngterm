@@ -684,6 +684,10 @@ impl WindowView {
         {
             return true;
         }
+        if self.takes_search_chord(stroke, cx) {
+            self.search_field.update(cx, |field, cx| field.focus(window, cx));
+            return true;
+        }
         let focused = |handle: FocusHandle, window: &Window| handle.is_focused(window);
         if let Some(picker) = self
             .picker
@@ -733,6 +737,21 @@ impl WindowView {
             return true;
         }
         false
+    }
+
+    /// Whether `stroke` is Search Sessions…'s chord and the field is on screen with nothing modal up: the window gives
+    /// the field the keyboard at once, so the keys typed right after the chord reach it, not the terminal (the keymap's
+    /// own run of the action lands on a later turn). A hidden or covered sidebar is the keymap's to show.
+    fn takes_search_chord(&self, stroke: &KeyStroke, cx: &App) -> bool {
+        crate::keymap_dispatch::menu_action(stroke) == Some(ngterm_core::keymap::BuiltinAction::FocusSidebarSearch)
+            && self.sidebar.read(cx).is_shown()
+            && self.ask.is_none()
+            && self.picker.is_none()
+            && self.palette.is_none()
+            && self.settings.is_none()
+            && !self.alert_up
+            && !self.popovers.read(cx).is_open()
+            && !self.menu_open(cx)
     }
 
     /// The search bar at the terminal area's top right.
