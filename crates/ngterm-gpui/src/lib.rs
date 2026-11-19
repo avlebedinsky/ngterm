@@ -19,6 +19,7 @@ pub mod folder_chooser;
 pub mod global_hotkey;
 pub mod html_overlay;
 pub mod hud;
+pub mod inert;
 pub mod input_source;
 pub mod instance;
 pub mod integrations;

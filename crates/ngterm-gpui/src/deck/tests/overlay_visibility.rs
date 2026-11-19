@@ -403,6 +403,141 @@ fn a_hidden_page_keeps_its_document_and_comes_back_without_a_reload(cx: &mut Tes
     assert_eq!(page_id(&h), id, "the same page");
 }
 
+/// Shows `session`'s page and waits for the deck to draw it.
+#[cfg(all(feature = "html", target_os = "linux"))]
+fn select(h: &mut Harness<'_>, session: Uuid) {
+    h.store().select_session(Some(session));
+    h.state.settle();
+    h.turn();
+}
+
+/// Opens a page over `pane` of the selected `session` and marks it failed, as the engine reports a dead server.
+#[cfg(all(feature = "html", target_os = "linux"))]
+fn open_failed_page(h: &mut Harness<'_>, session: Uuid, pane: Option<&str>) {
+    use ngterm_core::html::HtmlLoadState;
+
+    h.dispatch(Command::Session(SessionCmd::OverlayOpen), session, |args| {
+        args.url = Some("http://127.0.0.1:2/".to_owned());
+        args.pane = pane.map(str::to_owned);
+    });
+    h.turn();
+    let id = h
+        .session(session)
+        .html_overlays()
+        .into_iter()
+        .map(|(_, page)| page.id)
+        .next()
+        .unwrap();
+    h.state.core.set_html_load_state(
+        id,
+        HtmlLoadState::Failed,
+        Some("Error receiving data: Connection reset by peer".to_owned()),
+    );
+    h.state.settle();
+    h.turn();
+    assert!(
+        h.cx.debug_bounds("htmlOverlay.error").is_some(),
+        "the failed page shows its error"
+    );
+}
+
+/// Hides `session`'s split.
+#[cfg(all(feature = "html", target_os = "linux"))]
+fn hide_split(h: &mut Harness<'_>, session: Uuid) {
+    h.dispatch(Command::Session(SessionCmd::Split), session, |args| {
+        args.mode = Some("off".to_owned());
+    });
+    h.turn();
+}
+
+/// Whether a click at the middle of `slot` (the whole page with `None`) of the shown `session` gives the keyboard to the
+/// terminal carrying `token`, taken from somewhere else first.
+#[cfg(all(feature = "html", target_os = "linux"))]
+fn click_reaches(h: &mut Harness<'_>, session: Uuid, slot: Option<Slot>, token: &str) -> bool {
+    focus_elsewhere(h);
+    assert!(!h.focused(session, token));
+    let rect = h
+        .deck
+        .read_with(h.cx, |deck, _| deck.page(session).unwrap().rect(slot).unwrap());
+    #[expect(clippy::cast_possible_truncation, reason = "test coordinates")]
+    let center = gpui_kit::point(
+        px((f64::from(rect.x) + f64::from(rect.width) / 2.0) as f32),
+        px((f64::from(rect.y) + f64::from(rect.height) / 2.0) as f32),
+    );
+    h.cx.simulate_click(center, gpui_kit::Modifiers::default());
+    h.turn();
+    h.focused(session, token)
+}
+
+/// A deck whose first session is split and selected, with the page host on the recording engine; the session, its
+/// panes' tokens, and the next session, whose page the deck made after it and so stacks above it.
+#[cfg(all(feature = "html", target_os = "linux"))]
+fn failed_page_harness(cx: &mut TestAppContext) -> (Harness<'_>, Uuid, (String, String), Uuid) {
+    // the error panel draws with the component library's theme
+    cx.update(gpui_kit::init);
+    let (mut h, session, _) = overlay_harness(cx);
+    page_host(&mut h);
+    let panes = split(&mut h, session);
+    let next = h.store().sessions().map(Session::id).find(|id| *id != session).unwrap();
+    (h, session, panes, next)
+}
+
+#[cfg(all(feature = "html", target_os = "linux"))]
+#[gpui_kit::test]
+fn a_hidden_sessions_failed_page_takes_no_click_from_the_shown_session(cx: &mut TestAppContext) {
+    let (mut h, session, (_, right), next) = failed_page_harness(cx);
+    select(&mut h, next);
+    open_failed_page(&mut h, next, None);
+    select(&mut h, session);
+    assert!(
+        click_reaches(&mut h, session, Some(Slot::Split), &right),
+        "a click on the shown session's pane focuses its terminal"
+    );
+}
+
+#[cfg(all(feature = "html", target_os = "linux"))]
+#[gpui_kit::test]
+fn a_failed_page_over_a_hidden_split_takes_no_click_from_the_shown_session(cx: &mut TestAppContext) {
+    let (mut h, session, (_, right), next) = failed_page_harness(cx);
+    select(&mut h, next);
+    split(&mut h, next);
+    open_failed_page(&mut h, next, Some("right"));
+    hide_split(&mut h, next);
+    select(&mut h, session);
+    assert!(
+        click_reaches(&mut h, session, Some(Slot::Split), &right),
+        "a click on the shown session's pane focuses its terminal"
+    );
+}
+
+#[cfg(all(feature = "html", target_os = "linux"))]
+#[gpui_kit::test]
+fn a_failed_page_over_its_own_hidden_split_takes_no_click_from_the_primary(cx: &mut TestAppContext) {
+    let (mut h, session, (primary, _), _) = failed_page_harness(cx);
+    open_failed_page(&mut h, session, Some("right"));
+    // a hidden split lays out only the focused pane: the primary alone, its page with no slot left to show over
+    click_focus(&mut h, session, &primary);
+    h.turn();
+    hide_split(&mut h, session);
+    assert!(h.shown(session, &primary), "the primary shows alone");
+    assert!(
+        click_reaches(&mut h, session, None, &primary),
+        "a click on the primary focuses its terminal"
+    );
+}
+
+#[cfg(all(feature = "html", target_os = "linux"))]
+#[gpui_kit::test]
+fn a_hidden_failed_page_takes_no_click_from_its_own_session(cx: &mut TestAppContext) {
+    let (mut h, session, (primary, _), _) = failed_page_harness(cx);
+    open_failed_page(&mut h, session, None);
+    visibility(&mut h, session, SessionCmd::OverlayHide, None);
+    assert!(
+        click_reaches(&mut h, session, Some(Slot::Primary), &primary),
+        "a click on the pane under the hidden page focuses its terminal"
+    );
+}
+
 #[cfg(all(feature = "html", target_os = "linux"))]
 #[gpui_kit::test]
 fn the_strips_hide_hides_only_its_own_pane(cx: &mut TestAppContext) {

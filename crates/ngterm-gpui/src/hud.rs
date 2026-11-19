@@ -387,28 +387,26 @@ pub fn element(layer: &HudLayer) -> Option<impl IntoElement> {
     let placement = layer.placement?;
     let frame = placement.style.frame;
     let border = crate::chrome::color(ngterm_core::chrome::Rgb::WHITE, BORDER_OPACITY);
-    Some(
-        div()
-            .size_full()
-            .relative()
-            .overflow_hidden()
-            .when(frame, |panel| panel.rounded(px(CORNER_RADIUS)))
-            .when(!layer.visible, Styled::invisible)
-            .child(panel.view.clone())
-            .when(frame, |panel| {
-                panel.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(px(CORNER_RADIUS))
-                        .border_1()
-                        .border_color(border),
-                )
-            })
-            .when(layer.visible, |panel_element| {
-                panel_element.child(link_input(panel.view.clone(), Rc::clone(&panel.hand)))
-            }),
-    )
+    let element = div()
+        .size_full()
+        .relative()
+        .overflow_hidden()
+        .when(frame, |panel| panel.rounded(px(CORNER_RADIUS)))
+        .child(panel.view.clone())
+        .when(frame, |panel| {
+            panel.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(CORNER_RADIUS))
+                    .border_1()
+                    .border_color(border),
+            )
+        })
+        .when(layer.visible, |panel_element| {
+            panel_element.child(link_input(panel.view.clone(), Rc::clone(&panel.hand)))
+        });
+    Some(crate::inert::hide(element, !layer.visible))
 }
 
 /// The link-modifier click and hover over the panel (upstream's `HudLinkClick`): a hitbox that takes no pointer from

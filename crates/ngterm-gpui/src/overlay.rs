@@ -747,51 +747,43 @@ pub fn program_element(layer: &OverlayLayer) -> Option<impl IntoElement> {
         spread_radius: px(0.),
         inset: false,
     };
-    Some(
-        div()
-            .size_full()
-            .relative()
-            .when(layer.placement.is_none(), Styled::invisible)
-            .when(floating, |panel| {
-                panel.rounded(px(FLOATING_RADIUS)).shadow(vec![shadow])
-            })
-            .child(
+    let panel = div()
+        .size_full()
+        .relative()
+        .when(floating, |panel| {
+            panel.rounded(px(FLOATING_RADIUS)).shadow(vec![shadow])
+        })
+        .child(
+            div()
+                .size_full()
+                .overflow_hidden()
+                .when(floating, |panel| panel.rounded(px(FLOATING_RADIUS)))
+                .child(content),
+        )
+        .when(floating, |panel| {
+            panel.child(
                 div()
-                    .size_full()
-                    .overflow_hidden()
-                    .when(floating, |panel| panel.rounded(px(FLOATING_RADIUS)))
-                    .child(content),
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(FLOATING_RADIUS))
+                    .border_1()
+                    .border_color(border),
             )
-            .when(floating, |panel| {
-                panel.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .rounded(px(FLOATING_RADIUS))
-                        .border_1()
-                        .border_color(border),
-                )
-            }),
-    )
+        });
+    Some(crate::inert::hide(panel, layer.placement.is_none()))
 }
 
 /// A pane overlay's element: its terminal, drawn only while it shows.
 #[must_use]
 pub fn pane_element(overlay: &OverlayTerminal, cx: &gpui_kit::App) -> impl IntoElement {
     let shown = overlay.view.read(cx).is_shown();
-    div()
-        .size_full()
-        .when(!shown, Styled::invisible)
-        .child(overlay.view.clone())
+    crate::inert::hide(div().size_full().child(overlay.view.clone()), !shown)
 }
 
 /// A pane page's element, drawn only while it shows.
 #[must_use]
 pub fn pane_page_element(page: &OverlayPage) -> impl IntoElement {
-    div()
-        .size_full()
-        .when(!page.shown, Styled::invisible)
-        .child(page.element.clone())
+    crate::inert::hide(div().size_full().child(page.element.clone()), !page.shown)
 }
 
 #[cfg(test)]

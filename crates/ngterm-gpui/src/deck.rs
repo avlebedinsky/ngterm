@@ -1289,12 +1289,11 @@ impl Render for Deck {
             .filter_map(|id| self.pages.get(id).map(|page| (*id, page)))
             .map(|(id, page)| {
                 let visible = Some(id) == self.shown;
-                div()
-                    .absolute()
-                    .inset_0()
-                    .when(!visible, Styled::invisible)
-                    .child(self.render_page(page, visible, cx))
-                    .into_any_element()
+                crate::inert::hide(
+                    div().absolute().inset_0().child(self.render_page(page, visible, cx)),
+                    !visible,
+                )
+                .into_any_element()
             })
             .collect();
         let recorded = Rc::clone(&self.bounds);
@@ -1393,20 +1392,17 @@ fn terminal_place(plan: &PanePlan, token: &str) -> Place {
 /// A pane's terminal view inside a wrapper that is drawn only while the view shows. A key press on a terminal
 /// holding its keys (a lead cover, a held exit) runs its hold in the terminal's key path (`Shared::held_key`).
 fn terminal_wrapper(pane: &PaneTerminal, shown: bool, zoomed: bool) -> AnyElement {
-    let wrapper = div()
-        .size_full()
-        .when(!shown, Styled::invisible)
-        .child(pane.view.clone());
+    let wrapper = div().size_full().child(pane.view.clone());
     if zoomed {
         // the zoomed terminal: upstream's accessibility identifier as its element id
-        return wrapper
+        let wrapper = wrapper
             .id("terminal-zoom")
             .debug_selector(|| "terminal-zoom".to_owned())
             .accessibility_id("terminal-zoom")
-            .role(gpui_kit::Role::Group)
-            .into_any_element();
+            .role(gpui_kit::Role::Group);
+        return crate::inert::hide(wrapper, !shown).into_any_element();
     }
-    wrapper.into_any_element()
+    crate::inert::hide(wrapper, !shown).into_any_element()
 }
 
 /// A solid wash at `opacity` over the area it is laid out on; it takes nothing.

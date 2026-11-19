@@ -7,7 +7,6 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
     ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
@@ -735,7 +734,7 @@ fn a_key_release_carries_the_physical_key_its_press_had(cx: &mut TestAppContext)
 }
 
 /// The window's content for the hit test: a terminal's stand-in that counts its presses, and the page over it, hidden
-/// as the deck hides one (`Styled::invisible`) while its slot does not show.
+/// as the deck hides one ([`crate::inert::hide`]) while its slot does not show.
 struct Stack {
     element: Entity<PageView>,
     shown: bool,
@@ -755,13 +754,10 @@ impl Render for Stack {
                     .inset_0()
                     .on_mouse_down(MouseButton::Left, move |_, _, _| presses.set(presses.get() + 1)),
             )
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .when(!self.shown, gpui_kit::Styled::invisible)
-                    .child(self.element.clone()),
-            )
+            .child(crate::inert::hide(
+                div().absolute().inset_0().child(self.element.clone()),
+                !self.shown,
+            ))
     }
 }
 
