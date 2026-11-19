@@ -14,6 +14,7 @@ Grouped by what you are trying to do, alphabetical within each group. Which agen
 
 | recipe | what it does | needs | author |
 |---|---|---|---|
+| [close-ended-remote-sessions](close-ended-remote-sessions/) | one command closes every attached remote session whose session on the other machine has ended, the rows with a slashed cloud | 0.1.0, jq | [@nickalie](https://github.com/nickalie) |
 | [go-to-navigator](go-to-navigator/) | one chord opens a searchable tree of the window's workspaces, sessions and panes with each agent's status, and Enter jumps there | 0.1.0, jq, git | [@nickalie](https://github.com/nickalie) |
 
 Most recipes need `ngtermctl`, which works in ngterm's own terminals and in commands a chord runs; outside them, put it on your `PATH` as the main README's *Get started* says. Each recipe's *Requirements* section names the minimum ngterm version it needs and any other tool it calls. Recipes are snapshots rather than a maintained surface: the control API grows by addition, so they rarely break.
