@@ -108,6 +108,13 @@ internal final class SessionViewTests: XCTestCase {
         // the layout made anew on its side and upright again keeps the selection
         let turned: UIDeviceOrientation = Self.isPad ? .portrait : .landscapeLeft
         let back: UIDeviceOrientation = Self.isPad ? .landscapeLeft : .portrait
+        addTeardownBlock { @MainActor in
+            XCUIDevice.shared.orientation = back
+            XCTAssertTrue(
+                FakeApp.expectShape(of: app.windows.firstMatch, landscape: Self.isPad),
+                "the teardown turn did not end"
+            )
+        }
         XCUIDevice.shared.orientation = turned
         XCTAssertTrue(
             FakeApp.expectShape(of: app.windows.firstMatch, landscape: !Self.isPad), "the first turn did not end"
