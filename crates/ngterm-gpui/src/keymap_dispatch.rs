@@ -545,10 +545,10 @@ pub(crate) fn sequence_takes(stroke: &KeyStroke) -> bool {
     })
 }
 
-/// Ends a half-typed leader or an open repeat window, as a press it does not match ends it: the window took that
-/// press for its own key.
-pub(crate) fn end_sequence() {
-    ROUTER.with_borrow_mut(Router::reset_if_live);
+/// The window took the press `stroke` for its own key, outside the matcher: it ends a half-typed leader or an open
+/// repeat window, as a press the matcher does not match ends it ([`Router::take_for_window`]).
+pub(crate) fn end_sequence(stroke: &KeyStroke) {
+    ROUTER.with_borrow_mut(|router| router.take_for_window(stroke));
 }
 
 /// Runs the live leader or repeat window out, as if its timeout passed with no key (tests).
@@ -979,10 +979,11 @@ impl Router {
         self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
     }
 
-    /// Records a fresh dispatch's event time. Replaying an interrupted matcher uses that time for its next deadline
-    /// too, so a stalled renderer cannot lengthen a leader's timeout.
+    /// Records a fresh dispatch's event time, for the press and for its key. Replaying an interrupted matcher uses
+    /// that time for its next deadline too, so a stalled renderer cannot lengthen a leader's timeout.
     #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
-    fn page_press_time(&mut self, repeat: bool, now: Instant) -> Instant {
+    fn page_press_time(&mut self, stroke: &KeyStroke, now: Instant) -> Instant {
+        let repeat = stroke.action == KeyAction::Repeat;
         #[cfg(windows)]
         let now = if self.replaying_interruption {
             self.dispatched_at.unwrap_or(now)
@@ -999,9 +1000,25 @@ impl Router {
                     self.dispatched_at.and_then(|at| self.matcher_interrupted_at(at))
                 };
             }
-            self.last_press = Some(self.dispatched_at.take().unwrap_or(now));
+            let pressed = self.dispatched_at.take().unwrap_or(now);
+            self.last_press = Some(pressed);
+            self.remember_page_press(stroke.identity, pressed);
         }
         now
+    }
+
+    /// The window took the press `stroke` for its own key, before the matcher saw it. A fresh press ends a live
+    /// sequence as an unmatched press does in [`Router::advance`]: on Windows the stopped presses before it still act
+    /// against the sequence it ended ([`Router::takes_stopped`]).
+    fn take_for_window(&mut self, stroke: &KeyStroke) {
+        self.pressed = Some(stroke.identity);
+        #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
+        self.page_press_time(stroke, Instant::now());
+        #[cfg(all(feature = "html", windows))]
+        if stroke.action != KeyAction::Repeat {
+            self.interrupted_matcher = self.ending_matcher.take();
+        }
+        self.reset_if_live();
     }
 
     /// One press, with an HTML page holding the keyboard while `page_keys`: whether it is consumed, and what it fired.
@@ -1009,11 +1026,7 @@ impl Router {
         self.pressed = Some(stroke.identity);
         let repeat = stroke.action == KeyAction::Repeat;
         #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
-        let now = self.page_press_time(repeat, now);
-        #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
-        if !repeat {
-            self.remember_page_press(stroke.identity, self.last_press.unwrap_or(now));
-        }
+        let now = self.page_press_time(stroke, now);
         self.resume_held(stroke.identity, repeat);
         if stroke.keycode != 0 && stroke.action == KeyAction::Press {
             // the platform says the key went up since its consumed press: a release the monitor never heard (one

@@ -685,7 +685,7 @@ impl WindowView {
             return true;
         }
         if self.takes_search_chord(stroke, cx) {
-            crate::keymap_dispatch::end_sequence();
+            crate::keymap_dispatch::end_sequence(stroke);
             self.search_field.update(cx, |field, cx| field.focus(window, cx));
             return true;
         }

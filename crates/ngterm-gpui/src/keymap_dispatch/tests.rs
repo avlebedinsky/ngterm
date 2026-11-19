@@ -1927,6 +1927,43 @@ fn a_stopped_tail_replays_past_an_accelerator_the_app_took() {
     }
 }
 
+/// The window's own key (the sidebar search's chord) ends a live sequence before the matcher sees it, as an
+/// accelerator the app took does: a stopped tail still in the renderer acts on the sequence it ended.
+#[cfg(all(feature = "html", windows))]
+#[test]
+fn a_stopped_tail_replays_past_a_key_the_window_took() {
+    let now = Instant::now();
+    let at = |age: u64| now.checked_sub(Duration::from_millis(age)).unwrap();
+    for (age, fires) in [(200, true), (50, false)] {
+        let mut router = router("command \"g\" ctrl+a>g true\n");
+        assert!(press(&mut router, "ctrl-a", at(300)));
+        router.dispatched_at = Some(at(100));
+        router.take_for_window(&windows_page_stroke("ctrl-shift-f", false));
+        router.end_report(false);
+        assert!(!router.engine.as_ref().unwrap().is_armed());
+        let g = windows_page_stroke("g", false);
+        assert_eq!(router.takes_stopped(&g, Some(at(age))), fires, "g at -{age}ms");
+        if fires {
+            router.dispatched_at = Some(at(age));
+            assert!(matches!(router.press(&g, now, true), Press::Fired(Fired::Command(_))));
+            router.end_report(false);
+            assert!(!router.engine.as_ref().unwrap().is_armed());
+        }
+    }
+}
+
+/// A key the window takes ends a live leader or repeat window and leaves no sequence to resume.
+#[test]
+fn a_key_the_window_took_ends_a_live_sequence() {
+    let now = Instant::now();
+    let mut router = router("command \"g\" ctrl+a>g true\n");
+    assert!(press(&mut router, "ctrl-a", now));
+    router.take_for_window(&stroke("ctrl-shift-f"));
+    assert!(!router.engine.as_ref().unwrap().is_armed());
+    assert!(!press(&mut router, "g", now));
+    assert!(names(&router).is_empty());
+}
+
 /// Only a press in the interrupted sequence's lifetime can use its matcher, and loading a keymap forgets it.
 #[cfg(all(feature = "html", windows))]
 #[test]
