@@ -31,8 +31,14 @@
 # it got against those before using it. A tree a
 # later job unpacks travels as a tarball, so modes and symlinks survive; finished packages travel as plain files.
 #
-# Every action is pinned by commit SHA (its tag in a comment, which Dependabot keeps current), and no checkout keeps
-# its credentials.
+# Publishing also waits for the full iOS test suite on the release commit: the `ios-tests` job calls ios.yml with
+# `suite: full` (its lint, its Unit plan and the whole UI plan on the phone and the tablet, with the gate that fails a
+# test that passed only on its retry). It runs beside the builds, gets no secret and makes no release asset. A dry run
+# and a rehearsal skip it. When it fails, `publish` does not run: fix the cause, or run its failed jobs again for a
+# flaky test (each such test also gets a fix, as on main).
+#
+# Every action is pinned by commit SHA (its tag in a comment, which Dependabot keeps current), ios.yml's too, and no
+# checkout keeps its credentials.
 name: release
 
 on:
@@ -931,6 +937,14 @@ jobs:
               ;;
           esac
 
+  # The full iOS test suite on the release commit, which publishing waits for (see the top of this file)
+  ios-tests:
+    needs: version
+    if: needs.version.outputs.publishing == 'true'
+    uses: ./.github/workflows/ios.yml
+    with:
+      suite: full
+
   checksums:
     needs: [version, linux, windows-build, macos-sign, ios-build, android-sign]
     # Over what this run built: a dry run's or rehearsal's left-out platforms are skipped, and any failure stops it, a
@@ -1012,6 +1026,7 @@ jobs:
       - android-sign
       - android-verify
       - checksums
+      - ios-tests
     # Publishing needs every job to succeed. A rehearsal may build a subset of platforms, so there a skipped job is
     # accepted; a failed or cancelled one (a job past its timeout ends cancelled, not failed) never is
     if: >-

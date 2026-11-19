@@ -42,6 +42,9 @@
 #    - coverage: the Unit plan alone on both simulators, its coverage summary and the floor check, as test measures
 #      them;
 #    - ui: the UI plan alone, as test runs it;
+#    - smoke: the smoke set of the UI plan alone (UI_SMOKE_TESTS, below), on the simulators that ui uses, with the same
+#      retry and the same check of retried tests. Each push and pull request runs it in CI. The nightly run runs the
+#      whole UI plan (.github/workflows/ios.yml);
 #    - archive: a Release archive for devices, mobile/ios/build/NgTerm.xcarchive, unsigned unless the release
 #      environment is set (APP_STORE_CONNECT_KEY_PATH, APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and
 #      IOS_DEVELOPMENT_TEAM: automatic signing through that App Store Connect API key). Its marketing version is the
@@ -67,6 +70,7 @@
 #
 # For the shared Mac (scripts/ios-mac-run.sh sets them):
 #   --only CLASS[/METHOD]  the ui action runs only these UI tests (repeat the option for more), as a fix round does;
+#                    smoke takes no --only: its tests are UI_SMOKE_TESTS;
 #   BUILD_IOS_TREE_STAMP   a checksum of the whole source tree: a plan that was built from the same stamp, profile,
 #                    Xcode and Generated/ files, with no other build after it, keeps its build, and its runs only
 #                    test it (test-without-building), so a repeat run and the other simulator's run rebuild nothing;
@@ -78,7 +82,7 @@
 #                    (default 8192) of the disk stay free.
 #
 # Usage: scripts/build-ios.sh [--profile release|debug] [--no-xcode] [--prebuilt-core] [--device phone|tablet]
-#                             [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|archive...]
+#                             [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|smoke|archive...]
 #   --profile   the cargo profile of the archives (default: release)
 #   --no-xcode  stop after step 7, the outputs
 set -euo pipefail
@@ -92,7 +96,7 @@ source "$(dirname "$0")/lib/ios-sim-cache.sh"
 
 usage() {
   die "usage: scripts/build-ios.sh [--profile release|debug] [--no-xcode] [--prebuilt-core] [--device phone|tablet]
-                            [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|archive...]"
+                            [--ui-shard K/N] [--only CLASS[/METHOD]]... [lint|build|test|coverage|ui|smoke|archive...]"
 }
 
 ARGS=("$@") # for the re-run under the build lock
@@ -134,7 +138,7 @@ while (($#)); do
       ONLY+=("-only-testing:NgTermUITests/$2")
       shift 2
       ;;
-    lint | build | test | coverage | ui | archive)
+    lint | build | test | coverage | ui | smoke | archive)
       ACTIONS+=("$1")
       shift
       ;;
@@ -147,6 +151,9 @@ if [[ -n "$DEVICE" && " ${ACTIONS[*]} " == *" coverage "* ]]; then
 fi
 if ((${#ONLY[@]})) && [[ -n "$UI_SHARD" || " ${ACTIONS[*]} " != " ui " ]]; then
   die "build-ios.sh: --only is for the ui action alone, with no --ui-shard"
+fi
+if [[ -n "$UI_SHARD" && " ${ACTIONS[*]} " == *" smoke "* ]]; then
+  die "build-ios.sh: smoke takes no --ui-shard: its set is UI_SMOKE_TESTS"
 fi
 
 [[ "$(uname -s)" == Darwin ]] || die "scripts/build-ios.sh: the iOS build needs macOS (Xcode); this host is $(uname -s)"
@@ -565,6 +572,35 @@ action_test() {
 action_ui() {
   rm -rf "$BUILD_DIR/snapshot-failures"
   run_ui_plan
+}
+
+# The smoke set of the UI plan: a small number of UI tests that show the main paths of the app on the fake core. CI
+# runs them on each push and pull request, and the whole UI plan nightly and before a release
+# (.github/workflows/ios.yml). Keep the set short: each test adds about a minute on each simulator of a CI run.
+UI_SMOKE_TESTS=(
+  # the app starts, Settings opens and shows the core version
+  LaunchTests/testLaunchesOnTheFakeCore
+  # the first run: the welcome, a new key, then the machines
+  FirstRunTests/testCreatingAKeyLeadsToTheMachines
+  # add a machine, trust its host key, and it connects
+  FirstConnectTests/testAddMachineConfirmFingerprintConnected
+  # open a session of a machine on the fake core, then type in it
+  SessionKeyboardTests/testASessionOpenedByItsRowOrNewSessionTakesTheTypingAtOnce
+)
+
+# The smoke set as ui runs it. A test name that is not in mobile/ios/NgTermUITests stops the run: xcodebuild would run
+# no test for it and pass.
+action_smoke() {
+  local test classes
+  classes="$(ui_test_classes)"
+  ONLY=()
+  for test in "${UI_SMOKE_TESTS[@]}"; do
+    if ! grep -qx "${test%/*}" <<<"$classes" || ! grep -qE "func ${test#*/}\(" "$IOS_DIR"/NgTermUITests/*.swift; then
+      die "build-ios.sh: the smoke test $test is not in mobile/ios/NgTermUITests"
+    fi
+    ONLY+=("-only-testing:NgTermUITests/$test")
+  done
+  action_ui
 }
 
 action_coverage() {

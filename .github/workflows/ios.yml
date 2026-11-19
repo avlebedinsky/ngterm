@@ -20,11 +20,13 @@
 # - `unit`: scripts/build-ios.sh coverage, the Unit test plan on both simulators and its line coverage, over both
 #   simulators' profiles, checked against the floors of mobile/ios/coverage-floors.txt; the coverage summary
 #   (Unit.coverage.txt and .json) is kept as `ios-coverage` on every run that wrote it;
-# - `ui`: scripts/build-ios.sh ui, the UI test plan, a job per simulator, and the tablet's, the slower, in two shares
-#   of the test classes (--ui-shard, which makes the shares the whole plan). A UI test that fails runs once more, and
-#   each that passed on its retry is named with what failed it: a warning when XCTest gave up on the app, as it now
-#   and then does on these virtual Macs, and otherwise a flaky test that fails the job (build-ios.sh's
-#   report_retried_tests);
+# - `ui`: the UI test plan, in the suite that the trigger selects (see "Suites" below). The full suite is
+#   scripts/build-ios.sh ui, a job per simulator, and the tablet's, the slower, in two shares of the test classes
+#   (--ui-shard, which makes the shares the whole plan). The smoke suite is scripts/build-ios.sh smoke, one job that
+#   runs the smoke set of the plan (build-ios.sh's UI_SMOKE_TESTS) on the phone and then on the tablet. In each suite,
+#   a UI test that fails runs once more, and each that passed on its retry is named with what failed it: a warning
+#   when XCTest gave up on the app, as it now and then does on these virtual Macs, and otherwise a flaky test that
+#   fails the job (build-ios.sh's report_retried_tests);
 # - `results`: when a `unit` or `ui` job fails (or runs out of time, or retried a test:
 #   mobile/ios/build/retried-tests.txt) its result bundles are kept, and the failed snapshots' images
 #   (mobile/ios/build/snapshot-failures/) with the failed tests' attachments exported from the result bundles (each
@@ -51,9 +53,23 @@
 # both are `core`'s to save (the other jobs read them). Only main saves caches: a branch's would crowd main's out of
 # the repository's cache space. The simulator runtime is the image's; Xcode's derived data is not cached.
 #
+# Suites. The UI legs are the longest jobs and the most fragile ones on these 3-CPU runners, so they run in two suites:
+#
+# - smoke: a push and a pull request. All the other jobs run as in the full suite, so the lint, the build, the Unit
+#   plan and its coverage floors are per push;
+# - full: the nightly run on main (the schedule below), a run by hand (`gh workflow run ios --ref main`: its `suite`
+#   input is `full` unless it is set to `smoke`), and the release (release.yml calls this workflow with `suite:
+#   full` and publishes only when it passes).
+#
+# The coverage floors come from the Unit plan alone (the `unit` job), so the two suites check the same floors. A run of
+# one suite does not cancel a run of the other suite on the same ref: a push to main does not stop the nightly run.
+# Because the release runs this workflow, its actions are pinned by commit SHA (the tag in a comment) and no checkout
+# keeps its credentials, as in release.yml.
+#
 # Path-filtered to what the app builds from: the mobile core and the crates it builds on, the workspace manifest, lock
 # file, toolchain and cargo config, mobile/ios/ and the fonts it shares with Android, the scripts, patches and pins of
-# its toolchain, and this file. Pushes to a `ci/**` branch run it too, and it can be run by hand.
+# its toolchain, and this file. Pushes to a `ci/**` branch run it too. The schedule, a run by hand and the release's call
+# have no path filter.
 name: ios
 
 on:
@@ -88,13 +104,29 @@ on:
   push:
     branches: [main, "ci/**"]
     paths: *paths
+  # the full suite each night on main, at 03:17 UTC: GitHub delays scheduled runs at the start of an hour the most
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "The UI tests to run: full (the whole UI plan on the phone and the tablet) or smoke (the smoke set)"
+        default: full
+        type: choice
+        options: [full, smoke]
+  workflow_call:
+    inputs:
+      suite:
+        description: "The UI tests to run: full or smoke"
+        default: full
+        type: string
 
 permissions:
   contents: read
 
+# the suite is in the group, so a run of one suite does not cancel a run of the other
 concurrency:
-  group: ios-${{ github.ref }}
+  group: ios-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.suite == 'full') && 'full' || 'smoke' }}
   cancel-in-progress: true
 
 env:
@@ -109,12 +141,17 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      # no job needs the token after the checkout: it does not stay in the clone (release.yml calls this workflow, and no
+      # checkout of a release keeps its credentials)
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # every crate, not only the core's build closure: ngterm-mobile embeds a file of a crate outside it. And the WSL
       # shell integration: ngterm-core embeds its launcher
       - name: the core a run on main built from these inputs
         id: built
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: &core-cache
           path: |
             mobile/ios/Packages/NgtermCore/Generated/NgtermCoreFFI.xcframework
@@ -127,7 +164,7 @@ jobs:
       - name: the vendor root a run on main saved for these inputs
         id: vendor-saved
         if: steps.built.outputs.cache-hit == 'true' && github.ref == 'refs/heads/main'
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: &vendor-path ~/.cache/ngterm/vendor
           key: &vendor-key vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
@@ -140,17 +177,17 @@ jobs:
       - name: rust toolchain (rust-toolchain.toml)
         if: steps.build.outputs.core == 'true'
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.build.outputs.core == 'true'
         with:
           shared-key: ios
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.build.outputs.core == 'true' && github.ref == 'refs/heads/main'
         with: &vendor
           path: *vendor-path
           key: *vendor-key
-      - uses: actions/cache/restore@v6
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.build.outputs.core == 'true' && github.ref != 'refs/heads/main'
         with: *vendor
       - name: Zig and the libghostty-vt prefix (build/pins.env)
@@ -162,10 +199,10 @@ jobs:
       - name: the core for both iOS targets, its Swift bindings and XCFramework
         if: steps.build.outputs.core == 'true'
         run: scripts/build-ios.sh --no-xcode
-      - uses: actions/cache/save@v6
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: steps.built.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with: *core-cache
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-core
           path: |
@@ -179,18 +216,17 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 60
     steps:
-      - &checkout
-        uses: actions/checkout@v7
+      - *checkout
       - &rust-toolchain
         name: rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ios
           save-if: false
       # the core job's vendor root, read only
       - &vendor-restore
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: *vendor
       - &ghostty-vt
         name: Zig and the libghostty-vt prefix (build/pins.env)
@@ -217,7 +253,7 @@ jobs:
       - *ios-toolchain
       - &prebuilt-core
         name: the core (the core job's)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ios-core
           path: mobile/ios/Packages/NgtermCore/Generated
@@ -225,7 +261,7 @@ jobs:
         run: scripts/build-ios.sh --prebuilt-core lint
       - name: upload the lint's build log
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-lint-log
           path: mobile/ios/build/lint-analyze.log
@@ -253,7 +289,7 @@ jobs:
         run: scripts/build-ios.sh --prebuilt-core coverage
       - name: upload the coverage summary
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-coverage
           path: mobile/ios/build/Unit.coverage.*
@@ -261,7 +297,7 @@ jobs:
       - &upload-results
         name: upload the result bundles
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-results-${{ env.LEG }}
           path: mobile/ios/build/*.xcresult
@@ -316,7 +352,7 @@ jobs:
       - &upload-failure-diffs
         name: upload the failed snapshots and attachments
         if: failure() || cancelled() || hashFiles('mobile/ios/build/retried-tests.txt') != ''
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-failure-diffs-${{ env.LEG }}
           path: |
@@ -332,14 +368,14 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # the legs of the suite (see "Suites" above), each with the arguments of its scripts/build-ios.sh run
       matrix:
-        include:
-          - leg: ui-phone
-            options: --device phone
-          - leg: ui-tablet-1
-            options: --device tablet --ui-shard 1/2
-          - leg: ui-tablet-2
-            options: --device tablet --ui-shard 2/2
+        include: >-
+          ${{ fromJSON((github.event_name == 'schedule' || inputs.suite == 'full') && '[
+          {"leg": "ui-phone", "args": "--device phone ui"},
+          {"leg": "ui-tablet-1", "args": "--device tablet --ui-shard 1/2 ui"},
+          {"leg": "ui-tablet-2", "args": "--device tablet --ui-shard 2/2 ui"}
+          ]' || '[{"leg": "ui-smoke", "args": "smoke"}]') }}
     name: ${{ matrix.leg }}
     env:
       LEG: ${{ matrix.leg }}
@@ -351,12 +387,12 @@ jobs:
       - *ios-toolchain
       - *prebuilt-core
       - *host-monitor
-      - name: the UI test plan (${{ matrix.options }})
+      - name: the UI test plan (${{ matrix.args }})
         env:
-          OPTIONS: ${{ matrix.options }}
+          ARGS: ${{ matrix.args }}
         run: |
-          read -ra options <<<"$OPTIONS"
-          scripts/build-ios.sh --prebuilt-core "${options[@]}" ui
+          read -ra args <<<"$ARGS"
+          scripts/build-ios.sh --prebuilt-core "${args[@]}"
       - *upload-results
       - *export-attachments
       - *runner-log
@@ -370,20 +406,20 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ios-results-*
           path: ios-results
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-results
           path: ios-results/
           if-no-files-found: ignore
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ios-failure-diffs-*
           path: ios-failure-diffs
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-failure-diffs
           path: ios-failure-diffs/

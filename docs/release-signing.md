@@ -58,7 +58,10 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
 
 1. Set the workspace version in `Cargo.toml`, update `Cargo.lock` (`cargo update -w`), commit and push to `main`.
 2. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The run builds, signs and verifies every platform. No approval is necessary.
+3. The run builds, signs and verifies every platform. No approval is necessary. Beside the builds, its `ios-tests`
+   job runs the full iOS test suite on the tag's commit (`ios.yml` with `suite: full`), and `publish` waits for it.
+   If a UI test fails or passes only on its retry, nothing is published: fix the cause, or run the failed jobs
+   again for a flaky test.
 4. When `publish` succeeds, the release is out of draft. A failure anywhere before `publish` publishes nothing.
 
 To rehearse before publication, use this procedure after you commit and push the version change to `main`:

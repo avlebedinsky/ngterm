@@ -211,7 +211,9 @@ release and installs it from Settings > Updates, after checking it against the r
 installed app's signing key; Android asks you to allow installs from ngterm the first time.
 
 To release, set the workspace version and lockfile, commit, and push the matching tag (for example `v0.1.0`); the
-`release` workflow builds, signs, verifies and publishes every platform, with no approval step. A dispatch with
+`release` workflow builds, signs, verifies and publishes every platform, with no approval step. Its `ios-tests` job
+runs the full iOS test suite (`ios.yml` with `suite: full`, see [CI](#ci)) on the tag's commit beside the builds,
+and it publishes only when that suite passes. A dispatch with
 **rehearse** on a tag signs with the real keys and publishes nothing; one without it is a dry run on any ref.
 [docs/release-signing.md](release-signing.md) covers the runs, the keys and the signing mode.
 Tag/version mismatches fail before any builds. Packaging tool versions, checksums, and the WPE source checksum live
@@ -1169,11 +1171,12 @@ as before, with no error. A Windows origin can't be reached at all yet, as above
 ```sh
 scripts/setup-ios.sh [--check]    # the pinned toolchain (iOS toolchain); build-ios.sh takes its exports itself
 scripts/setup-ios.sh --simulator ngterm-phone   # the phone simulator made again if gone, booted; prints its UDID
-scripts/build-ios.sh [--profile release|debug] [--no-xcode] [lint|build|test|coverage|ui|archive...]   # default: build
+scripts/build-ios.sh [--profile release|debug] [--no-xcode] [lint|build|test|coverage|ui|smoke|archive...]   # default: build
 scripts/build-ios.sh lint test    # the lint gate, then the Unit and UI test plans on both simulators, as CI checks them
 scripts/build-ios.sh coverage     # the Unit plan alone, its line coverage summary and floor check, as test measures it
 scripts/build-ios.sh --device tablet --ui-shard 1/2 ui   # the UI plan alone: one simulator, a share of its classes
 scripts/build-ios.sh --device phone --only LogsTests ui   # only these UI tests (a class or Class/method; repeat --only)
+scripts/build-ios.sh smoke        # the smoke set of the UI plan (build-ios.sh's UI_SMOKE_TESTS), as CI runs it per push
 eval "$(scripts/setup-ios.sh --check)"   # then, after test or coverage, a source file's lines no Unit test ran:
 scripts/ios-coverage.py uncovered mobile/ios/Packages/NgtermCore/Sources/NgtermCore/CoreInfo.swift
 scripts/build-ios.sh archive      # a Release archive for devices (unsigned without the release secrets), checked
@@ -1217,7 +1220,13 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   takes the XCFramework and bindings a `--no-xcode` run left in `Generated/`, `--device phone|tablet` keeps a plan
   to one simulator, and `--ui-shard K/N` to the K-th of N shares of the UI test classes (the last share skips what
   the others run, so the shares are the whole plan). Each plan's run ends with its tests counted per simulator and
-  its slowest test classes' times, which is how a split run is checked against a whole one.
+  its slowest test classes' times, which is how a split run is checked against a whole one. A push and a pull
+  request run only the smoke set of the UI plan (`smoke`); the whole UI plan runs nightly, by hand and before a
+  release ([CI](#ci), `ios.yml`).
+- The smoke set (`UI_SMOKE_TESTS` in `build-ios.sh`) is a small number of UI tests over the main paths of the app:
+  the app starts and opens Settings, the first run, a first connect to a machine, and typing in a session that a
+  tap on its row opens. Each test adds about a minute on each simulator of a CI run, so keep the set short. A name
+  in the set that is not a UI test stops the run.
 - The Unit plan measures line coverage of the app's own code: the app target and the packages' library targets
   (`Unit.xctestplan`'s code coverage targets), not the tests, the fake core or the generated bindings; the UI plan
   is not measured. `test` and `coverage` write its summary per target and per file, least covered first, beside the
@@ -1625,9 +1634,27 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   scripts and pins), on the `xcode-27` image: `core` builds the core's XCFramework and
   bindings once (main caches them by their inputs) and `core-tests` runs the core's Rust tests in the phone simulator; then,
   side by side over that core, `lint` (`scripts/build-ios.sh lint`), `unit` (`build-ios.sh coverage`: the Unit plan
-  on both simulators and its coverage floors), `ui-phone`, `ui-tablet-1` and `ui-tablet-2` (`build-ios.sh ui`: the
-  UI plan per simulator, the tablet's in two shares of its test classes) and `archive` (`build-ios.sh archive`,
+  on both simulators and its coverage floors), the UI legs of the suite and `archive` (`build-ios.sh archive`,
   unsigned); `results` gathers the result bundles and the failed snapshots' images of the test jobs that failed.
+  The trigger selects the suite of the UI legs:
+
+  | Trigger | Suite | UI legs |
+  |---|---|---|
+  | a push to main or `ci/**`, a pull request (path-filtered) | smoke | `ui-smoke` (`build-ios.sh smoke`: the smoke set on the phone, then on the tablet) |
+  | each night on main (03:17 UTC), a run by hand, the release | full | `ui-phone`, `ui-tablet-1` and `ui-tablet-2` (`build-ios.sh ui`: the UI plan per simulator, the tablet's in two shares of its test classes) |
+
+  The two suites have the same other jobs and the same gate: a UI test that passes only on its retry fails its
+  leg. The coverage floors come from the Unit plan alone, so each push checks them. A run of one suite does not
+  cancel a run of the other suite. A push takes about 35 min when main has the core of its inputs in the cache, and
+  about 50 min when `core` builds it: then `lint` and `unit`, about 30 min each, are the longest jobs. A full run
+  takes about 60 to 80 min.
+
+  ```sh
+  gh workflow run ios --ref main                      # the full suite by hand, on main's head (-f suite=smoke: the smoke set)
+  gh run list --workflow ios.yml --event schedule -L 5   # the nightly runs and their result
+  ```
+
+  A red nightly run is a bug on main: fix it at once, as a red push run.
 - `ios-release.yml`: a release tag's signed iOS build, uploaded to TestFlight, and dry runs by hand or from `ci/**`
   pushes ([docs/ios-release.md](ios-release.md)).
 - `lint.yml` (path-filtered to the workflows, the scripts, the Git hooks, their linters' settings and
