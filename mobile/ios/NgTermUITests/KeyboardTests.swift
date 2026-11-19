@@ -31,18 +31,19 @@ internal final class KeyboardTests: XCTestCase {
         FakeApp.expectGone(introduction, "the slide-to-type introduction", lasting: wait)
     }
 
-    // Reads the bench's `line` again until its text `matches` or the wait ends, and returns the last text read. The
-    // test reads the line itself: an XCTNSPredicateExpectation that reads the line once before the app updates it then
-    // captures the element's debug description, and on a loaded simulator that capture can use all the wait, so the
-    // expectation reads the line no second time. The wait is a number of reads, as FakeApp's waits are.
+    // Reads the bench's `line` again until its text `matches` or the wait ends, and returns the last text read: nil
+    // when no read completed. The test reads the line itself: an XCTNSPredicateExpectation that reads the line once
+    // before the app updates it then captures the element's debug description, and on a loaded simulator that capture
+    // can use all the wait, so the expectation reads the line no second time. The wait is a number of reads, as
+    // FakeApp's waits are.
     @MainActor
-    private static func read(_ line: String, in app: XCUIApplication, until matches: (String) -> Bool) -> String {
+    private static func read(_ line: String, in app: XCUIApplication, until matches: (String) -> Bool) -> String? {
         let element = app.staticTexts[line]
-        var text = ""
+        var text: String?
         ScreenRead.Wait(lasting: wait, beat: readBeat).poll {
             ScreenRead.shows(element) { snapshot in
                 text = snapshot.label
-                return matches(text)
+                return matches(snapshot.label)
             }
         }
         return text
@@ -52,7 +53,7 @@ internal final class KeyboardTests: XCTestCase {
     @MainActor
     private static func expect(_ line: String, reads text: String, in app: XCUIApplication) {
         let label = read(line, in: app) { $0 == text }
-        XCTAssertEqual(label, text, "\(line) reads '\(label)', not '\(text)'")
+        XCTAssertEqual(label, text, "\(line) reads '\(label ?? "nothing: no read completed")', not '\(text)'")
     }
 
     @MainActor
@@ -70,7 +71,15 @@ internal final class KeyboardTests: XCTestCase {
     internal func testTheSoftKeyboardAndTheExtraKeysType() throws {
         let app = launch()
         let keyboard = app.keyboards.firstMatch
-        guard keyboard.waitForExistence(timeout: Self.wait) else {
+        // only a read that completed and found no soft keyboard is a reason to skip: a wait on time alone can end with
+        // no read on a loaded runner
+        let shown = ScreenRead.Wait(reads: 1, lasting: Self.wait).poll { ScreenRead.isShown(keyboard) }
+        guard shown.held else {
+            guard shown.reads > 0 else {
+                FakeApp.attachScreen("no read of the soft keyboard")
+                XCTFail("no read of the soft keyboard completed in \(Int(shown.seconds)) s (\(shown.failed) failed)")
+                return
+            }
             throw XCTSkip("the simulator has the Mac's keyboard attached, so no soft keyboard shows")
         }
         Self.closeTheKeyboardIntroduction(in: app)
@@ -107,7 +116,8 @@ internal final class KeyboardTests: XCTestCase {
         let grid = app.staticTexts["bench-grid"].label
         app.typeKey("=", modifierFlags: .command)
         let bigger = Self.read("bench-grid", in: app) { $0 != grid }
-        XCTAssertNotEqual(bigger, grid, "⌘= made the text no bigger")
+        XCTAssertNotNil(bigger, "no read of bench-grid completed after ⌘=")
+        XCTAssertNotEqual(bigger ?? grid, grid, "⌘= made the text no bigger")
         app.typeKey("0", modifierFlags: .command)
         Self.expect("bench-grid", reads: grid, in: app)
         app.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: [.command, .option])
