@@ -20,8 +20,11 @@
   - a Start-menu shortcut whose System.AppUserModel.ID is the app id the app runs under, so the shortcut, the taskbar
     and the toasts are one app (crates/ngterm-gpui/src/notifications/windows.rs); uninstall removes the app id's
     registration the app writes at each launch. The shortcut has no icon of its own, so the shell shows ngterm.exe's
-    icon resource: a taskbar pin copies the shortcut's icon path, and the path of an Icon element is in the product's
-    own Installer folder, which the removal of that product deletes (the pin then shows a blank icon after an upgrade)
+    icon resource. A taskbar pin copies the shortcut's icon path, and the path of an Icon element is in the product's
+    own Installer folder (%APPDATA%\Microsoft\Installer\{ProductCode}). Removing the earlier product first deleted that
+    folder, so the pin showed a blank icon after an upgrade. With the removal after the install, Windows Installer keeps
+    the folder while the shared shortcut component uses it, and no later uninstall removes it: each upgrade would leave
+    one folder. The one an upgrade from a release with that icon leaves is kept, as the pins made then use its icon.
 
   Not installed: share\ngterm\session-BUILD, the session server's build id, which names the staged binary's size and
   modification time to the nanosecond (crates/ngterm-session/src/build_id.rs): an installed file gets the install's
@@ -34,6 +37,10 @@
   new one installs: ngterm.exe, the Start-menu shortcut and the PATH entry stay, and a taskbar pin keeps its target
   (removing the earlier version first deleted every file and the shortcut until the new install put them back). Never
   give a component a fixed Guid: one path with two GUIDs would let the removal delete a file the new version installed.
+  The install folder is recorded (HKCU\Software\ngterm\Installer, InstallFolder) and an upgrade that names none goes
+  into it: an install moved to another folder keeps the earlier one's PATH entry, as the PATH component stays installed
+  for the new version while the earlier product is removed. An INSTALLFOLDER given on the command line (the in-app
+  updater gives the installed one) comes first.
   User state (the state, config and agent directories) is never the installer's.
 
   ICE38, ICE64 and ICE91 are suppressed by the build script: they ask a component under the user's profile to key on
@@ -54,6 +61,15 @@
     <Property Id="ARPURLINFOABOUT" Value="https://ngterm.com" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
+    <!-- the recorded install folder (the InstallFolder component), which an upgrade without an INSTALLFOLDER uses. It
+         is set after AppSearch, before CostInitialize gives the directory its default value: at that time only a
+         command-line INSTALLFOLDER is set, and that one comes first -->
+    <Property Id="NGTERM_INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="InstallFolder" Root="HKCU" Key="Software\ngterm\Installer" Name="InstallFolder" Type="raw" />
+    </Property>
+    <SetProperty Id="INSTALLFOLDER" Value="[NGTERM_INSTALLFOLDER]" After="AppSearch" Sequence="both"
+                 Condition="NGTERM_INSTALLFOLDER AND NOT INSTALLFOLDER" />
+
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="ngterm">
@@ -68,6 +84,7 @@
       <ComponentGroupRef Id="Resources" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="UserPath" />
+      <ComponentRef Id="InstallFolder" />
     </Feature>
   </Package>
 
@@ -123,6 +140,10 @@
     <Component Id="UserPath" Directory="INSTALLFOLDER">
       <Environment Id="UserPath" Name="PATH" Value="[BINFOLDER]" Part="last" Action="set" System="no" Permanent="no" />
       <RegistryValue Root="HKCU" Key="Software\ngterm\Installer" Name="UserPath" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="InstallFolder" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKCU" Key="Software\ngterm\Installer" Name="InstallFolder" Type="string"
+                     Value="[INSTALLFOLDER]" KeyPath="yes" />
     </Component>
   </Fragment>
 </Wix>

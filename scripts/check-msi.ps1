@@ -15,11 +15,15 @@ build identity and the licenses are in the staged layout; no session build id (p
 package's version; the user's PATH in the registry holds bin\ and keeps its value kind (REG_EXPAND_SZ), and a new
 PowerShell given that PATH finds the installed ngtermctl and runs it; the Start-menu shortcut targets ngterm.exe, starts
 in the user's profile, carries the app id as its System.AppUserModel.ID and takes its icon from ngterm.exe (a taskbar
-pin copies the shortcut's icon path, and a path under the product's own Installer folder goes away with that product).
+pin copies the shortcut's icon path; an icon in the product's own Installer folder would leave that folder behind after
+an upgrade, and before the late removal it went away with the earlier product, which made the pin blank).
 With -UpgradeMsi, that MSI (a higher version, built from the same tree) replaces the first: the first product is gone,
 the second installed, the files in place, bin\ on the user's PATH once, and a file in the app's state directory is kept.
 The removal of the first product removes no file and no shortcut (its upgrade log has no FileRemove or ShortcutRemove):
 it runs after the new install, whose components are the same, so ngterm.exe and the Start-menu shortcut stay in place.
+That count is checked against the log itself: the upgrade log holds the first product's removal down to its components,
+and the uninstall log has the FileRemove of ngterm.exe and the ShortcutRemove the same pattern looks for. The install
+folder is recorded in HKCU\Software\ngterm\Installer, so that an upgrade without an INSTALLFOLDER goes into it.
 Then the uninstall, after the app id's toast registration is written as the app writes it at each launch: no install
 folder, shortcut, product registration, icon folder of either product, PATH entry (the user's PATH has its entries and
 kind back), HKCU\Software\ngterm or app id registration is left, and the state directory's file stays (user state is
@@ -52,6 +56,8 @@ $root = Join-Path $env:LOCALAPPDATA 'Programs\ngterm'
 $bin = Join-Path $root 'bin'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'ngterm.lnk'
 $aumidKey = "HKCU:\Software\Classes\AppUserModelId\$AppId"
+# the ops of a verbose msiexec log that remove an installed file or shortcut
+$removalPattern = 'Executing op: (FileRemove|ShortcutRemove)\('
 $failures = 0
 
 function Check([string] $what, [bool] $ok) {
@@ -128,6 +134,8 @@ function Test-Installed([string] $msi, [bool] $versioned) {
     }
 
     Check "the user's PATH holds $bin" (Test-OnUserPath)
+    $folder = (Get-ItemProperty 'HKCU:\Software\ngterm\Installer' -ErrorAction SilentlyContinue).InstallFolder
+    Check "the install folder is recorded for an upgrade (got '$folder')" ("$folder".TrimEnd('\') -ieq $root)
     $kind = (Get-RawUserPath)[1]
     Check "the user's PATH keeps its kind ($($originalPath[1]), now $kind)" ($originalPath[1] -eq 'absent' -or $kind -eq $originalPath[1])
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -173,9 +181,17 @@ if ($UpgradeMsi) {
     # the earlier product's removal runs inside the upgrade and logs each file and shortcut it removes; it runs after the
     # new install (MajorUpgrade Schedule), which holds each of its components, so it must remove nothing
     $upgradeLog = Join-Path $Log 'upgrade.log'
-    $removed = @(Select-String -Path $upgradeLog -Pattern 'Executing op: (FileRemove|ShortcutRemove)\(' |
+    $removed = @(Select-String -Path $upgradeLog -Pattern $removalPattern |
         ForEach-Object { $_.Line -replace '^.*Executing op: ', '' })
     $first = ($removed | Select-Object -First 3) -join '; '
+    # that zero means something only when this log holds the earlier product's removal script at the level of its
+    # components: its ProductInfo op, then its ComponentUnregister ops (the uninstall log's FileRemove ops, checked
+    # after the uninstall, show that the pattern reads this msiexec's logs)
+    $removal = @(Select-String -Path $upgradeLog -SimpleMatch "Executing op: ProductInfo(ProductKey=$installed,")
+    Check "the upgrade log holds the removal of product $installed" ($removal.Count -eq 1)
+    $unregistered = @(Select-String -Path $upgradeLog -Pattern 'Executing op: ComponentUnregister\(' |
+        Where-Object { $removal.Count -eq 1 -and $_.LineNumber -gt $removal[0].LineNumber }).Count
+    Check "and its components ($unregistered unregistered)" ($unregistered -gt 0)
     Check "the earlier product's removal removed no file or shortcut (got $($removed.Count): $first)" ($removed.Count -eq 0)
     Check "the upgrade removed product $installed" ((Get-ProductState $installed) -eq -1)
     # built from the same binaries with a higher package version (scripts/build-msi.sh --version)
@@ -190,6 +206,13 @@ New-Item -Force -Path $aumidKey | Out-Null
 New-ItemProperty -Force -Path $aumidKey -Name DisplayName -Value 'ngterm' | Out-Null
 
 Invoke-Msiexec @('/x', $installed) 'uninstall'
+# the positive control of the upgrade's check: the same pattern finds the uninstall's removals
+$uninstallLog = Join-Path $Log 'uninstall.log'
+$removals = @(Select-String -Path $uninstallLog -Pattern $removalPattern | ForEach-Object Line)
+$exe = @($removals | Where-Object { $_ -like '*Executing op: FileRemove(,FileName=ngterm.exe,*' }).Count
+$links = @($removals | Where-Object { $_ -like '*Executing op: ShortcutRemove(*' }).Count
+Check "the uninstall log has the removal of ngterm.exe ($exe) and of the shortcut ($links)" (
+    $exe -eq 1 -and $links -eq 1)
 Check "product $installed is gone" ((Get-ProductState $installed) -eq -1)
 Check "no install folder is left ($root)" (-not (Test-Path $root))
 Check 'no Start-menu shortcut is left' (-not (Test-Path $shortcut))

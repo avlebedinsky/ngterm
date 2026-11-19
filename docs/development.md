@@ -1380,11 +1380,12 @@ msiexec /i dist\ngterm-x64.msi                                               # f
 It installs into `%LOCALAPPDATA%\Programs\ngterm` with the staged layout and the licenses under `share\doc`, puts `bin\`
 on the user's `PATH`, and adds a Start-menu shortcut carrying the application id and ngterm.exe's icon. The version is
 the staged `ngterm`'s Cargo version unless `--version` gives one; an install of a higher version replaces the installed
-one (a major upgrade, installed over it, so that a taskbar pin keeps its target and its icon). The uninstall removes its
-files, shortcut, `PATH` entry and the application id's registration, and leaves the state and config dirs. The session
-server's build id (`share\ngterm\session-BUILD`) is not installed, so an installed session server hands no sessions over
-to a new build after an upgrade (the .wxs header says why). `scripts/check-msi.ps1` installs an MSI for the current
-user, checks what it installed, upgrades and uninstalls it, on a throwaway machine or account only, as CI does.
+one (a major upgrade, installed over it, so that a taskbar pin keeps its target and its icon), in the folder it is
+installed in unless `INSTALLFOLDER` names another. The uninstall removes its files, shortcut, `PATH` entry and the
+application id's registration, and leaves the state and config dirs. The session server's build id
+(`share\ngterm\session-BUILD`) is not installed, so an installed session server hands no sessions over to a new build
+after an upgrade (the .wxs header says why). `scripts/check-msi.ps1` installs an MSI for the current user, checks what
+it installed, upgrades and uninstalls it, on a throwaway machine or account only, as CI does.
 
 Tests, from Git Bash. The crates as CI runs them ([CI](#ci)), then the suite, which builds the release app, stages it
 into `target/conformance-stage` and runs the protocol, cli, behaviors and ui layers against it (the ui layer drives the
