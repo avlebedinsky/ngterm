@@ -147,7 +147,9 @@ def test_a_new_runtime_gets_a_prerelease_that_is_not_latest(gh, tmp_path: Path) 
     create = next(call for call in calls if call[:2] == ["release", "create"])
     assert create[2] == f"web-engine-{KEY}"
     assert "--prerelease" in create and "--latest=false" in create
-    assert create[create.index("--target") + 1] == "c0ffee"
+    # A tag on the build commit needs the `workflows` permission once main's workflows differ from it: no target.
+    assert "--target" not in create
+    assert "built at c0ffee" in create[create.index("--notes") + 1]
     upload = next(call for call in calls if call[:2] == ["release", "upload"])
     assert upload[2] == f"web-engine-{KEY}" and upload[-1].endswith(archive_name())
     assert calls.index(create) < calls.index(upload)

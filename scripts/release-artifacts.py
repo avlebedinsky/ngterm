@@ -24,7 +24,8 @@ pins its runtime's size and hash, so a published archive is never replaced: `web
                                                   checked against the digest GitHub reports, or `upload` when this
                                                   ARCH's runtime is not published yet (gh; reads only)
   web-engine-publish DIR COMMIT MANIFEST...       ensure each manifest's runtimes are on their `web-engine-<key>`
-                                                  releases: prereleases, never "latest", tagged at COMMIT when created
+                                                  releases: prereleases, never "latest", whose notes name the build
+                                                  COMMIT; a new release's tag goes on the default branch's tip
   previous-tag TAG                                print the published stable `vX.Y.Z` release just below TAG, or nothing
                                                   (gh; reads only)
   --self-test
@@ -236,10 +237,13 @@ def web_engine_publish(directory, commit, manifests):
                                         f"build's sha256:{value['files'][name]}: shipped apps pin the published one")
                 continue
             if published is None:
-                gh("release", "create", tag, "--target", commit, "--prerelease", "--latest=false",
+                # No `--target`: the new tag goes on the default branch's tip. A release whose target is a commit SHA
+                # with workflow changes against main needs the `workflows` permission, which GITHUB_TOKEN never has,
+                # and main can change its workflows while a release waits (GitHub changelog, 2023-11-02).
+                gh("release", "create", tag, "--prerelease", "--latest=false",
                    "--title", f"ngterm web engine {key[:12]} ({arch})",
-                   "--notes", "The WPE WebKit runtime ngterm downloads on Linux. Never delete it while a shipped "
-                              "version pins it.")
+                   "--notes", f"The WPE WebKit runtime ngterm downloads on Linux, built at {commit}. Never delete it "
+                              "while a shipped version pins it.")
             else:
                 gh("release", "edit", tag, "--prerelease", "--latest=false")
                 if asset is not None:

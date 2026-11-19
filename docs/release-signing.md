@@ -38,6 +38,11 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
   SHA-256 into the app. Only a publishing run writes a `web-engine-<key>` release, as a prerelease with `--latest=false`
   so that `releases/latest` keeps naming the app, and before the app release leaves draft; dry runs and rehearsals keep
   the runtime as a workflow artifact. Each architecture has its own release, since the key covers the architecture.
+- A new `web-engine-<key>` release tags the default branch's tip, and its notes name the build commit. A release
+  whose target is a commit SHA with workflow changes against main needs the `workflows` permission, which the job
+  token never has: GitHub answers HTTP 403 "Resource not accessible by integration" (v0.2.6), also when the tag
+  exists. A run that still sends the SHA is unblocked when an admin creates that `web-engine-<key>` release with no
+  assets: the job then only uploads the runtime.
 - Never delete a `web-engine-*` release that a shipped version pins, and never replace its archive: that version could
   no longer install its engine. `release-artifacts.py web-engine-publish` fails when an archive under a published key
   differs.
