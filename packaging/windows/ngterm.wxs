@@ -38,9 +38,14 @@
   (removing the earlier version first deleted every file and the shortcut until the new install put them back). Never
   give a component a fixed Guid: one path with two GUIDs would let the removal delete a file the new version installed.
   The install folder is recorded (HKCU\Software\ngterm\Installer, InstallFolder) and an upgrade that names none goes
-  into it: an install moved to another folder keeps the earlier one's PATH entry, as the PATH component stays installed
-  for the new version while the earlier product is removed. An INSTALLFOLDER given on the command line (the in-app
-  updater gives the installed one) comes first.
+  into it. An INSTALLFOLDER given on the command line (the in-app updater gives the installed one) comes first.
+  An upgrade can still move the app to another folder: an INSTALLFOLDER that names another one, or an earlier version
+  that recorded no folder (0.2.6 and earlier) in a custom one. The PATH component then stays installed for the new
+  version while the earlier product is removed, so that removal keeps the earlier folder's PATH entry. The new version
+  removes that entry itself: AppSearch finds the earlier bin\ through the ngterm.exe component (its GUID is the same in
+  each version, which check-msi.ps1 checks), and the StaleUserPath component removes that folder from the PATH when it
+  is not the new bin\. Component conditions are evaluated before the folders are known, so the value is compared after
+  CostFinalize; when no entry is stale, the value is one that no PATH entry can be.
   User state (the state, config and agent directories) is never the installer's.
 
   ICE38, ICE64 and ICE91 are suppressed by the build script: they ask a component under the user's profile to key on
@@ -70,6 +75,18 @@
     <SetProperty Id="INSTALLFOLDER" Value="[NGTERM_INSTALLFOLDER]" After="AppSearch" Sequence="both"
                  Condition="NGTERM_INSTALLFOLDER AND NOT INSTALLFOLDER" />
 
+    <!-- the bin\ folder of an installed ngterm.exe, before this install: the component of ngterm.exe below, whose
+         path-derived GUID is the same in each version -->
+    <Property Id="NGTERM_EARLIERBIN" Secure="yes">
+      <ComponentSearch Id="EarlierBin" Guid="1D323FDB-972C-5EB5-9691-D5926E6C76B4" Type="file" />
+    </Property>
+    <!-- the PATH entry that StaleUserPath removes: the earlier bin\ when it is not this install's, else a value that no
+         folder can have (an empty value would remove the whole PATH). It is set after CostFinalize, which resolves
+         BINFOLDER -->
+    <Property Id="NGTERM_STALEBIN" Value="&lt;none&gt;" />
+    <SetProperty Id="NGTERM_STALEBIN" Value="[NGTERM_EARLIERBIN]" After="CostFinalize" Sequence="execute"
+                 Condition="NGTERM_EARLIERBIN AND NGTERM_EARLIERBIN ~&lt;&gt; BINFOLDER" />
+
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="ngterm">
@@ -85,6 +102,7 @@
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="UserPath" />
       <ComponentRef Id="InstallFolder" />
+      <ComponentRef Id="StaleUserPath" />
     </Feature>
   </Package>
 
@@ -144,6 +162,14 @@
     <Component Id="InstallFolder" Directory="INSTALLFOLDER">
       <RegistryValue Root="HKCU" Key="Software\ngterm\Installer" Name="InstallFolder" Type="string"
                      Value="[INSTALLFOLDER]" KeyPath="yes" />
+    </Component>
+    <!-- removes the PATH entry of an earlier version in another folder, at the install only: with Permanent, the
+         removal of the component (the uninstall, or a later upgrade that removes this version) changes no PATH entry -->
+    <Component Id="StaleUserPath" Directory="INSTALLFOLDER">
+      <Environment Id="StaleUserPath" Name="PATH" Value="[NGTERM_STALEBIN]" Part="last" Action="remove" System="no"
+                   Permanent="yes" />
+      <RegistryValue Root="HKCU" Key="Software\ngterm\Installer" Name="StaleUserPath" Type="integer" Value="1"
+                     KeyPath="yes" />
     </Component>
   </Fragment>
 </Wix>
