@@ -15,12 +15,13 @@ build identity and the licenses are in the staged layout; no session build id (p
 package's version; the user's PATH in the registry holds bin\ and keeps its value kind (REG_EXPAND_SZ), and a new
 PowerShell given that PATH finds the installed ngtermctl and runs it; the Start-menu shortcut targets ngterm.exe, starts
 in the user's profile and carries the app id as its System.AppUserModel.ID. With -UpgradeMsi, that MSI (a higher
-version) replaces the first: the first product is gone, the second installed, the files in place, bin\ on the user's
-PATH once, ngterm.exe and the Start-menu shortcut never removed on the way (Explorer drops a taskbar pin whose target
-disappears), and a file in the app's state directory is kept. Then the uninstall, after the app id's toast registration
-is written as the app writes it at each launch: no install folder, shortcut, product registration, PATH entry (the
-user's PATH has its entries and kind back), HKCU\Software\ngterm or app id registration is left, and the state
-directory's file stays (user state is never the installer's).
+version, built from the same tree) replaces the first: the first product is gone, the second installed, the files in
+place, bin\ on the user's PATH once, and a file in the app's state directory is kept. The removal of the first product
+removes no file and no shortcut (its upgrade log has no FileRemove or ShortcutRemove): it runs after the new install,
+whose components are the same, so ngterm.exe and the Start-menu shortcut stay in place. Then the uninstall, after the
+app id's toast registration is written as the app writes it at each launch: no install folder, shortcut, product
+registration, PATH entry (the user's PATH has its entries and kind back), HKCU\Software\ngterm or app id registration is
+left, and the state directory's file stays (user state is never the installer's).
 
 Each msiexec run logs verbosely under -Log. The exit status is 0 when every check passed.
 
@@ -95,18 +96,6 @@ function Get-UserPathCount {
 
 function Test-OnUserPath { (Get-UserPathCount) -gt 0 }
 
-# Deleted and Renamed events of the given files, queued while msiexec runs and read back with Get-Event.
-function Watch-Removal([string[]] $paths) {
-    foreach ($path in $paths) {
-        $watcher = New-Object IO.FileSystemWatcher (Split-Path $path), (Split-Path -Leaf $path)
-        $watcher.EnableRaisingEvents = $true
-        foreach ($kind in 'Deleted', 'Renamed') {
-            Register-ObjectEvent -InputObject $watcher -EventName $kind -SourceIdentifier "removal-$kind-$path" | Out-Null
-        }
-        $watcher
-    }
-}
-
 function Test-Installed([string] $msi, [bool] $versioned) {
     $version = Get-MsiProperty $msi 'ProductVersion'
     $code = Get-MsiProperty $msi 'ProductCode'
@@ -175,16 +164,14 @@ New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 Set-Content -Path $stateFile -Value 'user state'
 
 if ($UpgradeMsi) {
-    $watchers = @(Watch-Removal @($shortcut, (Join-Path $bin 'ngterm.exe')))
     Invoke-Msiexec @('/i', "`"$UpgradeMsi`"") 'upgrade'
-    # the watchers' events arrive on their own thread, a moment after msiexec exits
-    Start-Sleep -Seconds 1
-    $removals = @(Get-Event | Where-Object { $_.SourceIdentifier -like 'removal-*' })
-    $seen = ($removals | ForEach-Object { "$($_.SourceEventArgs.ChangeType) $($_.SourceEventArgs.FullPath)" }) -join ', '
-    Check "the upgrade never removed ngterm.exe or the shortcut (saw '$seen')" ($removals.Count -eq 0)
-    Get-EventSubscriber | Where-Object { $_.SourceIdentifier -like 'removal-*' } | Unregister-Event
-    $removals | Remove-Event
-    $watchers | ForEach-Object { $_.Dispose() }
+    # the earlier product's removal runs inside the upgrade and logs each file and shortcut it removes; it runs after the
+    # new install (MajorUpgrade Schedule), which holds each of its components, so it must remove nothing
+    $upgradeLog = Join-Path $Log 'upgrade.log'
+    $removed = @(Select-String -Path $upgradeLog -Pattern 'Executing op: (FileRemove|ShortcutRemove)\(' |
+        ForEach-Object { $_.Line -replace '^.*Executing op: ', '' })
+    $first = ($removed | Select-Object -First 3) -join '; '
+    Check "the earlier product's removal removed no file or shortcut (got $($removed.Count): $first)" ($removed.Count -eq 0)
     Check "the upgrade removed product $installed" ((Get-ProductState $installed) -eq -1)
     # built from the same binaries with a higher package version (scripts/build-msi.sh --version)
     $installed = Test-Installed $UpgradeMsi $false
