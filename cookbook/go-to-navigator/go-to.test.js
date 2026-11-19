@@ -64,6 +64,12 @@ test("a split pane without the status reads unknown when an agent runs there", (
   assert.deepEqual(review.map(p => p.status), ["blocked", "unknown"]);
 });
 
+test("a session's title matches its primary pane only", () => {
+  const t = structuredClone(tree);
+  t.workspaces[0].sessions[1].title = "fix autostart";
+  assert.deepEqual(lines(rows(workspacesOf(t, {}), "autostart", null)), ["api", "└─review", "  └─codex · review [codex blocked]"]);
+});
+
 test("status filters keep their panes and hide empty workspaces", () => {
   const ws = workspacesOf(tree, branches);
   assert.deepEqual(lines(rows(ws, "", "b")), ["api", "└─review", "  └─codex · review [codex blocked]"]);

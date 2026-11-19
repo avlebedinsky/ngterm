@@ -47,7 +47,8 @@ const GoTo = (() => {
           else status = agent ? "unknown" : "shell";
           panes.push({
             session: s.id, parent: s.parent || null, pane: side, sessionName: s.name || "", split,
-            title: s.title || null,
+            // the tree's title, like its cwd and foreground, is the primary pane's
+            title: side === "left" ? s.title || null : null,
             cwd: (side === "right" ? s.splitCwd || s.cwd : s.cwd) || "",
             agent, status,
             indicator: side === holder && !!STATUS[s.status],
