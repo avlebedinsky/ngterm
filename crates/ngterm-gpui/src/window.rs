@@ -577,14 +577,7 @@ impl WindowView {
         self.palette = Some(palette);
     }
 
-    fn sync_goto(
-        &mut self,
-        core: &Core,
-        place: (f64, Metrics),
-        refocus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn sync_goto(&mut self, core: &Core, metrics: Metrics, refocus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = core.goto_view(self.id) else {
             if self.goto.take().is_some() {
                 self.set_layer(Layer::GoTo, None, cx);
@@ -593,7 +586,7 @@ impl WindowView {
         };
         let glyphs = crate::goto::glyphs(&view, core.settings());
         if let Some(goto) = self.goto.as_ref() {
-            goto.update(cx, |goto, cx| goto.refresh((view, glyphs), place, cx));
+            goto.update(cx, |goto, cx| goto.refresh((view, glyphs), metrics, cx));
             if refocus {
                 let focus = goto.read(cx).focus_handle();
                 window.focus(&focus, cx);
@@ -601,7 +594,7 @@ impl WindowView {
             return;
         }
         let sink = crate::goto::sink(self.id, &self.poster);
-        let goto = cx.new(|cx| GotoPanel::new((view, glyphs), place, sink, cx));
+        let goto = cx.new(|cx| GotoPanel::new((view, glyphs), metrics, sink, cx));
         let focus = goto.read(cx).focus_handle();
         window.focus(&focus, cx);
         self.set_layer(Layer::GoTo, Some(goto.clone().into()), cx);
@@ -1002,7 +995,7 @@ impl WindowView {
         self.sync_ask(core, refocus && !palette, window, cx);
         self.sync_picker(core, place, refocus && !palette, window, cx);
         self.sync_palette(core, place, refocus, window, cx);
-        self.sync_goto(core, place, refocus, window, cx);
+        self.sync_goto(core, place.1, refocus, window, cx);
         self.popovers.update(cx, |popovers, cx| popovers.sync(core, cx));
         self.sync_popover_layer(cx);
     }
@@ -1191,14 +1184,14 @@ fn render_settings(view: &AnyView, window: &Window, cx: &Context<WindowView>) ->
         .into_any_element()
 }
 
-fn goto_takes(goto: &Entity<GotoPanel>, stroke: &KeyStroke, cx: &App) -> bool {
+fn goto_takes(goto: &Entity<GotoPanel>, stroke: &KeyStroke, cx: &mut App) -> bool {
     if stroke.key.is_modifier()
         || crate::keymap_dispatch::menu_action(stroke) == Some(ngterm_core::keymap::BuiltinAction::GoTo)
     {
         return false;
     }
     if let Some(key) = crate::goto::goto_key(stroke) {
-        goto.read(cx).key(key);
+        goto.update(cx, |goto, cx| goto.key(key, cx));
     }
     true
 }

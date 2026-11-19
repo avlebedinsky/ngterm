@@ -128,3 +128,28 @@ fn the_open_go_to_window_follows_a_status_change(cx: &mut TestAppContext) {
     s.settle();
     assert!(s.goto_view().is_none(), "a press on the scrim closes it");
 }
+
+#[gpui_kit::test]
+fn the_go_to_window_fits_the_whole_window_with_the_sidebar_shown_or_hidden(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    s.press_go_to();
+    let sidebar = |s: &mut Shell<'_>| s.cx.debug_bounds("sidebar").expect("the sidebar").size.width;
+    assert!(sidebar(&mut s) > px(0.), "the sidebar shows");
+    let shown = s.cx.debug_bounds("go-to").expect("the panel");
+    let window = s.cx.debug_bounds("go-to-scrim").expect("the scrim");
+    assert!(
+        (shown.center().x - window.center().x).abs() < px(1.),
+        "{shown:?} in {window:?}"
+    );
+    s.state
+        .core
+        .library_mut()
+        .store_mut(s.window)
+        .unwrap()
+        .set_sidebar_visible(false);
+    s.settle();
+    assert_eq!(sidebar(&mut s), px(0.), "the sidebar hides");
+    let hidden = s.cx.debug_bounds("go-to").expect("the panel");
+    assert_eq!(shown.size.width, hidden.size.width);
+}

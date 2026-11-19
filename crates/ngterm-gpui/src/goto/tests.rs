@@ -198,8 +198,7 @@ fn open(
     let seen = Rc::clone(&requests);
     let sink: Sink = Rc::new(move |request| seen.borrow_mut().push(request));
     let glyphs = glyphs(&view, &AppSettings::default());
-    let (panel, cx) =
-        cx.add_window_view(move |_, cx| GotoPanel::new((view, glyphs), (0.0, Metrics::default()), sink, cx));
+    let (panel, cx) = cx.add_window_view(move |_, cx| GotoPanel::new((view, glyphs), Metrics::default(), sink, cx));
     cx.simulate_resize(gpui_kit::size(px(900.), px(600.)));
     cx.run_until_parked();
     (panel, cx, requests)
@@ -237,7 +236,7 @@ fn the_panel_draws_its_rows_and_a_click_opens_one(cx: &mut TestAppContext) {
     let row = cx.debug_bounds(selector(agent)).expect("the agent's row");
     assert!(row.contains(&glyph.center()), "the glyph sits in its pane's row");
     cx.simulate_click(row.center(), gpui_kit::Modifiers::default());
-    panel.read_with(cx, |panel, _| panel.key(GotoKey::Down));
+    panel.update(cx, |panel, cx| panel.key(GotoKey::Down, cx));
     let panel_bounds = cx.debug_bounds("go-to").unwrap();
     let outside = gpui_kit::point(px(4.), panel_bounds.bottom() + px(4.));
     cx.simulate_click(outside, gpui_kit::Modifiers::default());
@@ -279,7 +278,7 @@ fn the_panel_follows_the_cores_rows(cx: &mut TestAppContext) {
         ..view
     };
     panel.update(cx, |panel, cx| {
-        panel.refresh((searched.clone(), Vec::new()), (0.0, Metrics::default()), cx);
+        panel.refresh((searched.clone(), Vec::new()), Metrics::default(), cx);
     });
     cx.run_until_parked();
     assert!(cx.debug_bounds("go-to-empty").is_some(), "nothing matches");
@@ -308,26 +307,64 @@ fn the_title_count_and_footer_read_at_the_size_of_the_rows(cx: &mut TestAppConte
     }
 }
 
+fn placed(cx: &mut VisualTestContext, case: &str) {
+    let panel = cx.debug_bounds("go-to").expect("the panel");
+    let window = cx.debug_bounds("go-to-scrim").expect("the scrim");
+    let (center, middle) = (panel.center(), window.center());
+    assert!((center.x - middle.x).abs() < px(1.), "{case}: {center:?} in {middle:?}");
+    assert!((center.y - middle.y).abs() < px(1.), "{case}: {center:?} in {middle:?}");
+    assert!(
+        window.left() <= panel.left()
+            && panel.right() <= window.right()
+            && window.top() <= panel.top()
+            && panel.bottom() <= window.bottom(),
+        "{case}: {panel:?} in {window:?}"
+    );
+}
+
 #[gpui_kit::test]
 fn the_panel_sits_in_the_middle_of_the_window(cx: &mut TestAppContext) {
     let (view, _) = opened();
-    let (panel, cx, _) = open(cx, view.clone());
-    let centered = |cx: &mut VisualTestContext, case: &str| {
-        let center = cx.debug_bounds("go-to").expect("the panel").center();
-        let middle = cx.debug_bounds("go-to-scrim").expect("the scrim").center();
-        assert!((center.x - middle.x).abs() < px(1.), "{case}: {center:?} in {middle:?}");
-        assert!((center.y - middle.y).abs() < px(1.), "{case}: {center:?} in {middle:?}");
-    };
-    centered(cx, "no sidebar");
-    let glyphs = glyphs(&view, &AppSettings::default());
-    panel.update(cx, |panel, cx| {
-        panel.refresh((view, glyphs), (240.0, Metrics::default()), cx);
-    });
-    cx.run_until_parked();
-    centered(cx, "a sidebar");
+    let (_, cx, _) = open(cx, view);
+    placed(cx, "a small window");
     cx.simulate_resize(gpui_kit::size(px(1400.), px(1000.)));
     cx.run_until_parked();
-    centered(cx, "a larger window");
+    placed(cx, "a larger window");
+}
+
+#[gpui_kit::test]
+fn the_search_line_stays_put_while_a_search_drops_rows(cx: &mut TestAppContext) {
+    let (view, _) = opened();
+    let (panel, cx, _) = open(cx, view.clone());
+    frames(cx);
+    let measure = |cx: &mut VisualTestContext| {
+        (
+            cx.debug_bounds("go-to-search").expect("the search line").top(),
+            cx.debug_bounds("go-to").expect("the panel").size.height,
+        )
+    };
+    let opened = measure(cx);
+    let fewer = GotoView {
+        rows: view.rows[..2].to_vec(),
+        query: "zsh".to_owned(),
+        searching: true,
+        ..view.clone()
+    };
+    let none = GotoView {
+        rows: Vec::new(),
+        selected: None,
+        query: "nothing".to_owned(),
+        searching: true,
+        ..view
+    };
+    for searched in [fewer, none] {
+        let query = searched.query.clone();
+        panel.update(cx, |panel, cx| {
+            panel.refresh((searched, Vec::new()), Metrics::default(), cx);
+        });
+        frames(cx);
+        assert_eq!(measure(cx), opened, "{query}");
+    }
 }
 
 fn long_view(selected: usize) -> (GotoView, Vec<GotoTarget>) {
@@ -368,6 +405,35 @@ fn shown(cx: &mut VisualTestContext, target: GotoTarget) -> bool {
     list.top() <= row.top() && row.bottom() <= list.bottom()
 }
 
+fn wheel(cx: &mut VisualTestContext, up: f32) {
+    let list = cx.debug_bounds("go-to-rows").expect("the list");
+    cx.simulate_event(gpui_kit::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(up))),
+        ..gpui_kit::ScrollWheelEvent::default()
+    });
+    frames(cx);
+}
+
+#[gpui_kit::test]
+fn no_frame_shows_the_list_away_from_the_selected_row(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (view, targets) = long_view(25);
+    let sink: Sink = Rc::new(|_| {});
+    let (_, cx) = cx.add_window_view(move |_, cx| GotoPanel::new((view, Vec::new()), Metrics::default(), sink, cx));
+    cx.run_until_parked();
+    for frame in 1..=8 {
+        let drawn = cx.debug_bounds(selector(targets[25])).is_some();
+        assert!(!drawn || shown(cx, targets[25]), "frame {frame}");
+        if cx.update(gpui_kit::Window::simulate_next_frame) == 0 {
+            assert!(drawn, "the rows show once the list is laid out");
+            return;
+        }
+        cx.run_until_parked();
+    }
+    panic!("the panel keeps asking for frames");
+}
+
 #[gpui_kit::test]
 fn the_list_scrolls_to_the_selected_row(cx: &mut TestAppContext) {
     let (view, targets) = long_view(25);
@@ -375,13 +441,14 @@ fn the_list_scrolls_to_the_selected_row(cx: &mut TestAppContext) {
     frames(cx);
     assert!(shown(cx, targets[25]), "the current pane's row on open");
     assert!(!shown(cx, targets[40]), "more rows than fit");
+    placed(cx, "more rows than fit");
     for selected in [40, 0, 33] {
         let moved = GotoView {
             selected: Some(selected),
             ..view.clone()
         };
         panel.update(cx, |panel, cx| {
-            panel.refresh((moved, Vec::new()), (0.0, Metrics::default()), cx);
+            panel.refresh((moved, Vec::new()), Metrics::default(), cx);
         });
         frames(cx);
         assert!(shown(cx, targets[selected]), "row {selected}");
@@ -394,23 +461,47 @@ fn the_wheel_scrolls_the_list_away_from_the_selected_row(cx: &mut TestAppContext
     let (panel, cx, _) = open(cx, view.clone());
     frames(cx);
     assert!(shown(cx, targets[40]));
-    let list = cx.debug_bounds("go-to-rows").expect("the list");
-    cx.simulate_event(gpui_kit::ScrollWheelEvent {
-        position: list.center(),
-        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(2000.))),
-        ..gpui_kit::ScrollWheelEvent::default()
-    });
-    frames(cx);
+    wheel(cx, 2000.);
     assert!(shown(cx, targets[0]), "the wheel took the list to its top");
+    let mut status = view.clone();
+    status.rows[3].pane.as_mut().expect("a pane row").status = PaneStatus::Blocked;
+    for (synced, case) in [(view, "a sync that keeps the selection"), (status, "a status change")] {
+        panel.update(cx, |panel, cx| {
+            panel.refresh((synced, Vec::new()), Metrics::default(), cx);
+        });
+        frames(cx);
+        assert!(shown(cx, targets[0]), "{case} keeps the scroll");
+        assert!(!shown(cx, targets[40]), "{case}");
+    }
+}
+
+#[gpui_kit::test]
+fn a_key_that_keeps_the_selection_brings_its_row_back(cx: &mut TestAppContext) {
+    let (view, targets) = long_view(40);
+    let (panel, cx, requests) = open(cx, view);
+    frames(cx);
+    wheel(cx, 2000.);
+    assert!(!shown(cx, targets[40]), "the wheel took the list away");
+    panel.update(cx, |panel, cx| panel.key(GotoKey::Down, cx));
+    frames(cx);
+    assert!(shown(cx, targets[40]), "Down on the last row");
+    assert_eq!(*requests.borrow(), [Request::Key(GotoKey::Down)]);
+}
+
+#[gpui_kit::test]
+fn other_rows_under_the_same_selected_index_bring_the_new_row_into_view(cx: &mut TestAppContext) {
+    let (view, targets) = long_view(5);
+    let (panel, cx, _) = open(cx, view.clone());
+    frames(cx);
+    wheel(cx, -2000.);
+    assert!(!shown(cx, targets[5]), "the wheel took the list away");
+    let mut searched = view;
+    searched.rows.drain(1..4);
     panel.update(cx, |panel, cx| {
-        panel.refresh((view, Vec::new()), (0.0, Metrics::default()), cx);
+        panel.refresh((searched, Vec::new()), Metrics::default(), cx);
     });
     frames(cx);
-    assert!(
-        shown(cx, targets[0]),
-        "a sync that keeps the selection keeps the scroll"
-    );
-    assert!(!shown(cx, targets[40]));
+    assert!(shown(cx, targets[8]), "the row now under the selected index");
 }
 
 fn split_view() -> (GotoView, Uuid, Uuid) {

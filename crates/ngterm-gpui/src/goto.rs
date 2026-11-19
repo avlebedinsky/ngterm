@@ -14,6 +14,7 @@
 //! herdr: `src/client/shell/overlays.rs` (`render_navigator_overlay`) at `HERDR_REV` (`build/pins.env`), licensed
 //! under the Apache License 2.0, modified: drawn with the palettes' panel and rows instead of terminal cells.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::prelude::FluentBuilder as _;
@@ -163,17 +164,17 @@ pub struct GotoPanel {
     glyphs: Vec<Option<GlyphLook>>,
     sink: Sink,
     focus: FocusHandle,
-    inset: f64,
     metrics: Metrics,
     scroll: ScrollHandle,
     reveal: Reveal,
+    floor: Rc<Cell<Pixels>>,
 }
 
 impl GotoPanel {
-    /// A panel showing `view` with `glyphs` over a terminal area `inset` from the left; its requests go to `sink`.
+    /// A panel showing `view` with `glyphs` at the interface size `metrics`; its requests go to `sink`.
     pub fn new(
         (view, glyphs): (GotoView, Vec<Option<GlyphLook>>),
-        (inset, metrics): (f64, Metrics),
+        metrics: Metrics,
         sink: Sink,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -182,10 +183,10 @@ impl GotoPanel {
             glyphs,
             sink,
             focus: cx.focus_handle(),
-            inset,
             metrics,
             scroll: ScrollHandle::new(),
             reveal: Reveal::Due,
+            floor: Rc::new(Cell::new(px(0.))),
         }
     }
 
@@ -199,14 +200,14 @@ impl GotoPanel {
         self.focus.clone()
     }
 
-    /// The core's rows now, the terminal area and the interface size.
+    /// The core's rows now and the interface size.
     pub fn refresh(
         &mut self,
         (view, glyphs): (GotoView, Vec<Option<GlyphLook>>),
-        (inset, metrics): (f64, Metrics),
+        metrics: Metrics,
         cx: &mut Context<Self>,
     ) {
-        if (&self.view, &self.glyphs, self.inset, self.metrics) == (&view, &glyphs, inset, metrics) {
+        if (&self.view, &self.glyphs, self.metrics) == (&view, &glyphs, metrics) {
             return;
         }
         if view.selected != self.view.selected || targets(&view).ne(targets(&self.view)) {
@@ -214,13 +215,18 @@ impl GotoPanel {
         }
         self.view = view;
         self.glyphs = glyphs;
-        self.inset = inset;
         self.metrics = metrics;
         cx.notify();
     }
 
-    pub fn key(&self, key: GotoKey) {
+    pub fn key(&mut self, key: GotoKey, cx: &mut Context<Self>) {
         (self.sink)(Request::Key(key));
+        self.reveal = Reveal::Due;
+        cx.notify();
+    }
+
+    fn measured(&self) -> bool {
+        self.scroll.bounds() != Bounds::default()
     }
 
     fn reveal_selected(&mut self, window: &mut Window) {
@@ -229,7 +235,7 @@ impl GotoPanel {
             Reveal::Settled => Reveal::Settled,
             Reveal::Against(measured) if measured == viewport => Reveal::Settled,
             Reveal::Due | Reveal::Against(_) => {
-                if let Some(selected) = self.view.selected {
+                if let Some(selected) = self.view.selected.filter(|_| self.measured()) {
                     self.scroll.scroll_to_item(selected);
                 }
                 window.request_animation_frame();
@@ -445,10 +451,12 @@ impl GotoPanel {
             .debug_selector(|| "go-to-rows".to_owned())
             .flex()
             .flex_col()
+            .flex_grow(1.)
             .min_h(px(0.))
             .max_h(modal::logical(cap))
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
+            .when(!self.measured(), gpui_kit::Styled::invisible)
             .children(rows)
             .into_any_element()
     }
@@ -473,10 +481,16 @@ impl Render for GotoPanel {
         self.reveal_selected(window);
         let colors = crate::chrome::current(cx);
         let animate = status_glyph::animations_enabled(cx);
-        let placement = Placement::of(window.viewport_size(), self.inset, PANEL_WIDTH, self.metrics);
+        let placement = Placement::of(window.viewport_size(), 0.0, PANEL_WIDTH, self.metrics);
         let separator = crate::chrome::separator(&colors);
         let sink = Rc::clone(&self.sink);
+        let floor = Rc::clone(&self.floor);
         div()
+            .on_children_prepainted(move |panel, _, _| {
+                if let Some(panel) = panel.first() {
+                    floor.set(floor.get().max(panel.size.height));
+                }
+            })
             .id("go-to-scrim")
             .accessibility_id("go-to-scrim")
             .role(gpui_kit::Role::Button)
@@ -502,6 +516,7 @@ impl Render for GotoPanel {
                     .track_focus(&self.focus)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .w(modal::logical(placement.width))
+                    .min_h(self.floor.get().min(modal::logical(placement.cap)))
                     .max_h(modal::logical(placement.cap))
                     .flex()
                     .flex_col()
