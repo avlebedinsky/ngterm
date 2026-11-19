@@ -7,12 +7,6 @@ internal enum FakeApp {
 
     // how long a screen may take to come
     private static let wait: TimeInterval = 30
-    // how often a wait for an element reads the screen, and the fewest reads it gives up after
-    private static let readBeat: TimeInterval = 0.5
-    private static let reads = 60
-    // how long a wait for an element reads the screen, at most, when its reads are slow: a failed wait must end well
-    // inside the CI job's time limit, its retry included
-    private static let readLimit: TimeInterval = 180
     // how long a list is watched for, at most, before an audit: this many reads, this far apart
     private static let settleReads = 20
     private static let settleBeat: TimeInterval = 0.25
@@ -100,37 +94,31 @@ internal enum FakeApp {
     /// The wait reads the screen again and again, a beat apart, and gives up after a number of reads, not after a short
     /// time alone: on a loaded runner one read can take as long as a whole timed wait. On CI a 30 s wait for the chat
     /// (ChatTests) read the screen twice, its first read took 28 s, and the chat came 2 s after the wait ended. A
-    /// time limit of some minutes stops the wait before all its reads when each read is that slow.
+    /// time limit of some minutes stops the wait before all its reads when each read is that slow (``ScreenRead``).
     @MainActor
     internal static func expect(_ element: XCUIElement, _ what: String) {
-        read("no \(what)") { element.exists }
+        expect(element, what, lasting: 0)
+    }
+
+    /// Waits for `element` as ``expect(_:_:)`` does, and for `lasting` seconds at least.
+    @MainActor
+    internal static func expect(_ element: XCUIElement, _ what: String, lasting: TimeInterval) {
+        ScreenRead.expect("no \(what)", lasting: lasting) { element.exists }
     }
 
     /// Waits until `element` has gone, as ``expect(_:_:)`` waits for one to come.
+    ///
+    /// Only a read that completed and found no such element tells it has gone: a read that fails also says that the
+    /// element does not exist, and on CI one read failed after 9 s while the element still showed.
     @MainActor
     internal static func expectGone(_ element: XCUIElement, _ what: String) {
-        read("\(what) stayed") { !element.exists }
+        expectGone(element, what, lasting: 0)
     }
 
-    // reads `done` until it holds, a beat apart; when it does not hold after `reads` reads, or after `readLimit`,
-    // fails the test with `failure`, the app's hierarchy and a screenshot
+    /// Waits until `element` has gone as ``expectGone(_:_:)`` does, and for `lasting` seconds at least.
     @MainActor
-    private static func read(_ failure: String, until done: () -> Bool) {
-        let start = Date.now
-        var count = 0
-        while true {
-            count += 1
-            if done() {
-                return
-            }
-            if count >= reads || Date.now.timeIntervalSince(start) >= readLimit {
-                break
-            }
-            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: readBeat)
-        }
-        attachScreen(failure)
-        let seconds = Int(Date.now.timeIntervalSince(start))
-        XCTFail("\(failure) after \(count) reads in \(seconds) s")
+    internal static func expectGone(_ element: XCUIElement, _ what: String, lasting: TimeInterval) {
+        ScreenRead.expect("\(what) stayed", lasting: lasting) { ScreenRead.isGone(element) }
     }
 
     /// Attaches the app's hierarchy and a screenshot to the test, in an activity named `name`, for a failure's triage.
@@ -219,11 +207,7 @@ internal enum FakeApp {
     /// in a row it isn't in. A list whose text lies outside its rows is nudged, which lays the rows out anew.
     @MainActor
     internal static func settle(_ list: XCUIElement, in app: XCUIApplication) {
-        let keyboardGone = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "count == 0"),
-            object: app.keyboards
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [keyboardGone], timeout: wait), .completed, "the keyboard stayed")
+        expectGone(app.keyboards.firstMatch, "the keyboard", lasting: wait)
         // past the last nudge the audit has its say
         for nudges in 0...settleNudges {
             if nudges > 0 {
