@@ -37,6 +37,9 @@ A third pass installs the first MSI into another folder and deletes the recorded
 PATH holds the default bin\ once and no longer the other folder's (the removal of the earlier product keeps that entry,
 so the new version removes it). A repair keeps the PATH entry. The uninstall then leaves no folder, PATH entry or
 HKCU\Software\ngterm. The package's search for the earlier folder names the GUID of the ngterm.exe component.
+A fourth pass makes the same unrecorded install and upgrades it as the in-app updater does (INSTALLFOLDER names the
+installed folder, with no trailing backslash): the app stays in that folder, and the user's PATH holds its bin\ once
+(that entry is not removed as a stale one). The uninstall then leaves no folder or PATH entry.
 
 Each msiexec run logs verbosely under -Log. The exit status is 0 when every check passed.
 
@@ -314,6 +317,27 @@ if ($UpgradeMsi) {
     Invoke-Msiexec @('/x', $code) 'uninstall-unrecorded-folder'
     Check "no install folder is left ($root)" (-not (Test-Path $root))
     Check "the user's PATH holds neither $bin nor $legacyBin" ((-not (Test-OnUserPath)) -and (& $legacyCount) -eq 0)
+    $restored = Get-RawUserPath
+    Check "the user's PATH has its entries back (now '$($restored[0])')" ((& $entries $restored[0]) -eq (& $entries $originalPath[0]))
+    Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
+    foreach ($product in $products) {
+        Check "no icon folder of product $product is left" (-not (Test-Path (Join-Path $env:APPDATA "Microsoft\Installer\$product")))
+    }
+
+    # the same unrecorded folder, upgraded as the in-app updater runs the MSI (crates/ngterm-update/src/install.rs): it
+    # names the installed folder, with no trailing backslash. The app stays there, and the PATH entry of that folder,
+    # which is the earlier version's and this one's, is not removed as a stale one
+    Invoke-Msiexec @('/i', "`"$Msi`"", "INSTALLFOLDER=`"$legacyRoot\`"") 'install-unrecorded-folder-updater'
+    Remove-ItemProperty -Path 'HKCU:\Software\ngterm\Installer' -Name InstallFolder
+    Invoke-Msiexec @('/i', "`"$UpgradeMsi`"", "INSTALLFOLDER=`"$legacyRoot`"", '/norestart', 'REBOOT=ReallySuppress',
+        'MSIRESTARTMANAGERCONTROL=DisableShutdown') 'upgrade-unrecorded-folder-updater'
+    Check "the updater's upgrade stays in $legacyRoot" (Test-Path -PathType Leaf (Join-Path $legacyBin 'ngterm.exe'))
+    Check "and puts nothing into $root" (-not (Test-Path $root))
+    Check "the user's PATH holds $legacyBin once ($(& $legacyCount))" ((& $legacyCount) -eq 1)
+    Check "and not $bin" (-not (Test-OnUserPath))
+    Invoke-Msiexec @('/x', $code) 'uninstall-unrecorded-folder-updater'
+    Check "no install folder is left ($legacyRoot)" (-not (Test-Path $legacyRoot))
+    Check "the user's PATH no longer holds $legacyBin" ((& $legacyCount) -eq 0)
     $restored = Get-RawUserPath
     Check "the user's PATH has its entries back (now '$($restored[0])')" ((& $entries $restored[0]) -eq (& $entries $originalPath[0]))
     Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
