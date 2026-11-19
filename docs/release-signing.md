@@ -49,8 +49,8 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
   differs.
 - The app release's generated notes start at the previous stable `vX.Y.Z` release, named explicitly, so they never start
   at a `web-engine-*` release.
-- Pushing a tag starts a publishing run at once, and nothing stops it before `publish`. To rehearse a tag first,
-  cancel that run before `publish` starts. Then dispatch the rehearsal on the same tag.
+- A tag push starts a publication run at once, with no approval step. To rehearse first, disable the workflow before
+  the tag push. Follow the procedure below. A rehearsal dispatch does not cancel an active publication run.
 - A tag stays on the commit it was made at. When a rehearsal finds something to fix, the fix goes out under a new
   patch version, never by moving the tag (the tag ruleset lets only an admin create, move or delete `v*` tags).
 
@@ -61,8 +61,17 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
 3. The run builds, signs and verifies every platform. No approval is necessary.
 4. When `publish` succeeds, the release is out of draft. A failure anywhere before `publish` publishes nothing.
 
-To check a release before it goes out, cancel the tag push's run before `publish` starts. Then run a rehearsal of the
-same tag (`-f rehearse=true`), look at its artifacts, and run `gh workflow run release --ref vX.Y.Z -f publish=true`.
+To rehearse before publication, use this procedure after you commit and push the version change to `main`:
+
+1. Disable the workflow: `gh workflow disable release`. A disabled workflow starts no run for a tag push.
+2. Create and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. Restore the workflow: `gh workflow enable release`. This does not start a run for the earlier tag push.
+4. Dispatch the rehearsal: `gh workflow run release --ref vX.Y.Z -f rehearse=true`.
+5. Wait for the rehearsal to finish. Examine its artifacts.
+6. Publish the release: `gh workflow run release --ref vX.Y.Z -f publish=true`.
+
+If you already pushed the tag with the workflow active, cancel that run before `publish` starts. Confirm its cancellation
+before you dispatch the rehearsal. If publication starts, cancellation cannot guarantee that nothing gets published.
 
 ## Keys and settings
 
