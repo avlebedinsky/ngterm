@@ -32,10 +32,10 @@ internal final class KeyboardTests: XCTestCase {
     }
 
     // Reads the bench's `line` again until its text `matches` or the wait ends, and returns the last text read: nil
-    // when no read completed. The test reads the line itself: an XCTNSPredicateExpectation that reads the line once
-    // before the app updates it then captures the element's debug description, and on a loaded simulator that capture
-    // can use all the wait, so the expectation reads the line no second time. The wait is a number of reads, as
-    // FakeApp's waits are.
+    // when no read found the line (no read completed, or none found it). The test reads the line itself: an
+    // XCTNSPredicateExpectation that reads the line once before the app updates it then captures the element's debug
+    // description, and on a loaded simulator that capture can use all the wait, so the expectation reads the line no
+    // second time. The wait is a number of reads, as FakeApp's waits are.
     @MainActor
     private static func read(_ line: String, in app: XCUIApplication, until matches: (String) -> Bool) -> String? {
         let element = app.staticTexts[line]
@@ -53,7 +53,7 @@ internal final class KeyboardTests: XCTestCase {
     @MainActor
     private static func expect(_ line: String, reads text: String, in app: XCUIApplication) {
         let label = read(line, in: app) { $0 == text }
-        XCTAssertEqual(label, text, "\(line) reads '\(label ?? "nothing: no read completed")', not '\(text)'")
+        XCTAssertEqual(label, text, "\(line) reads '\(label ?? "nothing: no read found it")', not '\(text)'")
     }
 
     @MainActor
@@ -116,7 +116,7 @@ internal final class KeyboardTests: XCTestCase {
         let grid = app.staticTexts["bench-grid"].label
         app.typeKey("=", modifierFlags: .command)
         let bigger = Self.read("bench-grid", in: app) { $0 != grid }
-        XCTAssertNotNil(bigger, "no read of bench-grid completed after ⌘=")
+        XCTAssertNotNil(bigger, "no read found bench-grid after ⌘=")
         XCTAssertNotEqual(bigger ?? grid, grid, "⌘= made the text no bigger")
         app.typeKey("0", modifierFlags: .command)
         Self.expect("bench-grid", reads: grid, in: app)
