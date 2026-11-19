@@ -76,17 +76,16 @@ internal enum FakeApp {
     }
 
     // reads `window` a beat apart until it is on its side (`landscape`: wider than it is tall) or upright; false when
-    // it does not come to it
+    // it does not come to it. A read that fails gives no frame, so it is not one of the reads
     @MainActor
     internal static func expectShape(of window: XCUIElement, landscape: Bool) -> Bool {
-        for _ in 0..<Int(wait / settleBeat) {
-            let frame = window.frame
-            if landscape ? frame.width > frame.height : frame.height > frame.width {
-                return true
+        let shape = ScreenRead.Wait(reads: Int(wait / settleBeat), beat: settleBeat).poll {
+            ScreenRead.shows(window) { snapshot in
+                let frame = snapshot.frame
+                return landscape ? frame.width > frame.height : frame.height > frame.width
             }
-            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: settleBeat)
         }
-        return false
+        return shape.held
     }
 
     /// Waits for `element`, failing the test when it doesn't come.
