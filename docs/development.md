@@ -207,9 +207,9 @@ release and installs it from Settings > Updates, after checking it against the r
 installed app's signing key; Android asks you to allow installs from ngterm the first time.
 
 To release, set the workspace version and lockfile, commit, and push the matching tag (for example `v0.1.0`); the
-`release` workflow waits for the release reviewer's approval, then builds, signs, verifies and publishes every
-platform. A dispatch with **rehearse** on a tag signs with the real keys and publishes nothing; one without it is a dry
-run on any ref. [docs/release-signing.md](release-signing.md) covers the runs, the keys and the signing mode.
+`release` workflow builds, signs, verifies and publishes every platform, with no approval step. A dispatch with
+**rehearse** on a tag signs with the real keys and publishes nothing; one without it is a dry run on any ref.
+[docs/release-signing.md](release-signing.md) covers the runs, the keys and the signing mode.
 Tag/version mismatches fail before any builds. Packaging tool versions, checksums, and the WPE source checksum live
 in `packaging/release/pins.env`; update the WPE source checksum and relocation patch when changing `WPE_VERSION`.
 

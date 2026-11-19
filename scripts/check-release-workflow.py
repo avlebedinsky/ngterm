@@ -5,6 +5,8 @@ text, so a line can't slip from one job to another:
 
 - builders: a job that builds (cargo, Gradle, Xcode, a packaging or staging script, a build cache) uses no
   environment, so no build step and no `build.rs` ever runs where a secret is;
+- the gate: `approve` runs in the `release-gate` environment, which admits only a `v*` tag and has no reviewer
+  (scripts/setup-release-protection.sh; `--reviewer` puts an approval back there);
 - signers: a job that names the `release` environment needs `approve`, and its condition is a plain conjunction
   with `approve` succeeding; or, only when its environment is exactly `signed_run == 'true' && 'release' || ''` (so an
   unsigned run gets none), with `approve` skipped on an unsigned run (the shape `macos-sign` and `android-sign` use).
@@ -241,6 +243,15 @@ def check_linux_web_engine(linux):
     return []
 
 
+def check_gate(jobs):
+    approve = jobs.get("approve")
+    if approve is None:
+        return ["approve: missing"]
+    if environment(approve) != "release-gate":
+        return ["approve: must use the release-gate environment"]
+    return []
+
+
 def check(workflow):
     """The list of violations, empty when the workflow keeps every invariant."""
     problems = []
@@ -251,6 +262,7 @@ def check(workflow):
     jobs = workflow.get("jobs") or {}
     for name, job in jobs.items():
         problems += check_job(name, job)
+    problems += check_gate(jobs)
     problems += check_linux_web_engine(jobs.get("linux", {}))
     if "publish" in jobs:
         problems += check_publish(jobs["publish"])
@@ -287,6 +299,10 @@ def self_test():
     def add_run(job, command):
         job["steps"].append({"run": command})
 
+    # the gate
+    caught("approve: missing", lambda j, w: j.pop("approve"))
+    caught("must use the release-gate environment", lambda j, w: j["approve"].pop("environment"))
+    caught("must use the release-gate environment", lambda j, w: j["approve"].update(environment="release-gat"))
     # builders and signers
     caught("builds, yet uses an environment", lambda j, w: j["android-build"].update(environment="release"))
     caught("without needing approve", lambda j, w: j["checksums"].update(environment="Release"))

@@ -4,11 +4,11 @@
 # scripts/release-version.py, in the `version` job, decides what a run does:
 #
 # - publishing: a `v*` tag push, or a dispatch with `publish: true` on a tag ref
-#   (`gh workflow run release --ref vX.Y.Z -f publish=true`). It builds every platform, waits for the `approve` job,
-#   whose `release-gate` environment needs the release reviewer (scripts/setup-release-protection.sh), then publishes
-#   the GitHub release;
+#   (`gh workflow run release --ref vX.Y.Z -f publish=true`). It builds every platform, then publishes the GitHub
+#   release with no user step: the `approve` job's `release-gate` environment admits only a `v*` tag and has no
+#   reviewer (scripts/setup-release-protection.sh);
 # - a rehearsal: a dispatch with `rehearse: true` on a tag ref (`gh workflow run release --ref vX.Y.Z -f
-#   rehearse=true`). It waits for the same approval and signs exactly as a release does, with the `release`
+#   rehearse=true`). It passes the same `approve` job and signs exactly as a release does, with the `release`
 #   environment's credentials, but publishes nothing: the packages stay workflow artifacts. It builds the platforms its
 #   `platforms` input names, so one platform's credentials can be checked alone;
 # - a dry run: a dispatch with neither, on any ref. It builds the platforms its `platforms` input names, at that ref's
@@ -100,8 +100,8 @@ jobs:
           NGTERM_RELEASE_SIGNING: ${{ vars.NGTERM_RELEASE_SIGNING }}
         run: python3 scripts/release-version.py
 
-  # The one approval of a signed run (a release or a rehearsal), at its start: every job that signs or publishes needs
-  # it. Its environment holds no secrets.
+  # The gate of a signed run (a release or a rehearsal), at its start: every job that signs or publishes needs it. Its
+  # environment admits only a `v*` tag, has no reviewer by default and holds no secrets.
   approve:
     needs: version
     if: needs.version.outputs.signed_run == 'true'

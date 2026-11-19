@@ -1,7 +1,7 @@
 # Releasing ngterm
 
-A release is a `vMAJOR.MINOR.PATCH` tag, one approval, and `.github/workflows/release.yml`. It builds every platform,
-signs what has a key, verifies the result and publishes a GitHub release with:
+A release is a `vMAJOR.MINOR.PATCH` tag and `.github/workflows/release.yml`, with no approval step. It builds every
+platform, signs what has a key, verifies the result and publishes a GitHub release with:
 
 | asset | signed with |
 |---|---|
@@ -21,17 +21,18 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
 
 | run | what it does |
 |---|---|
-| a push of a `v*` tag | publishing: waits for the approval, then builds, signs, verifies and publishes that tag's release |
-| `gh workflow run release --ref vX.Y.Z -f rehearse=true` | a rehearsal: approved and signed exactly as a release, with the real keys, but nothing is published; the packages stay workflow artifacts. `-f platforms=android,linux` limits it to some platforms |
+| a push of a `v*` tag | publishing: builds, signs, verifies and publishes that tag's release, with no user step |
+| `gh workflow run release --ref vX.Y.Z -f rehearse=true` | a rehearsal: gated and signed exactly as a release, with the real keys, but nothing is published; the packages stay workflow artifacts. `-f platforms=android,linux` limits it to some platforms |
 | `gh workflow run release --ref vX.Y.Z -f publish=true` | publishes, or re-uploads, that tag's assets |
 | `gh workflow run release --ref <any ref>` | a dry run: builds the `platforms` input's platforms at that ref's version, signs with throwaway keys only, publishes nothing |
 
 - The tag must equal `v` plus the workspace version in `Cargo.toml`, and the version job checks it before anything
   builds. The Android version code is `major * 1_000_000 + minor * 1_000 + patch`.
 - Only a signed run (publishing or a rehearsal) reaches the `release` environment, which holds every key, and only
-  after the `approve` job's `release-gate` environment is approved by the release reviewer. Building (cargo, Gradle,
-  Xcode) happens in jobs with no environment; the signing jobs run no build and restore no cache; verify jobs check
-  the signed output without secrets. `scripts/check-release-workflow.py`, run by the lint CI, keeps these rules.
+  after the `approve` job passes. Both environments admit only a `v*` tag, and the tag ruleset lets only an admin
+  create one. `release-gate`, the environment of `approve`, has no reviewer. Building (cargo, Gradle, Xcode) happens
+  in jobs with no environment; the signing jobs run no build and restore no cache; verify jobs check the signed output
+  without secrets. `scripts/check-release-workflow.py`, run by the lint CI, keeps these rules.
 - The Linux build job takes its portable WPE WebKit prefix from GHCR, unpacked only once its provenance verifies as
   `release-wpe-cache.yml`'s on main.
 - The Linux build job reuses the runtime already published for its key, or builds it, and compiles its URL, size and
@@ -48,8 +49,8 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
   differs.
 - The app release's generated notes start at the previous stable `vX.Y.Z` release, named explicitly, so they never start
   at a `web-engine-*` release.
-- Pushing a tag starts a publishing run at once. To rehearse a tag first, reject (or cancel) that run's approval, then
-  dispatch the rehearsal, which queues behind it on the same tag.
+- Pushing a tag starts a publishing run at once, and nothing stops it before `publish`. To rehearse a tag first,
+  cancel that run before `publish` starts. Then dispatch the rehearsal on the same tag.
 - A tag stays on the commit it was made at. When a rehearsal finds something to fix, the fix goes out under a new
   patch version, never by moving the tag (the tag ruleset lets only an admin create, move or delete `v*` tags).
 
@@ -57,12 +58,11 @@ minisign key their source commit carries, `crates/ngterm-update/trust/minisign.p
 
 1. Set the workspace version in `Cargo.toml`, update `Cargo.lock` (`cargo update -w`), commit and push to `main`.
 2. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. Approve the run's `approve` job in Actions (the `release-gate` environment). The run then builds, signs and
-   verifies every platform.
+3. The run builds, signs and verifies every platform. No approval is necessary.
 4. When `publish` succeeds, the release is out of draft. A failure anywhere before `publish` publishes nothing.
 
-To check a release before it goes out, reject the tag push's approval in step 3, run a rehearsal of the same tag
-(`-f rehearse=true`), look at its artifacts, then `gh workflow run release --ref vX.Y.Z -f publish=true`.
+To check a release before it goes out, cancel the tag push's run before `publish` starts. Then run a rehearsal of the
+same tag (`-f rehearse=true`), look at its artifacts, and run `gh workflow run release --ref vX.Y.Z -f publish=true`.
 
 ## Keys and settings
 
@@ -79,8 +79,10 @@ can't be read back, so that repository is where a lost or rotated key is restore
 | `NGTERM_RELEASE_SIGNING` | variable | repository | `version` | `optional` (default) or `required` |
 | `APPLE_*` | secret, variable | `release` | `macos-sign` | Developer ID: `docs/plans/20261107-apple-signing.md` |
 
-`scripts/setup-release-protection.sh`, run once by the repository admin, creates the two environments
-(`release-gate` with the reviewer, `release` limited to `v*` tags) and the tag ruleset. It was run on 2026-11-07.
+`scripts/setup-release-protection.sh`, run once by the repository admin, creates the two environments and the tag
+ruleset. Each environment admits only `v*` tags and has no reviewer. `--reviewer LOGIN` puts an approval back on
+`release-gate`. The script ran on 2026-11-07. On 2026-11-19 the reviewer was removed from `release-gate`, so a
+release publishes after its tag with no user step.
 
 ### Signing mode
 

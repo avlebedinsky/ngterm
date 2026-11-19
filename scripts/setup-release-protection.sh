@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Set up the GitHub protection the release workflow (.github/workflows/release.yml) relies on, through `gh api`. The
+# Configure the GitHub protection the release workflow (.github/workflows/release.yml) relies on, through `gh api`. The
 # repository admin runs it once; running it again converges to the same state, and it reads the state back at the end.
 #
-# - environment `release-gate`: the reviewer (by default the repository's owner) must approve, self-review allowed,
-#   since the one who pushes the tag also approves; deployments only from `v*` tags. It holds no secrets: release.yml's
-#   `approve` job waits on it, and every job that signs or publishes needs `approve`.
+# - environment `release-gate`: deployments only from `v*` tags, no reviewer by default. It holds no secrets.
+#   release.yml's `approve` job uses it, and every job that signs or publishes needs `approve`. `--reviewer` adds a
+#   reviewer who must approve each signed run (self-review permitted, because the user who pushes the tag approves).
 # - environment `release`: deployments only from `v*` tags, no reviewer. It holds every signing secret.
 # - the tag ruleset `release tags`: only the repository admin role creates, moves or deletes a `v*` tag, so only an
 #   admin can start a run that reaches `release`.
@@ -16,7 +16,7 @@
 #
 # Usage: scripts/setup-release-protection.sh [--dry-run] [--repo OWNER/NAME] [--reviewer LOGIN]
 #   --repo      the repository (default: gh's repository for the current directory)
-#   --reviewer  the user who approves releases (default: the owner, when the owner is a user)
+#   --reviewer  a user who must approve each signed run (default: none, a release publishes with no approval)
 set -euo pipefail
 
 die() {
@@ -47,11 +47,12 @@ ADMIN_ROLE_ID=5
 
 [[ -n "$repo" ]] || repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 [[ "$(gh api "repos/$repo" --jq .permissions.admin)" == true ]] || die "you are not an admin of $repo"
-if [[ -z "$reviewer" ]]; then
-  [[ "$(gh api "repos/$repo" --jq .owner.type)" == User ]] || die "$repo belongs to an organization: give --reviewer"
-  reviewer="$(gh api "repos/$repo" --jq .owner.login)"
+reviewer_id=""
+gate_reviewers='[]'
+if [[ -n "$reviewer" ]]; then
+  reviewer_id="$(gh api "users/$reviewer" --jq .id)"
+  gate_reviewers="$(jq -cn --argjson id "$reviewer_id" '[{type: "User", id: $id}]')"
 fi
-reviewer_id="$(gh api "users/$reviewer" --jq .id)"
 
 # write METHOD PATH [BODY]: send one write, or print it on a dry run
 write() {
@@ -105,7 +106,7 @@ environment() {
     "$(jq -cn --arg pattern "$TAG_PATTERN" '{name: $pattern, type: "tag"}')"
 }
 
-environment release-gate "$(jq -cn --argjson id "$reviewer_id" '[{type: "User", id: $id}]')"
+environment release-gate "$gate_reviewers"
 environment release null
 
 ruleset="$(jq -cn --arg pattern "refs/tags/$TAG_PATTERN" --arg name "$RULESET_NAME" --argjson admin "$ADMIN_ROLE_ID" '{
@@ -140,11 +141,15 @@ for name in release-gate release; do
 done
 reviewers="$(gh api "repos/$repo/environments/release-gate" --jq '.protection_rules[]
   | select(.type == "required_reviewers") | .reviewers[].reviewer.id')"
-[[ "$reviewers" == "$reviewer_id" ]] || die "environment release-gate: expected $reviewer as its only reviewer"
+if [[ -n "$reviewer" ]]; then
+  [[ "$reviewers" == "$reviewer_id" ]] || die "environment release-gate: expected $reviewer as its only reviewer"
+else
+  [[ -z "$reviewers" ]] || die "environment release-gate: expected no reviewer"
+fi
 reviewers="$(gh api "repos/$repo/environments/release" \
   --jq '[.protection_rules[] | select(.type == "required_reviewers")] | length')"
 [[ "$reviewers" == 0 ]] || die "environment release: expected no reviewer"
 id="$(ruleset_id)"
 [[ -n "$id" && "$(gh api "repos/$repo/rulesets/$id" --jq .enforcement)" == active ]] \
   || die "ruleset $RULESET_NAME: expected it active"
-echo "release protection is set up on $repo (reviewer $reviewer)" >&2
+echo "release protection is set up on $repo (reviewer ${reviewer:-none})" >&2
