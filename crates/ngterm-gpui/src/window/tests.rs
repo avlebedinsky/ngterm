@@ -2246,3 +2246,24 @@ fn keys_typed_right_after_the_search_chord_reach_the_field(cx: &mut TestAppConte
     s.settle();
     assert_eq!(s.sidebar_search(), "u");
 }
+
+#[gpui_kit::test]
+fn with_the_toolbar_hidden_the_search_field_sits_atop_the_sidebar(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let in_bar = s.cx.debug_bounds("sidebar-search").expect("the field is drawn");
+    s.state
+        .core
+        .update_settings(|settings| settings.toolbar_mode = Some("hidden".to_owned()));
+    s.state.settle();
+    s.settle();
+    let atop = s.cx.debug_bounds("sidebar-search").expect("the field is still drawn");
+    let first_row = s.cx.debug_bounds("row:workspace 1").expect("the rows are drawn");
+    assert!(atop.top() > in_bar.top(), "below where the title bar put it");
+    assert!(atop.bottom() <= first_row.top(), "above the rows");
+    s.search_chord();
+    s.cx.simulate_keystrokes("v");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "v");
+    assert_eq!(s.sidebar_labels(), ["workspace 1", "var"]);
+}
