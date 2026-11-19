@@ -1,4 +1,5 @@
-//! Private clipboard envelopes on designated attach panes. The attach relay suppresses this
+//! Private attach-bridge envelopes on designated attach panes: clipboard delegation, and the role reports of an attach
+//! from a Windows origin. The attach relay suppresses this
 //! reserved OSC on every program-output path before injecting its own envelopes.
 use crate::clipboard_wire::{ClipboardPaste, DelegatedReply, DelegatedRequest};
 use base64::{Engine as _, engine::general_purpose::STANDARD};

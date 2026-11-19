@@ -248,8 +248,7 @@ impl Peer {
 impl Worker {
     /// A role report the origin's attach client also sent through the bridge, as its title may not arrive: reported as
     /// that title, which the frontend reads as a role report.
-    fn bridge_role<Peer>(&self, peer: Peer, report: String) -> bool {
-        drop(peer);
+    fn bridge_role(&self, report: String) -> bool {
         if LeadNotice::parse(&report).is_some() {
             self.shared.send(PaneEvent::Title(report));
             self.shared.wake();
@@ -274,12 +273,13 @@ impl Worker {
         if peer.nonce.as_ref() != Some(&envelope.nonce) {
             return true;
         }
-        let message = match envelope.message {
-            Message::Role(report) => return self.bridge_role(peer, report),
-            message => message,
-        };
-        let Message::Request { id, epoch, request } = message else {
-            return true;
+        let (id, epoch, request) = match envelope.message {
+            Message::Request { id, epoch, request } => (id, epoch, request),
+            Message::Role(report) => {
+                drop(peer);
+                return self.bridge_role(report);
+            }
+            _ => return true,
         };
         let fetched = if let DelegatedRequest::ClipboardReadMime {
             bridge: Some(bridge),
