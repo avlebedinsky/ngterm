@@ -1,8 +1,13 @@
-# agterm cookbook
+# Cookbooks
 
-The cookbook is a directory of installable `ngtermctl` workflows kept in the agterm repository, one
-directory per recipe. It is NOT bundled with this skill, so unless the session sits in an agterm
-checkout it has to be fetched.
+Two cookbooks hold installable `ngtermctl` workflows, one directory per recipe. Neither is bundled with
+this skill, so unless the session sits in a checkout holding one it has to be fetched:
+
+- **ngterm's own**, in `nickalie/ngterm` on `main`: recipes written for ngterm, installed as they stand.
+- **agterm's**, in `umputun/agterm` on `master`: upstream's recipes, translated to ngterm's names before
+  they are installed (see Installing).
+
+List both when asked what there is, ngterm's first. A name in both indexes is ngterm's recipe.
 
 Two uses, same acquisition path:
 
@@ -11,13 +16,17 @@ Two uses, same acquisition path:
   real sequencing problem, so follow how it drives the commands instead of inventing a sequence.
   Nothing is installed in this case.
 
-## Where it is
+## Where they are
 
-`umputun/agterm`, directory `cookbook/`, browsable at
-`https://github.com/umputun/agterm/tree/master/cookbook`. The index is `cookbook/README.md`.
+Each repository's directory `cookbook/`, browsable at
+`https://github.com/nickalie/ngterm/tree/main/cookbook` and
+`https://github.com/umputun/agterm/tree/master/cookbook`. Each index is that `cookbook/README.md`.
+
+The URLs below name `umputun/agterm` and `master`. For a recipe from ngterm's cookbook the same URLs name
+`nickalie/ngterm` and `main` instead, and nothing else in them changes.
 
 Never recite recipe names from memory. Recipes are added and changed independently of this skill, so
-a fetched index is the only current list; anything not in it does not exist. Never assemble a recipe
+the fetched indexes are the only current list; anything in neither does not exist. Never assemble a recipe
 URL from a name — the only URL you may fetch for a recipe is one the index linked.
 
 Use the agent's own URL retrieval for the single-file fetches. Materializing a directory needs a shell
@@ -25,7 +34,8 @@ download, which is one archive fetch, not one per file — ask before it.
 
 ## Listing
 
-Fetch `https://raw.githubusercontent.com/umputun/agterm/master/cookbook/README.md` and report it as it
+Fetch `https://raw.githubusercontent.com/nickalie/ngterm/main/cookbook/README.md` and
+`https://raw.githubusercontent.com/umputun/agterm/master/cookbook/README.md` and report each as it
 stands. It groups recipes by what they
 are for and gives each one's minimum agterm version and its dependencies. Answer "what can I install"
 from that fetch alone — no recipe directory is needed to list.
@@ -52,7 +62,8 @@ you resolved in step 1, and nothing else is ever interpolated:
 
 A local checkout is used instead only when the session sits in an actual agterm repository: a git
 repo whose root holds `cookbook/` alongside `agtermCore/` and `project.yml`, not merely a directory
-containing `cookbook/`. State the path and whether the tree is dirty before using anything out of it.
+containing `cookbook/`; for ngterm's cookbook, an ngterm repository, whose root holds `cookbook/`
+alongside `crates/ngterm-core/`. State the path and whether the tree is dirty before using anything out of it.
 A dirty tree is not a blocker: testing a local edit is a normal case.
 
 ## Requirements
@@ -85,7 +96,8 @@ Recipes are third-party scripts that run on the user's machine against the user'
 several close sessions or delete workspaces. Show what a recipe does and what it needs before
 installing it. Follow the recipe's own `Setup`; never invent a procedure it does not describe.
 
-Recipes are written for agterm, and ngterm shares none of its names at runtime: a recipe installed as
+A recipe from ngterm's cookbook is written for ngterm and needs none of the translation below.
+agterm's recipes are written for agterm, and ngterm shares none of its names at runtime: a recipe installed as
 fetched binds into a keymap ngterm never reads and runs a CLI that is not ngterm's. Translate every
 agterm name in its `Setup` and in each payload file before showing the install and copying anything,
 and show the translated text, not the original:
@@ -117,5 +129,5 @@ Applying a new keymap entry needs `ngtermctl keymap reload` (or File ▸ Reload 
 
 ## Contributing
 
-`cookbook/CONTRIBUTING.md` in the repository holds the rules for adding a recipe. Fetch it when asked;
+`cookbook/CONTRIBUTING.md` in each repository holds the rules for adding a recipe to that cookbook. Fetch it when asked;
 do not summarize them from memory.

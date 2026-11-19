@@ -3,7 +3,10 @@
 #
 # - actionlint over .github/workflows/ (settings: .github/actionlint.yaml), with the pinned shellcheck checking every
 #   `run:` block;
-# - shellcheck over scripts/*.sh, scripts/lib/*.sh and the Git hooks in .githooks/ (settings: .shellcheckrc);
+# - shellcheck over scripts/*.sh, scripts/lib/*.sh, the Git hooks in .githooks/ and the cookbook's *.sh (settings:
+#   .shellcheckrc);
+# - the cookbook's layout check (scripts/check-cookbook.sh), `node --check` over its *.js and `node --test` over its
+#   *.test.js;
 # - the self-test of every scripts/*.py that has one (`--self-test`), the pre-commit hook's test (it needs cargo and
 #   rustfmt) and the Mac runner's test (scripts/test-ios-mac-run.sh: rsync, flock, perl and cargo).
 #
@@ -43,9 +46,18 @@ cd "$NATIVE_ROOT"
 status=0
 echo "actionlint $ACTIONLINT_VERSION: .github/workflows/"
 "$actionlint" -shellcheck "$shellcheck" || status=1
-echo "shellcheck $SHELLCHECK_VERSION: scripts/*.sh, scripts/lib/*.sh, .githooks/*"
+echo "shellcheck $SHELLCHECK_VERSION: scripts/*.sh, scripts/lib/*.sh, .githooks/*, cookbook/**/*.sh"
 # one file per process, in parallel: each follows the sources it names, scripts/lib/native.sh above all
-printf '%s\0' scripts/*.sh scripts/lib/*.sh .githooks/* | xargs -0 -n 1 -P "$(nproc)" "$shellcheck" || status=1
+{
+  printf '%s\0' scripts/*.sh scripts/lib/*.sh .githooks/*
+  find cookbook -type f -name '*.sh' -print0
+} | xargs -0 -n 1 -P "$(nproc)" "$shellcheck" || status=1
+echo "cookbook: layout, index and READMEs"
+scripts/check-cookbook.sh || status=1
+echo "cookbook: node --check over *.js, node --test over *.test.js"
+find cookbook -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check || status=1
+mapfile -d '' tests < <(find cookbook -type f -name '*.test.js' -print0)
+((${#tests[@]} == 0)) || node --test "${tests[@]}" || status=1
 for script in scripts/*.py; do
   grep -q -- '--self-test' "$script" || continue
   echo "self-test: $script"

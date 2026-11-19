@@ -403,7 +403,9 @@ setting, so ⌘ alone (ctrl on Linux and Windows) opens them again.
 
 ## Reporting: decide bug vs unsupported FIRST
 
-- A bug or a wanted change **in a cookbook recipe** whose Author line names someone other than @umputun →
+- A bug or a wanted change **in a recipe from ngterm's own cookbook** → reported as below, or a pull request
+  against it.
+- A bug or a wanted change **in an agterm cookbook recipe** whose Author line names someone other than @umputun →
   a pull request against the recipe, never an issue; see
   <https://github.com/umputun/agterm/blob/master/cookbook/CONTRIBUTING.md#bugs-and-improvements>. Bugs in
   @umputun's recipes, and ngterm bugs a recipe exposes, are reported as below.

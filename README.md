@@ -117,7 +117,8 @@ ngtermctl notify --target "$id" --title "Review" "Finished, take a look"
 ngtermctl ask open "Deploy to staging?" --button yes --button no
 ```
 
-Run `ngtermctl --help` for the full list.
+Run `ngtermctl --help` for the full list. The [cookbook](cookbook/) has ready-made workflows to copy into your setup, such
+as a searchable Go to window over every session and pane.
 
 ## Work from another machine
 

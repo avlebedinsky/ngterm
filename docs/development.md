@@ -1621,9 +1621,10 @@ already holds changes no file, so the path-filtered workflows don't start on it.
 - `ios-release.yml`: a release tag's signed iOS build, uploaded to TestFlight, and dry runs by hand or from `ci/**`
   pushes ([docs/ios-release.md](ios-release.md)).
 - `lint.yml` (path-filtered to the workflows, the scripts, the Git hooks, their linters' settings and
-  `packaging/release/pins.env`): `scripts/lint.sh`, which runs actionlint over the workflows
-  and shellcheck over `scripts/*.sh`, `scripts/lib/*.sh`, `.githooks/*` and every `run:` block, both pinned and
-  checksum-verified, then the scripts' self-tests and the pre-commit hook's test. Run it locally the same way.
+  `packaging/release/pins.env` and the cookbook): `scripts/lint.sh`, which runs actionlint over the workflows
+  and shellcheck over `scripts/*.sh`, `scripts/lib/*.sh`, `.githooks/*`, the cookbook's scripts and every `run:` block,
+  both pinned and checksum-verified, then the cookbook's layout check (`scripts/check-cookbook.sh`) and node runs, the
+  scripts' self-tests and the pre-commit hook's test. Run it locally the same way.
 - `conformance-gate.yml`: the suite's self-tests and catalog coverage gate.
 - `dependabot-lock-edges.yml` (Dependabot's cargo pull requests, which it opens for security updates): puts back the
   `Cargo.lock` edges the update moved, with no person involved. It runs the base branch's
@@ -1735,6 +1736,8 @@ The local runners run the whole suite unsharded, as before.
 - `.githooks/`: the repository's Git hooks ([Git hooks](#git-hooks)).
 - `scripts/`: native builds, staging, `run-gpui-dev.sh`, the lint report, the Linux web engine runtime's packaging, the
   AppArmor profile installer, the Windows installer's build and check, the Windows smoke checks.
+- `cookbook/`: installable `ngtermctl` recipes, one directory each, indexed in its README; its CONTRIBUTING.md has the
+  rules `scripts/check-cookbook.sh` enforces.
 - `mobile/android`, `mobile/ios`: the mobile apps over `crates/ngterm-mobile`, each with its `DESIGN.md`.
 - `packaging/linux/apparmor/`: ngterm's AppArmor profile (WebKit's sandbox on Ubuntu).
 - `packaging/windows/`: the Windows installer's WiX source.

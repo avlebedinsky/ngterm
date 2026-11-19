@@ -1091,8 +1091,8 @@ Full detail, templates, and the exact `gh` commands are in **troubleshooting.md*
   `{AGT_X}` tokens).
 - **examples.md** — copy-paste ngtermctl examples for common tasks (build a layout, run a program in a
   blocking overlay and read its status, type into a fresh session, notify, inspect the tree).
-- **cookbook.md** — how to list, acquire and install the repository's cookbook recipes, and how to read
-  one as reference for a tricky workflow. The recipe list lives in the repo, not here; fetch it.
+- **cookbook.md** — how to list, acquire and install recipes from ngterm's and agterm's cookbooks, and how to read
+  one as reference for a tricky workflow. The recipe lists live in the repos, not here; fetch them.
 - **troubleshooting.md** — diagnosing common problems (keymap editor, custom actions, logs) and the
   bug-issue / feature-Discussion reporting workflow (draft-first, scrub, never post without approval).
 - **scripts/show-image.sh** — bundled helper that displays an image inline in an overlay (see above);
