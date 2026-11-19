@@ -467,6 +467,8 @@ impl Shell<'_> {
             if focused {
                 self.state.settle();
             }
+            // the landing forgets the pane focus requests the windows rendered (`Windows::land`)
+            self.state.core.clear_pane_focus_requests();
             self.cx.run_until_parked();
             if self.posted.0.lock().unwrap().is_empty() {
                 return;
@@ -2033,6 +2035,10 @@ impl Shell<'_> {
     /// Fires Search Sessions…'s chord and lands the frontend half it leaves, as the app's landing does.
     fn search_chord(&mut self) {
         self.cx.simulate_keystrokes("ctrl-alt-shift-f");
+        // the release a keyboard sends, which the simulated keystroke leaves out: the monitor takes the next press of
+        // the key for a fresh one
+        let keystroke = gpui_kit::Keystroke::parse("ctrl-alt-shift-f").unwrap();
+        self.cx.simulate_event(gpui_kit::KeyUpEvent { keystroke });
         self.settle();
         let poster = self.state.poster().clone();
         // from the app, as the landing runs it: the window is not being updated
@@ -2205,6 +2211,11 @@ fn the_field_keeps_its_text_and_keyboard_through_a_selection_made_elsewhere(cx: 
     assert!(
         s.cx.debug_bounds("sidebar-search").is_none(),
         "no field without the sidebar"
+    );
+    assert!(!s.search_field_holds());
+    assert!(
+        s.terminal_focused(),
+        "the keyboard goes back to the terminal with the field"
     );
     s.search_chord();
     assert!(

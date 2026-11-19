@@ -974,6 +974,11 @@ impl WindowView {
         self.switcher.update(cx, |switcher, cx| switcher.sync(core, inset, cx));
         self.sidebar.update(cx, |sidebar, cx| sidebar.sync(core, cx));
         self.search_field.update(cx, |field, cx| field.sync(core, window, cx));
+        if !self.sidebar.read(cx).is_shown() && self.search_field.read(cx).is_focused(window, cx) {
+            // the field left the screen with the keyboard (a hidden sidebar, a zoom, the dashboard): an input out of
+            // sight would keep every key, the keymap's too
+            self.focus_terminal(window, cx);
+        }
         self.sync_title(core, dialog || alert, window, cx);
         cx.notify();
         focused
