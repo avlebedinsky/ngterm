@@ -32,6 +32,11 @@ With -UpgradeMsi, a second pass then installs the first MSI into a folder that I
 no INSTALLFOLDER, as a user runs a newer MSI: the upgrade stays in that folder (nothing in the default one), removes no
 file or shortcut, and the user's PATH holds that folder's bin\ once. Its uninstall leaves no folder, shortcut, PATH
 entry or HKCU\Software\ngterm.
+A third pass installs the first MSI into another folder and deletes the recorded folder, as a version that recorded none
+(0.2.6 and earlier) leaves it, then upgrades with no INSTALLFOLDER: the app moves to the default folder, and the user's
+PATH holds the default bin\ once and no longer the other folder's (the removal of the earlier product keeps that entry,
+so the new version removes it). A repair keeps the PATH entry. The uninstall then leaves no folder, PATH entry or
+HKCU\Software\ngterm. The package's search for the earlier folder names the GUID of the ngterm.exe component.
 
 Each msiexec run logs verbosely under -Log. The exit status is 0 when every check passed.
 
@@ -75,17 +80,27 @@ function Invoke-Msiexec([string[]] $arguments, [string] $name) {
     Check "msiexec $name exits 0 (got $($process.ExitCode), $logFile)" ($process.ExitCode -eq 0)
 }
 
-# A property of an MSI's Property table, through Windows Installer's automation interface.
-function Get-MsiProperty([string] $path, [string] $name) {
+# The first field of the first row a query of an MSI's tables gives ('' for no row or no such table), through Windows
+# Installer's automation interface.
+function Get-MsiValue([string] $path, [string] $query) {
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($path, 0))
-    $query = "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$name'"
-    $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, @($query))
+    try {
+        $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, @($query))
+    } catch {
+        return ''
+    }
     $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
     $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-    $value = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
+    $value = ''
+    if ($null -ne $record) { $value = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1) }
     $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
     $value
+}
+
+# A property of an MSI's Property table.
+function Get-MsiProperty([string] $path, [string] $name) {
+    Get-MsiValue $path "SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$name'"
 }
 
 # 5 installed for this user, -1 unknown.
@@ -166,6 +181,14 @@ if ((Get-ProductState $code) -eq 5 -or (Test-Path $root)) {
     Write-Output "FAIL  ngterm is installed for this user already ($root); the check needs a clean account"
     exit 1
 }
+
+# the search for an earlier version's bin\ (packaging/windows/ngterm.wxs, NGTERM_EARLIERBIN) names the GUID of the
+# ngterm.exe component, which WiX derives from its path: a changed path or a stale GUID would find no earlier folder
+$exeComponent = Get-MsiValue $Msi ("SELECT ``Component``.``ComponentId`` FROM ``Component``, ``File`` WHERE " +
+    "``File``.``Component_`` = ``Component``.``Component`` AND ``File``.``File`` = 'ngterm.exe'")
+$searched = Get-MsiValue $Msi "SELECT ``ComponentId`` FROM ``CompLocator`` WHERE ``Signature_`` = 'EarlierBin'"
+Check "the search for the earlier bin\ names the ngterm.exe component ($searched, $exeComponent)" (
+    $exeComponent -ne '' -and $searched -eq $exeComponent)
 
 $originalPath = Get-RawUserPath
 Invoke-Msiexec @('/i', "`"$Msi`"") 'install'
@@ -266,6 +289,33 @@ if ($UpgradeMsi) {
     Check "no custom install folder is left ($customRoot)" (-not (Test-Path $customRoot))
     Check 'no Start-menu shortcut is left' (-not (Test-Path $shortcut))
     Check "the user's PATH no longer holds $customBin" ((& $customCount) -eq 0)
+    Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
+    foreach ($product in $products) {
+        Check "no icon folder of product $product is left" (-not (Test-Path (Join-Path $env:APPDATA "Microsoft\Installer\$product")))
+    }
+
+    # an install in another folder by a version that recorded no folder (0.2.6 and earlier), then an upgrade that names
+    # none: it goes into the default folder. The removal of the earlier product keeps its PATH entry (the PATH component
+    # stays installed for the new version), so the new version removes it (packaging/windows/ngterm.wxs, StaleUserPath)
+    $legacyRoot = Join-Path (Split-Path $customRoot) 'legacy'
+    $legacyBin = Join-Path $legacyRoot 'bin'
+    $legacyCount = { @((Get-UserPath) -split ';' | Where-Object { $_.TrimEnd('\') -ieq $legacyBin }).Count }
+    Invoke-Msiexec @('/i', "`"$Msi`"", "INSTALLFOLDER=`"$legacyRoot\`"") 'install-unrecorded-folder'
+    Remove-ItemProperty -Path 'HKCU:\Software\ngterm\Installer' -Name InstallFolder
+    Check "the user's PATH holds $legacyBin ($(& $legacyCount))" ((& $legacyCount) -eq 1)
+    Invoke-Msiexec @('/i', "`"$UpgradeMsi`"") 'upgrade-unrecorded-folder'
+    Check "the upgrade with no recorded folder goes into $root" (Test-Path -PathType Leaf (Join-Path $bin 'ngterm.exe'))
+    Check "and leaves no $legacyRoot" (-not (Test-Path $legacyRoot))
+    Check "the user's PATH holds $bin once ($(Get-UserPathCount))" ((Get-UserPathCount) -eq 1)
+    Check "and no longer $legacyBin ($(& $legacyCount))" ((& $legacyCount) -eq 0)
+    # a repair installs the components again: the earlier bin\ is then this install's own, which stays on the PATH
+    Invoke-Msiexec @('/fa', "`"$UpgradeMsi`"") 'repair'
+    Check "after a repair the user's PATH holds $bin once ($(Get-UserPathCount))" ((Get-UserPathCount) -eq 1)
+    Invoke-Msiexec @('/x', $code) 'uninstall-unrecorded-folder'
+    Check "no install folder is left ($root)" (-not (Test-Path $root))
+    Check "the user's PATH holds neither $bin nor $legacyBin" ((-not (Test-OnUserPath)) -and (& $legacyCount) -eq 0)
+    $restored = Get-RawUserPath
+    Check "the user's PATH has its entries back (now '$($restored[0])')" ((& $entries $restored[0]) -eq (& $entries $originalPath[0]))
     Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
     foreach ($product in $products) {
         Check "no icon folder of product $product is left" (-not (Test-Path (Join-Path $env:APPDATA "Microsoft\Installer\$product")))
