@@ -103,9 +103,9 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
         FakeApp.expect(done, "the public key page's Done")
         for _ in 0..<Self.tries where page.exists {
             done.tap()
-            _ = page.waitForNonExistence(timeout: Self.pageWait)
+            ScreenRead.step(lasting: Self.pageWait).poll { ScreenRead.isGone(page) }
         }
-        XCTAssertFalse(page.exists, "the public key page stayed after Done")
+        FakeApp.expectGone(page, "the public key page, after Done,")
     }
 
     // the machine through the form, its host key trusted, connected
@@ -123,7 +123,7 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(Self.label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
+        ScreenRead.expect("the machine never read Connected", lasting: Self.connectWait) { connected.exists }
     }
 
     // Settings' Export private key past the owner check, saved under a passphrase through the system's file screen

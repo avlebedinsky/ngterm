@@ -51,8 +51,10 @@ internal struct E2EMachine {
         for _ in 0..<tries where !focused {
             field.tap()
             let hasKeyboard = NSPredicate(format: "hasKeyboardFocus == true")
-            let focus = XCTNSPredicateExpectation(predicate: hasKeyboard, object: field)
-            focused = XCTWaiter.wait(for: [focus], timeout: focusWait) == .completed
+            let read = ScreenRead.step(lasting: focusWait).poll {
+                ScreenRead.shows(field, matching: hasKeyboard)
+            }
+            focused = read.held
         }
         XCTAssertTrue(focused, "\(identifier) never took the keyboard")
         let old = field.value as? String ?? ""

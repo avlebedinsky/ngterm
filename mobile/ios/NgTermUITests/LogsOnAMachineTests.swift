@@ -123,8 +123,10 @@ internal final class LogsOnAMachineTests: XCTestCase {
         for _ in 0..<LogsPage.tries where !focused {
             field.tap()
             let hasKeyboard = NSPredicate(format: "hasKeyboardFocus == true")
-            let focus = XCTNSPredicateExpectation(predicate: hasKeyboard, object: field)
-            focused = XCTWaiter.wait(for: [focus], timeout: LogsPage.offerWait) == .completed
+            let read = ScreenRead.step(lasting: LogsPage.offerWait).poll {
+                ScreenRead.shows(field, matching: hasKeyboard)
+            }
+            focused = read.held
         }
         XCTAssertTrue(focused, "\(identifier) never took the keyboard")
         let old = field.value as? String ?? ""
@@ -181,12 +183,7 @@ internal final class LogsOnAMachineTests: XCTestCase {
         LogsPage.enter(in: app)
 
         LogsPage.shareAndClose(in: app)
-        let written = NSPredicate { _, _ in place.exported != nil }
-        let came = XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: written, object: nil)],
-            timeout: LogsPage.wait
-        )
-        XCTAssertEqual(came, .completed, "Share wrote no file")
+        ScreenRead.expect("Share wrote no file", lasting: LogsPage.wait) { place.exported != nil }
         let whole = place.exported ?? ""
         attach("the shared file", whole)
         LogsPage.assertTold("the shared file", whole, Self.told)
@@ -240,7 +237,7 @@ internal final class LogsOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(Self.label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
+        ScreenRead.expect("the machine never read Connected", lasting: Self.connectWait) { connected.exists }
     }
 
     // New named session on the machine, landing in its terminal; the first attach asks about notifying: not now
@@ -306,12 +303,9 @@ internal final class LogsOnAMachineTests: XCTestCase {
     @MainActor
     private func expectTerminal(_ what: String, in app: XCUIApplication, shows: @escaping (String) -> Bool) {
         let terminal = app.textViews.firstMatch
-        let shown = NSPredicate { _, _ in shows((terminal.value as? String) ?? "") }
-        let came = XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: shown, object: nil)],
-            timeout: Self.connectWait
-        )
-        XCTAssertEqual(came, .completed, "the terminal never showed \(what): \(terminal.value ?? "")")
+        ScreenRead.expect("the terminal never showed \(what)", lasting: Self.connectWait) {
+            ScreenRead.shows(terminal) { shows(($0.value as? String) ?? "") }
+        }
     }
 
     @MainActor

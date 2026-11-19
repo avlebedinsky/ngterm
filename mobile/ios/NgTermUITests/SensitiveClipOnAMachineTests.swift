@@ -127,7 +127,7 @@ internal final class SensitiveClipOnAMachineTests: XCTestCase {
 
     @MainActor
     private func expectSheet(in app: XCUIApplication) {
-        XCTAssertTrue(app.staticTexts[Self.heading].waitForExistence(timeout: Self.wait), "no clipboard question")
+        FakeApp.expect(app.staticTexts[Self.heading], "clipboard question", lasting: Self.wait)
     }
 
     // the program has no answer while the question is up
@@ -218,7 +218,7 @@ internal final class SensitiveClipOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(Self.label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        XCTAssertTrue(connected.waitForExistence(timeout: Self.wait), "the machine never read Connected")
+        ScreenRead.expect("the machine never read Connected", lasting: Self.wait) { connected.exists }
     }
 
     // New named session on the machine, landing in its terminal; the first attach asks about notifying: not now
@@ -246,12 +246,9 @@ internal final class SensitiveClipOnAMachineTests: XCTestCase {
     @MainActor
     private func expectTerminal(_ what: String, in app: XCUIApplication, shows: @escaping (String) -> Bool) {
         let terminal = app.textViews.firstMatch
-        let shown = NSPredicate { _, _ in shows((terminal.value as? String) ?? "") }
-        let came = XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: shown, object: nil)],
-            timeout: Self.wait
-        )
-        XCTAssertEqual(came, .completed, "the terminal never showed \(what): \(terminal.value ?? "")")
+        ScreenRead.expect("the terminal never showed \(what)", lasting: Self.wait) {
+            ScreenRead.shows(terminal) { shows(($0.value as? String) ?? "") }
+        }
     }
 
     // the whole screen: the system's "pasted from" banner shows over the app

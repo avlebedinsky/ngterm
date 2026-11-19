@@ -33,8 +33,10 @@ internal enum SecureEntry {
         var focused = false
         for _ in 0..<tries where !focused {
             field.tap()
-            let focus = XCTNSPredicateExpectation(predicate: hasKeyboard, object: field)
-            focused = XCTWaiter.wait(for: [focus], timeout: focusWait) == .completed
+            let read = ScreenRead.step(lasting: focusWait).poll {
+                ScreenRead.shows(field, matching: hasKeyboard)
+            }
+            focused = read.held
         }
         XCTAssertTrue(focused, "\(field) never took the keyboard")
     }

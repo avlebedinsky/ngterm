@@ -77,12 +77,13 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         // clipboard as a concealed item, and leaving the page clears it
         let unprotected = app.switches["export-unprotected"]
         let isOn = NSPredicate(format: "value == '1'")
-        for _ in 0..<Self.tries where unprotected.value as? String != "1" {
+        var turnedOn = false
+        for _ in 0..<Self.tries where !turnedOn {
             unprotected.switches.firstMatch.press(forDuration: Self.switchPress)
-            _ = XCTWaiter.wait(
-                for: [XCTNSPredicateExpectation(predicate: isOn, object: unprotected)],
-                timeout: Self.offerWait
-            )
+            let read = ScreenRead.step(lasting: Self.offerWait).poll {
+                ScreenRead.shows(unprotected, matching: isOn)
+            }
+            turnedOn = read.held
         }
         XCTAssertEqual(unprotected.value as? String, "1", "Export without a passphrase never turned on")
         FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")
@@ -96,12 +97,9 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         XCTAssertTrue(UIPasteboard.general.types.contains(Self.concealedType), "the copied key is not concealed")
         app.navigationBars["Export private key"].buttons.element(boundBy: 0).tap()
         FakeApp.expect(app.navigationBars["Settings"], "Settings again")
-        let cleared = NSPredicate { _, _ in !UIPasteboard.general.types.contains(Self.concealedType) }
-        let gone = XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: cleared, object: nil)],
-            timeout: Self.offerWait
-        )
-        XCTAssertEqual(gone, .completed, "the copied key stayed on the clipboard after the page was left")
+        ScreenRead.expect("the copied key stayed on the clipboard after the page was left", lasting: Self.offerWait) {
+            !UIPasteboard.general.types.contains(Self.concealedType)
+        }
     }
 
     @MainActor
@@ -188,9 +186,9 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         FakeApp.expect(done, "the public key page's Done")
         for _ in 0..<Self.tries where page.exists {
             done.tap()
-            _ = page.waitForNonExistence(timeout: Self.offerWait)
+            ScreenRead.step(lasting: Self.offerWait).poll { ScreenRead.isGone(page) }
         }
-        XCTAssertFalse(page.exists, "the public key page stayed after Done")
+        FakeApp.expectGone(page, "the public key page, after Done,")
     }
 
     // the machine through the form, its host key trusted, connected
@@ -208,7 +206,7 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        XCTAssertTrue(connected.waitForExistence(timeout: Self.connectWait), "the machine never read Connected")
+        ScreenRead.expect("the machine never read Connected", lasting: Self.connectWait) { connected.exists }
     }
 
     // the one saved file is an OpenSSH private key under a cipher, never in the clear; only its cipher is reported
