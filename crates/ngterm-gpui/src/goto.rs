@@ -1,7 +1,7 @@
 //! The Go to window ([`ngterm_core::goto`]), an extension beyond upstream, drawn while the core holds it open in this
-//! window: a scrim over the window (`go-to-scrim`, a press on it closes) under a panel (`go-to`) centered over the
-//! terminal area, the search line and the pane count (`go-to-search`, `go-to-count`) over the rows (`go-to-row-<id>`),
-//! and under them the selected row's detail, its cwd or branch, and the key hints (`go-to-detail`, `go-to-hints`).
+//! window: a scrim over the window (`go-to-scrim`, a press on it closes) under a panel (`go-to`) centered in it, the
+//! search line and the pane count (`go-to-search`, `go-to-count`) over the rows (`go-to-row-<id>`), and under them the
+//! selected row's detail, its cwd or branch, and the key hints (`go-to-detail`, `go-to-hints`).
 //!
 //! A workspace row is its name in bold with its branch trailing. A session's row hangs under it on a `├─`/`└─`
 //! connector, and a split session's pane rows under that one a level deeper, each level a cell of the same width. A
@@ -18,9 +18,9 @@ use std::rc::Rc;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    px,
+    AnyElement, Bounds, Context, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Pixels, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, div, px,
 };
 use ngterm_core::chrome::ChromeColors;
 use ngterm_core::ghostty_config::binds::Mods;
@@ -150,6 +150,13 @@ pub fn glyphs(view: &GotoView, settings: &AppSettings) -> Vec<Option<GlyphLook>>
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Reveal {
+    Settled,
+    Due,
+    Against(Bounds<Pixels>),
+}
+
 /// One open Go to window (module docs).
 pub struct GotoPanel {
     view: GotoView,
@@ -159,6 +166,7 @@ pub struct GotoPanel {
     inset: f64,
     metrics: Metrics,
     scroll: ScrollHandle,
+    reveal: Reveal,
 }
 
 impl GotoPanel {
@@ -169,10 +177,6 @@ impl GotoPanel {
         sink: Sink,
         cx: &mut Context<Self>,
     ) -> Self {
-        let scroll = ScrollHandle::new();
-        if let Some(selected) = view.selected {
-            scroll.scroll_to_item(selected);
-        }
         Self {
             view,
             glyphs,
@@ -180,7 +184,8 @@ impl GotoPanel {
             focus: cx.focus_handle(),
             inset,
             metrics,
-            scroll,
+            scroll: ScrollHandle::new(),
+            reveal: Reveal::Due,
         }
     }
 
@@ -204,10 +209,8 @@ impl GotoPanel {
         if (&self.view, &self.glyphs, self.inset, self.metrics) == (&view, &glyphs, inset, metrics) {
             return;
         }
-        if view.selected != self.view.selected
-            && let Some(selected) = view.selected
-        {
-            self.scroll.scroll_to_item(selected);
+        if view.selected != self.view.selected || targets(&view).ne(targets(&self.view)) {
+            self.reveal = Reveal::Due;
         }
         self.view = view;
         self.glyphs = glyphs;
@@ -218,6 +221,21 @@ impl GotoPanel {
 
     pub fn key(&self, key: GotoKey) {
         (self.sink)(Request::Key(key));
+    }
+
+    fn reveal_selected(&mut self, window: &mut Window) {
+        let viewport = self.scroll.bounds();
+        self.reveal = match self.reveal {
+            Reveal::Settled => Reveal::Settled,
+            Reveal::Against(measured) if measured == viewport => Reveal::Settled,
+            Reveal::Due | Reveal::Against(_) => {
+                if let Some(selected) = self.view.selected {
+                    self.scroll.scroll_to_item(selected);
+                }
+                window.request_animation_frame();
+                Reveal::Against(viewport)
+            }
+        };
     }
 
     fn header(&self, colors: ChromeColors) -> AnyElement {
@@ -424,6 +442,7 @@ impl GotoPanel {
         };
         div()
             .id("go-to-rows")
+            .debug_selector(|| "go-to-rows".to_owned())
             .flex()
             .flex_col()
             .min_h(px(0.))
@@ -433,6 +452,10 @@ impl GotoPanel {
             .children(rows)
             .into_any_element()
     }
+}
+
+fn targets(view: &GotoView) -> impl Iterator<Item = GotoTarget> + '_ {
+    view.rows.iter().map(|row| row.target)
 }
 
 fn labelled(id: &'static str, text: String) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -447,6 +470,7 @@ fn labelled(id: &'static str, text: String) -> gpui_kit::Stateful<gpui_kit::Div>
 
 impl Render for GotoPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.reveal_selected(window);
         let colors = crate::chrome::current(cx);
         let animate = status_glyph::animations_enabled(cx);
         let placement = Placement::of(window.viewport_size(), self.inset, PANEL_WIDTH, self.metrics);
@@ -460,6 +484,9 @@ impl Render for GotoPanel {
             .debug_selector(|| "go-to-scrim".to_owned())
             .absolute()
             .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
             .occlude()
             .bg(modal::dim())
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -474,9 +501,6 @@ impl Render for GotoPanel {
                     .debug_selector(|| "go-to".to_owned())
                     .track_focus(&self.focus)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .absolute()
-                    .left(modal::logical(placement.left))
-                    .top(modal::logical(placement.top))
                     .w(modal::logical(placement.width))
                     .max_h(modal::logical(placement.cap))
                     .flex()
