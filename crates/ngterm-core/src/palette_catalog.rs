@@ -179,6 +179,8 @@ pub enum PaletteCommand {
     ToggleWorkspaceCollapse,
     FocusLeftPane,
     FocusRightPane,
+    /// This build's own: the sidebar's session search field takes the keyboard.
+    SearchSessions,
 }
 
 impl PaletteCommand {
@@ -400,6 +402,7 @@ impl PaletteCommand {
             Self::ToggleWorkspaceCollapse => "Collapse Workspace",
             Self::FocusLeftPane => "Focus Left Pane",
             Self::FocusRightPane => "Focus Right Pane",
+            Self::SearchSessions => "Search Sessions…",
         }
     }
 
@@ -455,6 +458,7 @@ impl PaletteCommand {
             Self::AttachRemote => BuiltinAction::AttachRemote,
             Self::EditFlaggedSessions => BuiltinAction::EditFlaggedSessions,
             Self::EditFocusedWorkspaces => BuiltinAction::EditFocusedWorkspaces,
+            Self::SearchSessions => BuiltinAction::FocusSidebarSearch,
             Self::EditKeymap
             | Self::ReloadKeymap
             | Self::EditHooks
@@ -609,6 +613,7 @@ mod tests {
                 "Collapse Workspace",
                 "Focus Left Pane",
                 "Focus Right Pane",
+                "Search Sessions…",
             ]
         );
         for command in PaletteCommand::all() {
@@ -618,7 +623,7 @@ mod tests {
 
     #[test]
     fn catalog_has_the_expected_static_command_count() {
-        assert_eq!(PaletteCommand::all().count(), 61);
+        assert_eq!(PaletteCommand::all().count(), 62);
     }
 
     #[test]

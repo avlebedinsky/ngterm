@@ -137,6 +137,17 @@ pub enum SidebarAction {
     /// Gives the selected session's terminal the keyboard back after a sidebar interaction took it (upstream's
     /// `focusActiveTerminal` after a rename).
     FocusActiveTerminal,
+    /// The search field's text changed (`model::sidebar_search`).
+    SetSearch(String),
+    /// The search field's Down (`true`) or Up: the cursor moves to the next or the previous match.
+    StepSearch(bool),
+    /// The search field's Return: the cursor's match (else the first) is selected and its terminal takes the keyboard.
+    OpenSearchMatch,
+    /// The search field's Escape or its clear button: the search empties; with `focus_terminal` the selected session's
+    /// terminal takes the keyboard back.
+    ClearSearch {
+        focus_terminal: bool,
+    },
 }
 
 impl Core {
@@ -166,12 +177,20 @@ impl Core {
             SidebarAction::OpenDirectories { workspace, directories } => {
                 self.open_directories(window, workspace, &directories)
             }
-            SidebarAction::FocusActiveTerminal => {
-                let selected = self.library().store(window).and_then(AppStore::selected_session_id);
-                selected.is_some_and(|id| {
+            SidebarAction::FocusActiveTerminal => self.focus_active_terminal(window),
+            SidebarAction::OpenSearchMatch => {
+                let target = self.library().store(window).and_then(AppStore::sidebar_search_target);
+                target.is_some_and(|id| {
+                    let selected = self.select_from_sidebar(window, id, vec![id]);
                     self.request_pane_focus(id);
-                    true
+                    selected
                 })
+            }
+            SidebarAction::ClearSearch { focus_terminal } => {
+                if let Some(store) = self.library_mut().store_mut(window) {
+                    store.set_sidebar_search("");
+                }
+                !focus_terminal || self.focus_active_terminal(window)
             }
             SidebarAction::Duplicate(session) => {
                 if self.remote_row(window, session) {
@@ -200,6 +219,15 @@ impl Core {
                 changed || tint_start != before
             }
         }
+    }
+
+    /// Gives the selected session's terminal the keyboard; false with nothing selected.
+    fn focus_active_terminal(&mut self, window: Uuid) -> bool {
+        let selected = self.library().store(window).and_then(AppStore::selected_session_id);
+        selected.is_some_and(|id| {
+            self.request_pane_focus(id);
+            true
+        })
     }
 
     /// Records a Tint submenu's Show On pick as the last one (upstream's `Coordinator.tintPlacement`), before the pick
@@ -413,7 +441,11 @@ fn store_action(store: &mut AppStore, action: SidebarAction, grace: bool, tint_s
             };
             store.set_sidebar_mode(mode);
         }
+        SidebarAction::SetSearch(query) => store.set_sidebar_search(&query),
+        SidebarAction::StepSearch(down) => store.move_sidebar_search_cursor(down),
         SidebarAction::SelectSessions { .. }
+        | SidebarAction::OpenSearchMatch
+        | SidebarAction::ClearSearch { .. }
         | SidebarAction::NewSession { .. }
         | SidebarAction::NewSessionInCurrent
         | SidebarAction::NewSessionWithProfile(_)
@@ -560,6 +592,39 @@ mod tests {
             active: Uuid::new_v4(),
             selection: Vec::new(),
         }));
+    }
+
+    #[test]
+    fn the_search_field_sets_steps_opens_and_clears_its_match() {
+        let mut f = fixture(AppSettings::default());
+        let [_, second, third] = f.sessions;
+        assert!(f.act(SidebarAction::SetSearch("R".to_owned())));
+        assert_eq!(f.store().sidebar_search_matches(), [second, third], "srv and var");
+        assert!(f.act(SidebarAction::StepSearch(true)));
+        assert_eq!(f.store().sidebar_search_target(), Some(third));
+        assert!(f.act(SidebarAction::StepSearch(false)));
+        assert!(f.act(SidebarAction::OpenSearchMatch));
+        assert_eq!(f.store().selected_session_id(), Some(second));
+        assert!(f.core.pane_focus_requested(second), "its terminal takes the keyboard");
+        assert_eq!(f.store().sidebar_search().query(), "R", "Return keeps the search");
+        f.core.clear_pane_focus_requests();
+
+        assert!(f.act(SidebarAction::ClearSearch { focus_terminal: true }));
+        assert_eq!(f.store().sidebar_search().query(), "");
+        assert!(f.core.pane_focus_requested(second));
+        assert!(f.act(SidebarAction::SetSearch("nothing".to_owned())));
+        assert!(!f.act(SidebarAction::OpenSearchMatch), "no match, nothing to open");
+        assert_eq!(f.store().selected_session_id(), Some(second));
+        assert!(f.act(SidebarAction::ClearSearch { focus_terminal: false }));
+    }
+
+    #[test]
+    fn the_tree_reads_the_search_back_while_it_has_text() {
+        let mut f = fixture(AppSettings::default());
+        let tree = |f: &Fixture| f.core.tree_of(Some(f.window));
+        assert_eq!(tree(&f).sidebar_search, None);
+        f.act(SidebarAction::SetSearch("  srv".to_owned()));
+        assert_eq!(tree(&f).sidebar_search.as_deref(), Some("  srv"));
     }
 
     #[test]

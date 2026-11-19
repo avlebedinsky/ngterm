@@ -36,6 +36,7 @@ mod search;
 mod session;
 mod session_info;
 mod session_moves;
+mod sidebar_search;
 mod snapshot;
 mod status;
 mod store;
@@ -87,6 +88,7 @@ pub use session::{
     AgentIndicator, AgentStatus, CONTEXT_BYTE_LIMIT, PaneAddress, Session, SessionSeed, validate_context,
 };
 pub use session_moves::MoveTree;
+pub use sidebar_search::{SearchHit, SidebarSearch, match_range};
 pub use status::{
     STANDARD_SOUND_NAMES, StatusKeystroke, StatusReset, StatusShape, StatusWriteResult, is_known_sound,
     is_valid_color_hex,

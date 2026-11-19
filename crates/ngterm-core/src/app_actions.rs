@@ -63,6 +63,8 @@ pub enum FrontendAction {
     AlertBell(Uuid),
     /// Find over a text page on top: the keyboard goes into that page's own search field (upstream's `focusSearch`).
     FocusPageSearch { window: Uuid, page: Uuid },
+    /// Search Sessions…: the keyboard goes into the sidebar's search field, the sidebar already shown.
+    FocusSidebarSearch(Uuid),
 }
 
 /// A config file the menu's Edit items open in an editor overlay.
@@ -313,6 +315,12 @@ impl Core {
             | BuiltinAction::IncreaseFontSize
             | BuiltinAction::DecreaseFontSize
             | BuiltinAction::ResetFontSize => self.perform_app_action(window, action),
+            BuiltinAction::FocusSidebarSearch => {
+                if let Some(store) = self.library_mut().store_mut(window) {
+                    store.set_sidebar_visible(true);
+                }
+                frontend(FrontendAction::FocusSidebarSearch(window))
+            }
             BuiltinAction::PreviousAttentionSession | BuiltinAction::NextAttentionSession => {
                 self.step_attention(window, action == BuiltinAction::NextAttentionSession);
                 ActionEffect::Done

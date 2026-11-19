@@ -79,6 +79,9 @@ pub fn control_tree(store: &AppStore, context: &TreeContext<'_>) -> ControlTree 
         link_open_mode: Some(settings.effective_link_open_mode().raw().to_owned()),
         sidebar_width: Some(sidebar.width),
         workspace_filter: Some(store.focus().enabled()),
+        sidebar_search: Some(store.sidebar_search().query())
+            .filter(|query| !query.is_empty())
+            .map(str::to_owned),
         quick_visible: Some(context.quick_visible),
         app: Some(context.app.clone()),
         index_unsaved: context.index_unsaved.then_some(true),

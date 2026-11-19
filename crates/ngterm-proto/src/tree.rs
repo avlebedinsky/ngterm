@@ -84,6 +84,10 @@ pub struct ControlTree {
     /// True while this window's last `windows/<id>.json` write failed; per window, unlike `index_unsaved`.
     #[serde(default)]
     pub snapshot_unsaved: Option<bool>,
+    /// The text of the sidebar's session search field, as typed; absent while it is empty. This build's own, after
+    /// upstream's fields.
+    #[serde(default)]
+    pub sidebar_search: Option<String>,
 }
 
 /// A workspace and its sessions.
@@ -877,6 +881,7 @@ mod tests {
             live_reset: Some(json!({})),
             index_unsaved: Some(true),
             snapshot_unsaved: Some(true),
+            sidebar_search: Some("api".to_owned()),
         };
         let value = serde_json::to_value(&tree).unwrap();
         assert_eq!(
@@ -908,6 +913,7 @@ mod tests {
                 "liveReset",
                 "indexUnsaved",
                 "snapshotUnsaved",
+                "sidebarSearch",
             ]
         );
         assert_eq!(

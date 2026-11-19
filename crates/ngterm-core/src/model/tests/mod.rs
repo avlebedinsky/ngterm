@@ -24,6 +24,7 @@ mod panes;
 mod pending_close;
 mod recent_closed;
 mod reselection;
+mod sidebar_search;
 mod snapshot;
 mod status;
 mod store;

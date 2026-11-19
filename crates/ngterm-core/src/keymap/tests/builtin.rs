@@ -51,10 +51,11 @@ fn names_are_the_kitty_style_names() {
         (A::ToggleOverlay, "toggle_overlay"),
         (A::EditFlaggedSessions, "edit_flagged_sessions"),
         (A::EditFocusedWorkspaces, "edit_focused_workspaces"),
+        (A::FocusSidebarSearch, "focus_sidebar_search"),
     ] {
         assert_eq!(action.name(), name);
     }
-    assert_eq!(BuiltinAction::all().count(), 54);
+    assert_eq!(BuiltinAction::all().count(), 55);
 }
 
 #[test]
@@ -224,6 +225,8 @@ fn keyless_actions_have_no_default() {
         A::NextWindow,
         A::EditFlaggedSessions,
         A::EditFocusedWorkspaces,
+        // this build's own: keyed on the Linux table only, which every OS ships
+        A::FocusSidebarSearch,
     ];
     let without_default: HashSet<BuiltinAction> = BuiltinAction::all()
         .filter(|&action| default_chord(action).is_none())

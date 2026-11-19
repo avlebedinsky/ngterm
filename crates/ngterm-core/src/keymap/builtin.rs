@@ -1,5 +1,6 @@
 //! The rebindable built-in actions (upstream's `BuiltinAction.swift`): each case's `keymap.conf` name, in
-//! upstream's declaration order, which `keymap.list` and the starter file keep.
+//! upstream's declaration order, which `keymap.list` and the starter file keep. This build's own actions follow
+//! upstream's.
 
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
@@ -61,6 +62,8 @@ pub enum BuiltinAction {
     AttachRemote,
     EditFlaggedSessions,
     EditFocusedWorkspaces,
+    /// This build's own: the keyboard goes to the sidebar's session search field.
+    FocusSidebarSearch,
 }
 
 impl BuiltinAction {
@@ -87,16 +90,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fifty_four_actions_with_upstreams_names() {
+    fn upstreams_fifty_four_actions_then_this_builds_own() {
         let names: Vec<&str> = BuiltinAction::all().map(BuiltinAction::name).collect();
-        assert_eq!(names.len(), 54);
+        assert_eq!(names.len(), 55);
         assert_eq!(names[0], "new_window");
         assert_eq!(
             names[11..14],
             ["duplicate_session", "new_companion", "duplicate_companion"]
         );
         assert_eq!(names[51], "attach_remote");
-        assert_eq!(names[52..], ["edit_flagged_sessions", "edit_focused_workspaces"]);
+        assert_eq!(
+            names[52..],
+            [
+                "edit_flagged_sessions",
+                "edit_focused_workspaces",
+                "focus_sidebar_search"
+            ]
+        );
         assert_eq!(BuiltinAction::ToggleOverlay.name(), "toggle_overlay");
         assert_eq!(
             names[25], "toggle_overlay",

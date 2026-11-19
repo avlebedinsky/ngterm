@@ -63,12 +63,14 @@ fn linux_table() -> Vec<(BuiltinAction, Chord)> {
         (A::NextSession, chord(CTRL_SHIFT, "down")),
         (A::PreviousAttentionSession, chord(ALT_SHIFT, "up")),
         (A::NextAttentionSession, chord(ALT_SHIFT, "down")),
+        // this build's own: Find's letter, with Alt as the second tier
+        (A::FocusSidebarSearch, chord(CTRL_ALT_SHIFT, "f")),
     ]
 }
 
-/// The defaults added after the table's first letters (or fixed keys before), plus the `attach_remote` and
-/// `toggle_overlay` exceptions.
-fn linux_vacated() -> [BuiltinAction; 16] {
+/// The defaults added after the table's first letters (or fixed keys before), plus the `attach_remote`,
+/// `toggle_overlay` and `focus_sidebar_search` exceptions.
+fn linux_vacated() -> [BuiltinAction; 17] {
     use BuiltinAction as A;
     [
         A::ReopenRecent,
@@ -87,6 +89,7 @@ fn linux_vacated() -> [BuiltinAction; 16] {
         A::NextAttentionSession,
         A::AttachRemote,
         A::ToggleOverlay,
+        A::FocusSidebarSearch,
     ]
 }
 
@@ -103,8 +106,10 @@ mod tests {
         let linux = linux_defaults();
         let mut seen = HashSet::new();
         for action in BuiltinAction::all() {
+            // this build's own keyed action, which upstream does not have
+            let own = action == BuiltinAction::FocusSidebarSearch;
             assert_eq!(
-                upstream.chord(action).is_some(),
+                upstream.chord(action).is_some() || own,
                 linux.chord(action).is_some(),
                 "{}",
                 action.name()
@@ -131,7 +136,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(seen.len(), 32);
+        assert_eq!(seen.len(), 33);
     }
 
     #[test]
@@ -276,5 +281,27 @@ mod tests {
         );
         assert_eq!(attach_chord(&keymap).as_deref(), Some("ctrl+shift+r"));
         assert!(keymap.commands()[0].shortcut.is_empty());
+    }
+
+    #[test]
+    fn focus_sidebar_search_ships_on_ctrl_alt_shift_f_and_gives_way_to_an_old_binding() {
+        let search = |keymap: &crate::keymap::Keymap| keymap.equivalent(BuiltinAction::FocusSidebarSearch).cloned();
+        let (keymap, diagnostics) = parse_keymap("", &linux_defaults());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(search(&keymap), Some(Chord::new(CTRL_ALT_SHIFT, "f")));
+        assert_eq!(
+            keymap.equivalent(BuiltinAction::ToggleSearch),
+            Some(&Chord::new(CTRL_SHIFT, "f")),
+            "Find keeps its chord"
+        );
+
+        let (keymap, diagnostics) = parse_keymap("command \"Old binding\" ctrl+alt+shift+f echo ok", &linux_defaults());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(search(&keymap), None);
+        assert!(keymap.builtin_unbound().contains(&BuiltinAction::FocusSidebarSearch));
+
+        let (keymap, diagnostics) = parse_keymap("map ctrl+shift+y focus_sidebar_search", &linux_defaults());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(search(&keymap), Some(Chord::new(CTRL_SHIFT, "y")));
     }
 }

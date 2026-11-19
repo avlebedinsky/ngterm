@@ -451,3 +451,30 @@ fn undo_close_restores_the_pending_session() {
     assert!(f.store().session(f.session).is_some());
     assert!(f.store().pending_close_summary().is_none());
 }
+
+#[test]
+fn search_sessions_shows_a_hidden_sidebar_and_hands_the_field_the_keyboard() {
+    let mut f = Fixture::new();
+    let window = f.window;
+    f.store_mut().set_sidebar_visible(false);
+    assert_eq!(
+        f.run(BuiltinAction::FocusSidebarSearch),
+        frontend(FrontendAction::FocusSidebarSearch(window))
+    );
+    assert!(f.store().sidebar().visible);
+    assert_eq!(
+        f.menu(PaletteCommand::SearchSessions),
+        frontend(FrontendAction::FocusSidebarSearch(window))
+    );
+    assert_eq!(
+        PaletteCommand::for_builtin(BuiltinAction::FocusSidebarSearch),
+        Some(PaletteCommand::SearchSessions)
+    );
+}
+
+#[test]
+fn search_sessions_stands_down_while_a_zoom_covers_the_sidebar() {
+    let mut f = Fixture::new();
+    f.run(BuiltinAction::ToggleTerminalZoom);
+    assert_eq!(f.run(BuiltinAction::FocusSidebarSearch), ActionEffect::Done);
+}

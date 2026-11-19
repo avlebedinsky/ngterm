@@ -40,7 +40,8 @@ pub fn clamp_sidebar_width(width: f64) -> f64 {
     width.clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
 }
 
-/// A window's sidebar: shown or not, which view, how wide, and which workspace rows the outline shows open.
+/// A window's sidebar: shown or not, which view, how wide, which workspace rows the outline shows open, and its session
+/// search.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SidebarState {
     /// Persisted per window.
@@ -56,6 +57,8 @@ pub struct SidebarState {
     /// winning, for the outline to apply on its next refresh (upstream's `.agtermSetWorkspaceExpanded` notification).
     /// View state, never persisted.
     pub(crate) expansion_requests: HashMap<Uuid, bool>,
+    /// The session search (`sidebar_search.rs`). View state, never persisted.
+    pub(crate) search: super::sidebar_search::SidebarSearch,
 }
 
 impl Default for SidebarState {
@@ -66,6 +69,7 @@ impl Default for SidebarState {
             width: SIDEBAR_WIDTH_DEFAULT,
             expanded_workspace_ids: HashSet::new(),
             expansion_requests: HashMap::new(),
+            search: super::sidebar_search::SidebarSearch::default(),
         }
     }
 }
