@@ -2,9 +2,10 @@
 //! detaches. Both run that machine's `ngtermctl` once over ssh ([`super::ssh::control_command`], never retried, never
 //! done here), as a remote companion does ([`super::companions`]).
 //!
-//! - New Session, the last row of Attach Remote's session picker and an item of a remote row's menu: the origin creates a
-//!   session of its own, keeping its own selection, once it says it runs live sessions, the origin is listed until the
-//!   session is attachable, and it attaches here selected. It runs as a step of the Attach Remote flow
+//! - New Session, a row of Attach Remote's session picker (after Attach All, the first row when the machine lists no
+//!   session) and an item of a remote row's menu: the origin creates a session of its own, keeping its own selection,
+//!   once it says it runs live sessions, the origin is listed until the session is attachable, and it attaches here
+//!   selected. It runs as a step of the Attach Remote flow
 //!   ([`super::attach`]), whose panels it shows.
 //! - Duplicate Session asks the origin to duplicate its source in its current focused directory, then attaches the
 //!   fresh shell beside the source here. The origin selects its copy too, as its plain duplicate command does.
