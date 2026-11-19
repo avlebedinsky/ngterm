@@ -5,16 +5,17 @@
 //! MSYS path converted by `cygpath -m`: `script.rs`). The script prepares it (the pinned, patched source tree with
 //! its Zig packages, the headers, Ghostty's resources and a stamp naming the pinned zig); this script runs `zig build
 //! -Demit-lib-vt` over that tree (`zig_build.rs`, ported from herdr's build script), installing into `OUT_DIR` and
-//! caching in the stamp's Zig cache, and never reaches the network. A missing prefix fails the build with a pointer to the script.
+//! caching in the stamp's Zig cache, and never reaches the network. A missing prefix fails the build with a pointer to
+//! the script.
 //!
 //! The archive needs no system library beyond the C runtime Rust links anyway: on Linux and macOS
 //! (`libghostty-vt-static.pc` lists no `Libs.private` at `LIBGHOSTTY_VT_REV`) and on Windows MSVC, where
 //! `ghostty-vt-static.lib` links alone (the link test, on the `windows-2025` runner and in the Win11 VM). On Apple
 //! the archive is linked from a directory of its own, built for the deployment target rustc links for (macOS's, or
 //! iOS's on device and simulator); each member's `LC_BUILD_VERSION` is checked against it, for macOS by the link test,
-//! for iOS here after the build (with `otool -l` on the host, since the simulator can't run it). On Android (built through cargo-ndk) the archive is built for
-//! cargo-ndk's API level, at least 24, against the NDK cargo-ndk links with: Ghostty's build writes Zig's libc file
-//! for that NDK's bionic sysroot.
+//! for iOS here after the build (with `otool -l` on the host, since the simulator can't run it). On Android (built
+//! through cargo-ndk) the archive is built for cargo-ndk's API level, at least 24, against the NDK cargo-ndk links
+//! with: Ghostty's build writes Zig's libc file for that NDK's bionic sysroot, configured again in each build.
 
 mod script;
 mod zig_build;

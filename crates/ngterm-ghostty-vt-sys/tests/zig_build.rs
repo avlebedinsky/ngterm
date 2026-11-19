@@ -133,10 +133,11 @@ fn android_builds_for_cargo_ndks_api_level_and_its_ndk() {
         ]
     );
     assert_eq!(android.archive, Path::new("/out/zig-out/lib/libghostty-vt.a"));
-    assert_eq!(
-        zig_build::plan(&inputs("x86_64-unknown-linux-gnu")).unwrap().env,
-        [global_cache()]
-    );
+    // the configure phase runs again in each build: the cached configuration would keep another NDK's sysroot paths
+    assert_eq!(android.args.last(), Some(&OsString::from("--cache-poison")));
+    let linux = zig_build::plan(&inputs("x86_64-unknown-linux-gnu")).unwrap();
+    assert_eq!(linux.env, [global_cache()]);
+    assert!(!linux.args.contains(&OsString::from("--cache-poison")));
 }
 
 /// iOS builds for `IPHONEOS_DEPLOYMENT_TARGET` (`.cargo/config.toml`), else Ghostty's libghostty-vt floor, never below

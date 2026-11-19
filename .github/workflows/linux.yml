@@ -51,8 +51,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      # Only main saves caches: a branch's would crowd main's out of the repository's cache space. Both are this
-      # image's only ones: cross-platform.yml's Ubuntu leg and the headless-e2e job read them.
+      # Only main saves caches: a branch's would crowd main's out of the repository's cache space. cross-platform.yml's
+      # Ubuntu leg reads the cargo cache, that leg and the headless-e2e job the vendor cache (docs/development.md, CI
+      # caches).
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux

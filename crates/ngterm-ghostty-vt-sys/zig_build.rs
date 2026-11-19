@@ -422,8 +422,14 @@ pub struct Build {
 /// different targets or profiles never share an install), with the global cache the stamp names as its local cache
 /// too: Zig's cache is keyed by every input and locked for concurrent builds, so another `OUT_DIR` (a profile, a
 /// feature set, a target dir) with the same inputs reuses the library instead of building it again for minutes, and
-/// CI's vendor cache carries it from one run to the next. `-Doptimize=fast` (Zig 0.17's name for `ReleaseFast`): Debug's terminal integrity checks make sustained PTY
-/// output unusably slow.
+/// CI's vendor cache carries it from one run to the next. `-Doptimize=fast` (Zig 0.17's name for `ReleaseFast`):
+/// Debug's terminal integrity checks make sustained PTY output unusably slow.
+///
+/// An Android build passes `--cache-poison`, so Zig runs the configure phase of Ghostty's `build.zig` again in each
+/// build: that phase finds the NDK through `ANDROID_NDK_HOME` and writes the paths of its sysroot into the
+/// configuration, but Zig keys the cached configuration by the arguments and the target only, not by the environment.
+/// Without it, a build with another NDK would use the cached sysroot paths of the NDK before. The compiled objects stay
+/// cached: they are keyed by their real inputs, the sysroot's headers included.
 ///
 /// # Errors
 ///
@@ -454,6 +460,10 @@ pub fn plan(inputs: &Inputs<'_>) -> Result<Build, String> {
     if let Some(jobs) = inputs.jobs.filter(|jobs| !jobs.is_empty()) {
         args.push(format!("-j{jobs}").into());
     }
+    let android = inputs.target.ends_with("-android");
+    if android {
+        args.push("--cache-poison".into());
+    }
     let msvc = inputs.target.ends_with("-windows-msvc");
     let archive = install.join("lib").join(if msvc {
         "ghostty-vt-static.lib"
@@ -479,7 +489,7 @@ pub fn plan(inputs: &Inputs<'_>) -> Result<Build, String> {
         .chain(
             inputs
                 .android_ndk
-                .filter(|_| inputs.target.ends_with("-android"))
+                .filter(|_| android)
                 .map(|ndk| ("ANDROID_NDK_HOME".into(), ndk.as_os_str().to_owned())),
         )
         .collect(),

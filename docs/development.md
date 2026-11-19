@@ -1667,7 +1667,10 @@ That is about 9 GB. The saved cargo caches are those that save the most time on 
 jobs build their dependencies in each run (`conformance build (release)` then takes about as long as the `linux` job its
 shards also wait for). A vendor cache also holds Zig's global cache with the libghostty-vt builds of the job that saved
 it ([Native dependencies](#native-dependencies)), so its key hashes `zig_build.rs` and `.cargo/config.toml` too: when
-what the build passes zig changes, a new entry is saved, and later runs do not build the library again. `release.yml`
+what the build passes zig changes, a new entry is saved, and later runs do not build the library again for the targets
+that job built. A job that reads another job's vendor cache builds its other targets again in each run:
+`cross-platform.yml`'s Ubuntu leg cross-builds aarch64 Linux and x86_64 macOS from the x86_64 Linux entry of `linux`,
+1.5 to 2.5 minutes each. `release.yml`
 and `ios-release.yml` save no cache: a tag's caches serve only that tag. Before a job saves another cache, make sure
 that it fits: `gh api 'repos/{owner}/{repo}/actions/cache/usage'` after a main run gives the total, `gh api
 'repos/{owner}/{repo}/actions/caches'` each entry.

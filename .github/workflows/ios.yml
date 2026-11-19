@@ -120,32 +120,47 @@ jobs:
             mobile/ios/Packages/NgtermCore/Generated/NgtermCoreFFI.xcframework
             mobile/ios/Packages/NgtermCore/Generated/NgtermCoreBindings
           key: ios-core-xcode-27-${{ hashFiles('crates/**', 'resources/shell-integration/wsl/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/build-ios.sh', 'scripts/setup-ios.sh', 'scripts/build-ghostty-vt.sh', 'scripts/lib/native.sh') }}
+      # the vendor root, keyed like cross-platform.yml's legs', with the iOS setup that installs SwiftLint into it and
+      # the library's builds for the device and the simulator. This job alone saves it, in the build below, which a
+      # saved core skips: so on main a saved core is built again when the vendor root of its inputs is not saved (its
+      # save failed or was cancelled, or the entry was deleted), else no later run would save it
+      - name: the vendor root a run on main saved for these inputs
+        id: vendor-saved
+        if: steps.built.outputs.cache-hit == 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/restore@v6
+        with:
+          path: &vendor-path ~/.cache/ngterm/vendor
+          key: &vendor-key vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          lookup-only: true
+      - name: whether this job builds the core
+        id: build
+        run: >-
+          echo "core=${{ steps.built.outputs.cache-hit != 'true' || (github.ref == 'refs/heads/main' &&
+          steps.vendor-saved.outputs.cache-hit != 'true') }}" >> "$GITHUB_OUTPUT"
       - name: rust toolchain (rust-toolchain.toml)
-        if: steps.built.outputs.cache-hit != 'true'
+        if: steps.build.outputs.core == 'true'
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-        if: steps.built.outputs.cache-hit != 'true'
+        if: steps.build.outputs.core == 'true'
         with:
           shared-key: ios
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the vendor root, keyed like cross-platform.yml's legs', with the iOS setup that installs SwiftLint into it and
-      # the library's builds for the device and the simulator
       - uses: actions/cache@v6
-        if: steps.built.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        if: steps.build.outputs.core == 'true' && github.ref == 'refs/heads/main'
         with: &vendor
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          path: *vendor-path
+          key: *vendor-key
       - uses: actions/cache/restore@v6
-        if: steps.built.outputs.cache-hit != 'true' && github.ref != 'refs/heads/main'
+        if: steps.build.outputs.core == 'true' && github.ref != 'refs/heads/main'
         with: *vendor
       - name: Zig and the libghostty-vt prefix (build/pins.env)
-        if: steps.built.outputs.cache-hit != 'true'
+        if: steps.build.outputs.core == 'true'
         run: scripts/build-ghostty-vt.sh
       - name: iOS toolchain (build/pins.env)
-        if: steps.built.outputs.cache-hit != 'true'
+        if: steps.build.outputs.core == 'true'
         run: scripts/setup-ios.sh
       - name: the core for both iOS targets, its Swift bindings and XCFramework
-        if: steps.built.outputs.cache-hit != 'true'
+        if: steps.build.outputs.core == 'true'
         run: scripts/build-ios.sh --no-xcode
       - uses: actions/cache/save@v6
         if: steps.built.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'

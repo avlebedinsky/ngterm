@@ -21,10 +21,12 @@
 # scripts/build-ghostty-vt.sh prepares with the pinned Zig of each runner's OS and arch (Git Bash on Windows, stock
 # bash 3.2 on macOS); the sys crate's build script runs `zig build` over it, offline. The vendor cache keeps the
 # prefix, the pinned Zig and Zig's global cache (the C runtime and compiler_rt builds, and the library itself, which
-# the sys crate's build script caches there for each target it builds). The three Zig targets no runner here runs
-# natively are cross-built (`cargo build --target` of the sys crate, which runs its zig build; nothing is linked):
-# aarch64 Linux and x86_64 macOS on the Linux job, aarch64 Windows on the Windows one, since Zig builds windows-msvc
-# only against an MSVC installation (from Linux, simdutf and Wuffs' translate-c find no MSVC headers).
+# the sys crate's build script caches there for each target it builds), as the job that saves it left them. The three
+# Zig targets no runner here runs natively are cross-built (`cargo build --target` of the sys crate, which runs its zig
+# build; nothing is linked): aarch64 Linux and x86_64 macOS on the Linux job, aarch64 Windows on the Windows one, since
+# Zig builds windows-msvc only against an MSVC installation (from Linux, simdutf and Wuffs' translate-c find no MSVC
+# headers). The Windows leg saves its cross build with its cache. The Linux leg saves none: the vendor cache it reads
+# holds linux.yml's x86_64 Linux build only, so it builds its two cross targets again in each run.
 #
 # Pushes to a `ci/**` branch run it too, so a macOS or Windows form can be checked on the runners without a PR.
 #
@@ -69,8 +71,8 @@ jobs:
       matrix:
         include:
           # The Ubuntu leg saves no cache: it reads the caches linux.yml's linux job saves on the same image (the
-          # whole workspace's dependencies, a superset of these crates'). The repository's caches budget:
-          # docs/development.md, CI caches.
+          # whole workspace's dependencies, a superset of these crates'; libghostty-vt for x86_64 Linux only, so its
+          # cross builds start cold). The repository's caches budget: docs/development.md, CI caches.
           - os: ubuntu-26.04
             cross: aarch64-unknown-linux-gnu x86_64-apple-darwin
             rust-cache: linux
