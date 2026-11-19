@@ -28,6 +28,7 @@ internal final class ScreenReadTests: XCTestCase {
         let polled = ScreenRead.Wait(reads: 3, beat: 0, limit: 1).poll { ScreenRead.Answer.failed }
         XCTAssertFalse(polled.held)
         XCTAssertEqual(polled.reads, 0)
+        XCTAssertEqual(polled.answer, .failed)
         XCTAssertGreaterThanOrEqual(polled.seconds, 1)
     }
 
@@ -53,12 +54,18 @@ internal final class ScreenReadTests: XCTestCase {
     @MainActor
     internal func testAReadNowIsTheFirstReadThatCompleted() {
         var calls = 0
-        let holds = ScreenRead.holdsNow {
+        let answer = ScreenRead.now {
             calls += 1
             return calls <= 2 ? .failed : .doesNotHold
         }
-        XCTAssertFalse(holds)
+        XCTAssertEqual(answer, .doesNotHold)
         XCTAssertEqual(calls, 3)
+    }
+
+    internal func testAWaitAnswersFromTheReadsThatCompleted() {
+        XCTAssertEqual(ScreenRead.Polled(held: true, reads: 1, failed: 4, seconds: 0).answer, .holds)
+        XCTAssertEqual(ScreenRead.Polled(held: false, reads: 1, failed: 4, seconds: 0).answer, .doesNotHold)
+        XCTAssertEqual(ScreenRead.Polled(held: false, reads: 0, failed: 4, seconds: 0).answer, .failed)
     }
 
     internal func testOnlyAReadThatMatchedNothingReadsAbsent() {

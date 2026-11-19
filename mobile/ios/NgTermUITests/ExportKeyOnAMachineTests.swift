@@ -78,9 +78,9 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         let unprotected = app.switches["export-unprotected"]
         let isOn = NSPredicate(format: "value == '1'")
         for attempt in 0..<Self.tries {
-            // the switch can turn on after the last read of the step: a read that completed tells it is off before a
-            // press again, as a second press turns it off
-            if attempt > 0, ScreenRead.holdsNow({ ScreenRead.shows(unprotected, matching: isOn) }) {
+            // the switch can turn on after the last read of the step, and a second press turns it off: press again
+            // only when a read that completed tells it is off (no read completed: the assert below tells)
+            if attempt > 0, ScreenRead.now({ ScreenRead.shows(unprotected, matching: isOn) }) != .doesNotHold {
                 break
             }
             unprotected.switches.firstMatch.press(forDuration: Self.switchPress)
@@ -190,9 +190,9 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         let page = app.descendants(matching: .any)["public-key-page"].firstMatch
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")
-        // a read that completed tells whether the page stayed: a failed read is no reason to stop, or to tap a Done
-        // that went with the page
-        for _ in 0..<Self.tries where !ScreenRead.holdsNow({ ScreenRead.isGone(page) }) {
+        // tap Done again only when a read that completed tells the page stayed: no read that completed (the
+        // expectGone below tells) is no reason to tap a Done that can have gone with the page
+        for _ in 0..<Self.tries where ScreenRead.now({ ScreenRead.isGone(page) }) == .doesNotHold {
             done.tap()
             ScreenRead.step(lasting: Self.offerWait).poll { ScreenRead.isGone(page) }
         }

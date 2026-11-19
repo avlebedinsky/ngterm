@@ -39,6 +39,14 @@ internal enum ScreenRead {
         internal let reads: Int
         internal let failed: Int
         internal let seconds: TimeInterval
+
+        /// What the wait's reads told: `.failed` when it held not and no read completed.
+        internal var answer: Answer {
+            if held {
+                return .holds
+            }
+            return reads > 0 ? .doesNotHold : .failed
+        }
     }
 
     /// A wait that reads a condition again, a beat apart, until it holds.
@@ -128,10 +136,12 @@ internal enum ScreenRead {
 
     /// Whether `done` holds, from the next read that completes: a read that fails is done again, up to the limit.
     ///
-    /// Before a step is done again (a tap, a press), as the step can take after the last read of its wait.
+    /// Before a step is done again (a tap, a press), as the step can take after the last read of its wait: do the step
+    /// again only on `.doesNotHold`. It is `.failed` when no read completed until the limit, and the state is then
+    /// not known.
     @MainActor
-    internal static func holdsNow(_ done: () -> Answer) -> Bool {
-        Wait(reads: 1).poll(until: done).held
+    internal static func now(_ done: () -> Answer) -> Answer {
+        Wait(reads: 1).poll(until: done).answer
     }
 
     /// Reads the screen once for `element`, from a whole snapshot of it.

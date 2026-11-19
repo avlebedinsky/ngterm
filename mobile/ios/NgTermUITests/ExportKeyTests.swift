@@ -147,9 +147,9 @@ internal final class ExportKeyTests: XCTestCase {
         FakeApp.expect(unprotected, "Export without a passphrase")
         let isOn = NSPredicate(format: "value == '1'")
         for attempt in 0..<3 {
-            // the switch can turn on after the last read of the step: a read that completed tells it is off before a
-            // press again, as a second press turns it off
-            if attempt > 0, ScreenRead.holdsNow({ ScreenRead.shows(unprotected, matching: isOn) }) {
+            // the switch can turn on after the last read of the step, and a second press turns it off: press again
+            // only when a read that completed tells it is off (no read completed: the assert below tells)
+            if attempt > 0, ScreenRead.now({ ScreenRead.shows(unprotected, matching: isOn) }) != .doesNotHold {
                 break
             }
             unprotected.switches.firstMatch.press(forDuration: 0.6)
