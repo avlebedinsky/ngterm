@@ -26,7 +26,7 @@ internal enum FakeApp {
     // the audit's checks that make the app's text larger, and so lay its screen out again while they run
     private static let resizingAudits: XCUIAccessibilityAuditType = [.dynamicType, .textClipped]
 
-    /// Launches the app on the fake core for `test`: on the first run, or past it with a key when `withKey`.
+    /// Starts the app on the fake core, with a key when `withKey` is true.
     ///
     /// An iPad stays on its side between tests, so its three columns stay beside each other.
     /// After the app starts, an upright window turns on its side before an audit measures its sheets.
@@ -35,14 +35,16 @@ internal enum FakeApp {
         launch(withKey: withKey, arguments: [], for: test)
     }
 
-    /// Launches the app as ``launch(withKey:for:)`` does, with the launch arguments `arguments` besides.
+    /// Starts the app as ``launch(withKey:for:)`` does, with the extra arguments `arguments`.
     @MainActor
     internal static func launch(withKey: Bool, arguments: [String], for _: XCTestCase) -> XCUIApplication {
         start(["-ngterm-fake-core"] + (withKey ? ["-ngterm-fake-key"] : []) + arguments)
     }
 
-    /// Launches the app on its real core for `test`, as ``launch(withKey:for:)`` turns an iPad: what it finds is what
-    /// the simulator's install holds (``LogsOnAMachineTests``, after `scripts/test-ios-e2e.sh` installs it anew).
+    /// Starts the app on its real core, with the iPad orientation from ``launch(withKey:for:)``.
+    ///
+    /// The app uses the simulator's stored data, as ``LogsOnAMachineTests`` does after
+    /// `scripts/test-ios-e2e.sh` installs it.
     @MainActor
     internal static func launchOnTheRealCore(for _: XCTestCase) -> XCUIApplication {
         start([])
@@ -80,10 +82,10 @@ internal enum FakeApp {
     // reads `window` a beat apart until it is on its side (`landscape`: wider than it is tall) or upright; false when
     // it does not come to it
     @MainActor
-    private static func expectShape(of window: XCUIElement, landscape: Bool) -> Bool {
+    internal static func expectShape(of window: XCUIElement, landscape: Bool) -> Bool {
         for _ in 0..<Int(wait / settleBeat) {
             let frame = window.frame
-            if (frame.width > frame.height) == landscape {
+            if landscape ? frame.width > frame.height : frame.height > frame.width {
                 return true
             }
             _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: settleBeat)

@@ -84,6 +84,7 @@ internal final class SessionViewTests: XCTestCase {
 
     @MainActor
     internal func testSwitchingPanesAndTurningKeepTheSelectedPane() throws {
+        continueAfterFailure = false
         let app = openSession()
         expectSelected(1, in: app)
         try FakeApp.audit(app)
@@ -108,9 +109,15 @@ internal final class SessionViewTests: XCTestCase {
         let turned: UIDeviceOrientation = Self.isPad ? .portrait : .landscapeLeft
         let back: UIDeviceOrientation = Self.isPad ? .landscapeLeft : .portrait
         XCUIDevice.shared.orientation = turned
+        XCTAssertTrue(
+            FakeApp.expectShape(of: app.windows.firstMatch, landscape: !Self.isPad), "the first turn did not end"
+        )
         expectSelected(2, in: app)
         FakeApp.expect(second, "the second pane's screen, turned")
         XCUIDevice.shared.orientation = back
+        XCTAssertTrue(
+            FakeApp.expectShape(of: app.windows.firstMatch, landscape: Self.isPad), "the return turn did not end"
+        )
         expectSelected(2, in: app)
         FakeApp.expect(second, "the second pane's screen, turned back")
         try FakeApp.audit(app)
