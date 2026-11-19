@@ -40,7 +40,7 @@ const BOTH_COLUMNS: f64 = 520.0;
 const AGENT_COLUMN: f64 = 300.0;
 const COLUMN_WIDTH: f64 = 90.0;
 const TREE_CELL: f64 = 22.0;
-const PANEL_CHROME: f64 = 150.0;
+const PANEL_CHROME: f64 = 170.0;
 const MINIMUM_ROWS: f64 = 120.0;
 
 /// What the window asks of the core.
@@ -310,6 +310,7 @@ impl GotoPanel {
         .text_size(modal::logical(self.metrics.base))
         .on_click(move |_, _, _| sink(Request::Open(target)));
         let label = div()
+            .debug_selector(move || format!("go-to-label-{}", target.id()))
             .flex_1()
             .min_w(px(0.))
             .truncate()
@@ -342,14 +343,13 @@ impl GotoPanel {
 
     fn tree(&self, row: &GotoRow, colors: ChromeColors) -> Vec<AnyElement> {
         let dim = crate::chrome::color(colors.foreground, crate::chrome::DIM_ALPHA);
-        let id = row.target.id();
+        let target = row.target;
         row.tree
             .iter()
             .enumerate()
             .map(|(level, &lines)| {
-                let selector = format!("go-to-tree-{id}-{level}");
                 div()
-                    .debug_selector(move || selector)
+                    .debug_selector(move || format!("go-to-tree-{}-{level}", target.id()))
                     .flex_none()
                     .w(modal::logical(self.metrics.scaled(TREE_CELL)))
                     .pl(modal::logical(self.metrics.scaled(4.0)))

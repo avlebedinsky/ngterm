@@ -271,6 +271,17 @@ fn the_selection_falls_back_to_the_first_pane_row() {
     assert_eq!(selected_index(&[], None), None);
 }
 
+#[test]
+fn a_selected_session_that_is_no_longer_split_keeps_the_selection_on_its_pane() {
+    let mut tree = tree();
+    let state = GotoState::opened(Some(GotoTarget::Session(tree.diablo)));
+    assert_eq!(selected(&state, &tree), Some(GotoTarget::Session(tree.diablo)));
+    let panes = &mut tree.workspaces[0].panes;
+    panes.truncate(2);
+    panes[1].split = false;
+    assert_eq!(selected(&state, &tree), Some(left(tree.diablo)));
+}
+
 fn press(state: &mut GotoState, tree: &Tree, keys: &[GotoKey]) -> GotoOutcome {
     keys.iter()
         .map(|key| state.key(key.clone(), &tree.workspaces))

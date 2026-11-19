@@ -323,15 +323,24 @@ fn pane_row(workspace: &GotoWorkspace, pane: &GotoPane, tree: Vec<&'static str>)
     }
 }
 
-/// The selected row of `rows`: the row of `selected`, the first row when it is gone, the first pane row with nothing
-/// selected; `None` with no rows.
+/// The selected row of `rows`: the row of `selected`, a session's main pane once the session is no longer split, the
+/// first row when it is gone, the first pane row with nothing selected; `None` with no rows.
 #[must_use]
 pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<usize> {
     if rows.is_empty() {
         return None;
     }
+    let position = |target| rows.iter().position(|row| row.target == target);
     Some(match selected {
-        Some(target) => rows.iter().position(|row| row.target == target).unwrap_or(0),
+        Some(GotoTarget::Session(session)) => position(GotoTarget::Session(session))
+            .or_else(|| {
+                position(GotoTarget::Pane {
+                    session,
+                    pane: StatusPane::Left,
+                })
+            })
+            .unwrap_or(0),
+        Some(target) => position(target).unwrap_or(0),
         None => rows.iter().position(|row| row.pane.is_some()).unwrap_or(0),
     })
 }

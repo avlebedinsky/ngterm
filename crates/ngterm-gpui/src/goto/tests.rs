@@ -292,12 +292,19 @@ fn the_panel_follows_the_cores_rows(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_title_count_and_footer_read_at_the_size_of_the_rows(cx: &mut TestAppContext) {
-    let (view, _) = opened();
+    let (view, ids) = opened();
     let (_, cx, _) = open(cx, view);
     let height = |cx: &mut VisualTestContext, line: &'static str| cx.debug_bounds(line).expect(line).size.height;
-    let search = height(cx, "go-to-search");
-    for line in ["go-to-title", "go-to-count", "go-to-detail", "go-to-hints"] {
-        assert_eq!(height(cx, line), search, "{line}");
+    let label = Box::leak(format!("go-to-label-{}", main_pane(ids.agent).id()).into_boxed_str());
+    let row = height(cx, label);
+    for line in [
+        "go-to-title",
+        "go-to-search",
+        "go-to-count",
+        "go-to-detail",
+        "go-to-hints",
+    ] {
+        assert_eq!(height(cx, line), row, "{line}");
     }
 }
 
