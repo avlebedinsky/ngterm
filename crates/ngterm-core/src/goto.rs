@@ -3,8 +3,9 @@
 //!
 //! A workspace row names the workspace and the branch checked out where its first session's main pane started
 //! ([`branch::git_branch`], read when the window opens; none for a session attached from another machine). Under it
-//! comes one row per pane: each terminal session's main pane and, while it has one, its split pane (a page companion
-//! has none), labelled with the session's name, or `{agent} · {session}` for each pane of a split session. A pane's
+//! comes one row per terminal session (a page companion has none) on a `├─`/`└─` connector: an unsplit session's row
+//! is its pane's, labelled with the session's name; a split session's row names the session and holds one row per
+//! pane, labelled `{agent} · {session}` on a second connector, after a `│` while more sessions follow. A pane's
 //! agent is the one the hooks last reported in it (`terminal` without one); its status is the session's while the pane
 //! holds the session's status, as the sidebar's glyph shows it (`shell` while that is idle with no agent), and on the
 //! other pane `unknown` with an agent, `shell` without one.
@@ -46,16 +47,18 @@ pub const SEARCH_HINTS: &str = "search type · move ↑↓/ctrl+n/p · open ente
 pub enum GotoTarget {
     /// A workspace: its first session.
     Workspace(Uuid),
+    /// A split session, its focus as it is.
+    Session(Uuid),
     /// A session's main pane ([`StatusPane::Left`]) or split pane ([`StatusPane::Right`]).
     Pane { session: Uuid, pane: StatusPane },
 }
 
 impl GotoTarget {
-    /// The row's element id: the workspace's id, or `<session>:left` and `<session>:right`.
+    /// The row's element id: the workspace's or the session's id, or `<session>:left` and `<session>:right`.
     #[must_use]
     pub fn id(self) -> String {
         match self {
-            Self::Workspace(workspace) => uuid_string(workspace),
+            Self::Workspace(id) | Self::Session(id) => uuid_string(id),
             Self::Pane { session, pane } => format!("{}:{}", uuid_string(session), pane.as_str()),
         }
     }
@@ -178,13 +181,24 @@ pub struct GotoWorkspace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GotoRow {
     pub target: GotoTarget,
+    /// The tree lines before the label, one per level under the workspace: `├─`, or `└─` on the last row of its
+    /// level, and on a split session's pane `│` (blank under the last session) before its own; none on a workspace row.
+    pub tree: Vec<&'static str>,
     pub label: String,
-    /// The first line under the rows: `{workspace} / {session}`, or a workspace's name.
+    /// The first line under the rows: `{workspace} / {session}`, `{workspace} / {session} / {agent}` on a split
+    /// session's pane, or a workspace's name.
     pub detail: String,
-    /// The second: a pane's cwd, or a workspace's branch.
+    /// The second: a session's or a pane's cwd, or a workspace's branch.
     pub meta: String,
-    /// A pane row's columns; `None` on a workspace row.
+    /// A pane row's columns; `None` on a workspace or a split session row.
     pub pane: Option<PaneColumns>,
+}
+
+impl GotoRow {
+    #[must_use]
+    pub fn is_workspace(&self) -> bool {
+        matches!(self.target, GotoTarget::Workspace(_))
+    }
 }
 
 /// What a pane row shows beside its label.
@@ -194,9 +208,11 @@ pub struct PaneColumns {
     pub status: PaneStatus,
     pub indicator: Option<AgentIndicator>,
     pub current: bool,
-    /// The last pane row under its workspace row.
-    pub last: bool,
 }
+
+const BRANCH: &str = "├─";
+const LAST_BRANCH: &str = "└─";
+const RAIL: &str = "│";
 
 #[must_use]
 pub fn rows(workspaces: &[GotoWorkspace], query: &str, filter: Option<GotoFilter>) -> Vec<GotoRow> {
@@ -210,21 +226,47 @@ pub fn rows(workspaces: &[GotoWorkspace], query: &str, filter: Option<GotoFilter
     let mut rows = Vec::new();
     for workspace in workspaces {
         let workspace_matches = matches(&workspace.name) || workspace.branch.as_deref().is_some_and(matches);
-        let mut panes: Vec<GotoRow> = workspace
+        let sessions: Vec<(&GotoPane, Vec<&GotoPane>)> = workspace
             .panes
-            .iter()
-            .filter(|pane| pane.status.passes(filter) && (workspace_matches || pane_matches(pane, &matches)))
-            .map(|pane| pane_row(workspace, pane))
+            .chunk_by(|one, other| one.session == other.session)
+            .filter_map(|panes| {
+                let main = panes.first()?;
+                let kept: Vec<&GotoPane> = panes
+                    .iter()
+                    .filter(|pane| pane.status.passes(filter) && (workspace_matches || pane_matches(pane, &matches)))
+                    .collect();
+                (!kept.is_empty()).then_some((main, kept))
+            })
             .collect();
-        if let Some(last) = panes.last_mut().and_then(|row| row.pane.as_mut()) {
-            last.last = true;
-        }
-        if !filtering || !panes.is_empty() || (filter.is_none() && workspace_matches) {
+        if !filtering || !sessions.is_empty() || (filter.is_none() && workspace_matches) {
             rows.push(workspace_row(workspace));
-            rows.extend(panes);
+            let last = sessions.len().saturating_sub(1);
+            for (index, (main, kept)) in sessions.iter().enumerate() {
+                session_rows(&mut rows, workspace, (main, kept), index == last);
+            }
         }
     }
     rows
+}
+
+fn session_rows(
+    rows: &mut Vec<GotoRow>,
+    workspace: &GotoWorkspace,
+    (main, kept): (&GotoPane, &[&GotoPane]),
+    last: bool,
+) {
+    let connector = if last { LAST_BRANCH } else { BRANCH };
+    if !main.split {
+        rows.extend(kept.iter().map(|pane| pane_row(workspace, pane, vec![connector])));
+        return;
+    }
+    rows.push(session_row(workspace, main, connector));
+    let rail = if last { "" } else { RAIL };
+    let final_pane = kept.len().saturating_sub(1);
+    rows.extend(kept.iter().enumerate().map(|(index, pane)| {
+        let connector = if index == final_pane { LAST_BRANCH } else { BRANCH };
+        pane_row(workspace, pane, vec![rail, connector])
+    }));
 }
 
 fn pane_matches(pane: &GotoPane, matches: &impl Fn(&str) -> bool) -> bool {
@@ -238,6 +280,7 @@ fn pane_matches(pane: &GotoPane, matches: &impl Fn(&str) -> bool) -> bool {
 fn workspace_row(workspace: &GotoWorkspace) -> GotoRow {
     GotoRow {
         target: GotoTarget::Workspace(workspace.id),
+        tree: Vec::new(),
         label: workspace.name.clone(),
         detail: workspace.name.clone(),
         meta: workspace.branch.clone().unwrap_or_default(),
@@ -245,21 +288,37 @@ fn workspace_row(workspace: &GotoWorkspace) -> GotoRow {
     }
 }
 
-fn pane_row(workspace: &GotoWorkspace, pane: &GotoPane) -> GotoRow {
+fn session_row(workspace: &GotoWorkspace, main: &GotoPane, connector: &'static str) -> GotoRow {
+    GotoRow {
+        target: GotoTarget::Session(main.session),
+        tree: vec![connector],
+        label: main.session_name.clone(),
+        detail: format!("{} / {}", workspace.name, main.session_name),
+        meta: main.cwd.clone(),
+        pane: None,
+    }
+}
+
+fn pane_row(workspace: &GotoWorkspace, pane: &GotoPane, tree: Vec<&'static str>) -> GotoRow {
+    let session = format!("{} / {}", workspace.name, pane.session_name);
     GotoRow {
         target: GotoTarget::Pane {
             session: pane.session,
             pane: pane.pane,
         },
+        tree,
         label: pane.label(),
-        detail: format!("{} / {}", workspace.name, pane.session_name),
+        detail: if pane.split {
+            format!("{session} / {}", pane.kind())
+        } else {
+            session
+        },
         meta: pane.cwd.clone(),
         pane: Some(PaneColumns {
             agent: pane.kind(),
             status: pane.status,
             indicator: pane.indicator.clone(),
             current: pane.current,
-            last: false,
         }),
     }
 }

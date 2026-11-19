@@ -172,11 +172,11 @@ impl GotoState {
         };
         let section = rows[..=selected]
             .iter()
-            .rposition(|row| row.pane.is_none())
+            .rposition(GotoRow::is_workspace)
             .unwrap_or(selected);
         let mut destinations = rows.windows(2).enumerate().filter(|(index, pair)| {
-            pair[0].pane.is_none()
-                && pair[1].pane.is_some()
+            pair[0].is_workspace()
+                && !pair[1].is_workspace()
                 && if forward { *index > section } else { *index < section }
         });
         let destination = if forward {
@@ -184,8 +184,8 @@ impl GotoState {
         } else {
             destinations.next_back()
         };
-        if let Some((_, pair)) = destination {
-            self.selected = Some(pair[1].target);
+        if let Some(row) = destination.and_then(|(index, _)| rows[index..].iter().find(|row| row.pane.is_some())) {
+            self.selected = Some(row.target);
         }
     }
 }

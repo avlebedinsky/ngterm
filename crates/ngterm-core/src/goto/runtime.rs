@@ -77,7 +77,7 @@ impl Core {
     }
 
     /// Opens `target` from the Go to window open in `window`, which closes: a pane's session is selected with that
-    /// pane focused, a workspace's first session selected. Commit afterwards.
+    /// pane focused, a session selected as it is, a workspace's first session selected. Commit afterwards.
     pub fn goto_open(&mut self, window: Uuid, target: GotoTarget) {
         if !self.goto_holds(window) {
             return;
@@ -97,7 +97,10 @@ impl Core {
                 }
                 store.set_split_focus(session, pane == StatusPane::Right);
             }
-            GotoTarget::Pane { .. } => {}
+            GotoTarget::Session(session) if store.session(session).is_some() => {
+                store.select_session(Some(session));
+            }
+            GotoTarget::Pane { .. } | GotoTarget::Session(_) => {}
         }
         self.note_window_activity(window);
         if let Some(session) = self.library().store(window).and_then(AppStore::selected_session_id) {

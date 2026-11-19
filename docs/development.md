@@ -67,8 +67,8 @@ Linux build unless it names another OS.
   a page comes back from its original source, without its in-page state. Rust-only capability `pages-survive`.
 - Another extension beyond upstream, which has no such window: Go to (`go_to` in `keymap.conf`, Ctrl+Shift+K, Navigate
   ▸ Go to… and the command palette), a copy of herdr's session navigator: the window's workspaces with the git branch
-  of each, under them one row per pane with its agent and status, searched by text, filtered by status (`b`, `w`, `i`,
-  `d`, `a`), and opened with Enter (`crates/ngterm-core/src/goto.rs`, its view `crates/ngterm-gpui/src/goto.rs`).
+  of each, under them their sessions, and under a split session one row per pane, each pane with its agent and status,
+  searched by text, filtered by status (`b`, `w`, `i`, `d`, `a`), and opened with Enter (`crates/ngterm-core/src/goto.rs`, its view `crates/ngterm-gpui/src/goto.rs`).
 - No bundled theme of its own: upstream ships its `agterm` theme and starts a fresh install on it; this build ships
   Ghostty's theme catalog only, so a fresh install starts on Ghostty's built-in colors (the "default ghostty" row),
   and a settings file that still names `agterm` (a build from before the rename seeded it) loads on them too.

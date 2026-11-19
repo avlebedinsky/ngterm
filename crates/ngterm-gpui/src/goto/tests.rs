@@ -289,3 +289,79 @@ fn the_panel_follows_the_cores_rows(cx: &mut TestAppContext) {
     );
     assert_eq!(panel.read_with(cx, |panel, _| panel.view().clone()), searched);
 }
+
+#[gpui_kit::test]
+fn the_title_count_and_footer_read_at_the_size_of_the_rows(cx: &mut TestAppContext) {
+    let (view, _) = opened();
+    let (_, cx, _) = open(cx, view);
+    let height = |cx: &mut VisualTestContext, line: &'static str| cx.debug_bounds(line).expect(line).size.height;
+    let search = height(cx, "go-to-search");
+    for line in ["go-to-title", "go-to-count", "go-to-detail", "go-to-hints"] {
+        assert_eq!(height(cx, line), search, "{line}");
+    }
+}
+
+fn split_view() -> (GotoView, Uuid, Uuid) {
+    let [workspace, build, zsh] = [(); 3].map(|()| Uuid::new_v4());
+    let half = |side| GotoPane {
+        pane: side,
+        split: true,
+        ..pane(build, "build", None, PaneStatus::Shell)
+    };
+    let workspaces = [GotoWorkspace {
+        id: workspace,
+        name: "home".to_owned(),
+        branch: None,
+        panes: vec![
+            half(StatusPane::Left),
+            half(StatusPane::Right),
+            pane(zsh, "zsh", None, PaneStatus::Shell),
+        ],
+    }];
+    let view = GotoView {
+        rows: rows(&workspaces, "", None),
+        selected: Some(2),
+        query: String::new(),
+        searching: false,
+        filter: None,
+    };
+    (view, build, zsh)
+}
+
+fn tree_cell(target: GotoTarget, level: usize) -> &'static str {
+    Box::leak(format!("go-to-tree-{}-{level}", target.id()).into_boxed_str())
+}
+
+fn main_pane(session: Uuid) -> GotoTarget {
+    GotoTarget::Pane {
+        session,
+        pane: StatusPane::Left,
+    }
+}
+
+#[gpui_kit::test]
+fn a_split_sessions_pane_draws_a_level_deeper_on_a_rail_and_the_footer_names_it(cx: &mut TestAppContext) {
+    let (view, build, zsh) = split_view();
+    let (_, cx, _) = open(cx, view);
+    let mut cell = |target: GotoTarget, level: usize| cx.debug_bounds(tree_cell(target, level));
+    let session = cell(GotoTarget::Session(build), 0).expect("the session's connector");
+    let rail = cell(main_pane(build), 0).expect("the pane's rail");
+    let connector = cell(main_pane(build), 1).expect("the pane's connector");
+    let sibling = cell(main_pane(zsh), 0).expect("the next session's connector");
+    assert_eq!(
+        rail.left(),
+        session.left(),
+        "the rail runs under the session's connector"
+    );
+    assert_eq!(sibling.left(), session.left(), "sessions share a level");
+    assert!(connector.left() > session.right(), "the pane hangs a level deeper");
+    assert!(cell(main_pane(zsh), 1).is_none(), "an unsplit session is one level");
+    cx.activate_a11y();
+    let tree = cx.a11y_tree_update().expect("the panel's accessibility tree");
+    let detail = tree
+        .nodes
+        .iter()
+        .find(|(_, node)| node.author_id() == Some("go-to-detail"))
+        .and_then(|(_, node)| node.value());
+    assert_eq!(detail, Some("home / build / terminal"));
+}

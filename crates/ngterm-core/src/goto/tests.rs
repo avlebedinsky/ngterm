@@ -118,7 +118,7 @@ fn right(session: Uuid) -> GotoTarget {
 }
 
 #[test]
-fn the_tree_lists_every_workspace_with_one_row_per_pane() {
+fn the_tree_lists_every_workspace_its_sessions_and_a_split_sessions_panes() {
     let tree = tree();
     let rows = rows(&tree.workspaces, "", None);
     assert_eq!(
@@ -126,6 +126,7 @@ fn the_tree_lists_every_workspace_with_one_row_per_pane() {
         [
             "nix-os",
             "ai",
+            "diablo 2",
             "claude · diablo 2",
             "terminal · diablo 2",
             "fansee-wall",
@@ -137,25 +138,85 @@ fn the_tree_lists_every_workspace_with_one_row_per_pane() {
     assert_eq!((rows[0].detail.as_str(), rows[0].meta.as_str()), ("nix-os", "main"));
     assert!(rows[0].pane.is_none());
     let columns = |index: usize| rows[index].pane.clone().unwrap();
+    assert_eq!((columns(1).agent, columns(1).status.name()), ("claude", "idle"));
+    assert_eq!(rows[1].detail, "nix-os / ai");
+    assert_eq!(rows[2].target, GotoTarget::Session(tree.diablo));
+    assert!(rows[2].pane.is_none(), "a split session's row has no columns");
     assert_eq!(
-        (columns(1).agent, columns(1).status.name(), columns(1).last),
-        ("claude", "idle", false)
-    );
-    assert_eq!(
-        (columns(2).agent, columns(2).status.name(), columns(2).last),
-        ("claude", "working", false)
-    );
-    assert_eq!(
-        (columns(3).agent, columns(3).status.name(), columns(3).last),
-        ("terminal", "shell", true)
-    );
-    assert_eq!(rows[3].target, right(tree.diablo));
-    assert_eq!(
-        (rows[3].detail.as_str(), rows[3].meta.as_str()),
+        (rows[2].detail.as_str(), rows[2].meta.as_str()),
         ("nix-os / diablo 2", "/src/diablo 2")
     );
-    assert!(columns(5).last, "the only pane of its workspace");
-    assert_eq!(rows[6].target, GotoTarget::Workspace(tree.empty));
+    assert_eq!((columns(3).agent, columns(3).status.name()), ("claude", "working"));
+    assert_eq!((columns(4).agent, columns(4).status.name()), ("terminal", "shell"));
+    assert_eq!(rows[4].target, right(tree.diablo));
+    assert_eq!(
+        (rows[3].detail.as_str(), rows[4].detail.as_str(), rows[4].meta.as_str()),
+        (
+            "nix-os / diablo 2 / claude",
+            "nix-os / diablo 2 / terminal",
+            "/src/diablo 2"
+        )
+    );
+    assert_eq!(rows[7].target, GotoTarget::Workspace(tree.empty));
+}
+
+fn split_session(session: Uuid, name: &str) -> [GotoPane; 2] {
+    [StatusPane::Left, StatusPane::Right].map(|side| GotoPane {
+        split: true,
+        ..pane(session, side, name)
+    })
+}
+
+fn drawn(rows: &[GotoRow]) -> Vec<(Vec<&'static str>, &str)> {
+    rows.iter().map(|row| (row.tree.clone(), row.label.as_str())).collect()
+}
+
+#[test]
+fn a_split_sessions_panes_hang_under_its_row_on_a_rail_while_more_sessions_follow() {
+    let [home, build, zsh, logs] = [(); 4].map(|()| Uuid::new_v4());
+    let mut panes = Vec::from(split_session(build, "build"));
+    panes.push(pane(zsh, StatusPane::Left, "zsh"));
+    panes.extend(split_session(logs, "logs"));
+    let rows = rows(&[workspace(home, "home", None, panes)], "", None);
+    assert_eq!(
+        drawn(&rows),
+        [
+            (vec![], "home"),
+            (vec!["├─"], "build"),
+            (vec!["│", "├─"], "terminal · build"),
+            (vec!["│", "└─"], "terminal · build"),
+            (vec!["├─"], "zsh"),
+            (vec!["└─"], "logs"),
+            (vec!["", "├─"], "terminal · logs"),
+            (vec!["", "└─"], "terminal · logs"),
+        ]
+    );
+    assert_eq!(rows[1].target, GotoTarget::Session(build));
+    assert_eq!(
+        [2, 3, 4, 7].map(|index| rows[index].detail.as_str()),
+        [
+            "home / build / terminal",
+            "home / build / terminal",
+            "home / zsh",
+            "home / logs / terminal"
+        ]
+    );
+}
+
+#[test]
+fn a_filter_keeping_one_pane_of_a_split_session_keeps_its_session_row_over_it() {
+    let tree = tree();
+    let working = rows(&tree.workspaces, "", Some(GotoFilter::Working));
+    assert_eq!(
+        drawn(&working),
+        [
+            (vec![], "nix-os"),
+            (vec!["└─"], "diablo 2"),
+            (vec!["", "└─"], "claude · diablo 2")
+        ]
+    );
+    let searched = rows(&tree.workspaces, "/src/ai", None);
+    assert_eq!(drawn(&searched), [(vec![], "nix-os"), (vec!["└─"], "ai")]);
 }
 
 #[test]
@@ -167,11 +228,11 @@ fn every_word_of_the_query_must_be_in_one_field() {
             .map(|row| row.label.clone())
             .collect::<Vec<_>>()
     };
-    assert_eq!(found("DIABLO claude"), ["nix-os", "claude · diablo 2"]);
+    assert_eq!(found("DIABLO claude"), ["nix-os", "diablo 2", "claude · diablo 2"]);
     assert_eq!(found("codex"), ["fansee-wall", "api-tests"], "the agent");
     assert_eq!(
         found("notes vim"),
-        ["nix-os", "terminal · diablo 2"],
+        ["nix-os", "diablo 2", "terminal · diablo 2"],
         "the pane's title"
     );
     assert_eq!(found("/src/ai"), ["nix-os", "ai"], "the cwd");
@@ -187,7 +248,7 @@ fn every_word_of_the_query_must_be_in_one_field() {
         "a matching workspace shows even with no pane"
     );
     assert!(found("nothing here").is_empty());
-    assert_eq!(found("   ").len(), 7, "a blank query keeps everything");
+    assert_eq!(found("   ").len(), 8, "a blank query keeps everything");
 }
 
 #[test]
@@ -195,11 +256,9 @@ fn a_filter_keeps_the_panes_of_its_status_and_never_a_shell() {
     let tree = tree();
     let filtered = |filter| labels(&rows(&tree.workspaces, "", Some(filter))).join("|");
     assert_eq!(filtered(GotoFilter::Blocked), "fansee-wall|api-tests");
-    assert_eq!(filtered(GotoFilter::Working), "nix-os|claude · diablo 2");
+    assert_eq!(filtered(GotoFilter::Working), "nix-os|diablo 2|claude · diablo 2");
     assert_eq!(filtered(GotoFilter::Idle), "nix-os|ai");
     assert_eq!(filtered(GotoFilter::Done), "");
-    let working = rows(&tree.workspaces, "", Some(GotoFilter::Working));
-    assert!(working[1].pane.as_ref().unwrap().last);
 }
 
 #[test]
@@ -207,7 +266,7 @@ fn the_selection_falls_back_to_the_first_pane_row() {
     let tree = tree();
     let rows = rows(&tree.workspaces, "", None);
     assert_eq!(selected_index(&rows, None), Some(1));
-    assert_eq!(selected_index(&rows, Some(left(tree.api))), Some(5));
+    assert_eq!(selected_index(&rows, Some(left(tree.api))), Some(6));
     assert_eq!(selected_index(&rows, Some(left(Uuid::new_v4()))), Some(0), "gone");
     assert_eq!(selected_index(&[], None), None);
 }
@@ -256,6 +315,16 @@ fn the_list_keys_walk_the_rows() {
     assert_eq!(selected(&state, &tree), Some(GotoTarget::Workspace(tree.empty)));
     press(&mut state, &tree, &[GotoKey::Home]);
     assert_eq!(selected(&state, &tree), Some(left(tree.ai)), "the first pane row");
+    press(&mut state, &tree, &[text("j")]);
+    assert_eq!(
+        selected(&state, &tree),
+        Some(GotoTarget::Session(tree.diablo)),
+        "a split session's row"
+    );
+    assert_eq!(
+        press(&mut state, &tree, &[GotoKey::Enter]),
+        GotoOutcome::Open(GotoTarget::Session(tree.diablo))
+    );
     press(&mut state, &tree, &[text("G")]);
     assert_eq!(selected(&state, &tree), Some(GotoTarget::Workspace(tree.empty)));
     assert_eq!(
@@ -287,6 +356,23 @@ fn left_and_right_jump_to_the_first_pane_of_a_workspace_with_panes() {
 }
 
 #[test]
+fn a_jump_lands_on_the_first_pane_under_a_split_session() {
+    let [home, zsh, work, build] = [(); 4].map(|()| Uuid::new_v4());
+    let tree = Tree {
+        workspaces: vec![
+            workspace(home, "home", None, vec![pane(zsh, StatusPane::Left, "zsh")]),
+            workspace(work, "work", None, Vec::from(split_session(build, "build"))),
+        ],
+        ..tree()
+    };
+    let mut state = GotoState::opened(Some(left(zsh)));
+    press(&mut state, &tree, &[GotoKey::Right]);
+    assert_eq!(selected(&state, &tree), Some(left(build)));
+    press(&mut state, &tree, &[GotoKey::Left]);
+    assert_eq!(selected(&state, &tree), Some(left(zsh)));
+}
+
+#[test]
 fn a_filter_key_sets_the_filter_and_backspace_or_a_drops_it() {
     let tree = tree();
     let mut state = GotoState::opened(None);
@@ -299,10 +385,10 @@ fn a_filter_key_sets_the_filter_and_backspace_or_a_drops_it() {
     );
     assert!(!view.shows_placeholder());
     press(&mut state, &tree, &[GotoKey::Backspace]);
-    assert_eq!(state.view(&tree.workspaces).rows.len(), 7, "Backspace drops the filter");
+    assert_eq!(state.view(&tree.workspaces).rows.len(), 8, "Backspace drops the filter");
     press(&mut state, &tree, &[text("i"), text("a")]);
     let view = state.view(&tree.workspaces);
-    assert_eq!((view.rows.len(), view.search_line().as_str()), (7, PLACEHOLDER));
+    assert_eq!((view.rows.len(), view.search_line().as_str()), (8, PLACEHOLDER));
     assert!(view.shows_placeholder());
     assert_eq!(view.count_label(), "4 terminals");
 }
@@ -351,7 +437,7 @@ fn the_list_reads_the_key_and_the_query_takes_the_typed_text() {
     };
     let mut state = GotoState::opened(Some(left(tree.ai)));
     press(&mut state, &tree, &[russian("о", "j")]);
-    assert_eq!(selected(&state, &tree), Some(left(tree.diablo)));
+    assert_eq!(selected(&state, &tree), Some(GotoTarget::Session(tree.diablo)));
     press(&mut state, &tree, &[russian("и", "b")]);
     assert_eq!(state.view(&tree.workspaces).filter, Some(GotoFilter::Blocked));
     press(&mut state, &tree, &[russian(".", "/"), russian("о", "j")]);
@@ -379,6 +465,7 @@ fn a_target_names_its_row() {
     let session = Uuid::new_v4();
     assert_eq!(right(session).id(), format!("{}:right", uuid_string(session)));
     assert_eq!(GotoTarget::Workspace(session).id(), uuid_string(session));
+    assert_eq!(GotoTarget::Session(session).id(), uuid_string(session));
 }
 
 fn write(path: &Path, text: &str) {
@@ -530,13 +617,18 @@ fn the_window_reads_the_panes_agents_statuses_and_branch_and_opens_the_pane() {
         labels(&view.rows),
         [
             store.workspaces()[0].name.as_str(),
+            name.as_str(),
             format!("terminal · {name}").as_str(),
             format!("claude · {name}").as_str(),
             "logs"
         ]
     );
     assert_eq!(view.rows[0].meta, "main", "the branch where the first session started");
-    let columns: Vec<(&str, &str, bool)> = view.rows[1..]
+    assert_eq!(
+        view.rows[3].detail,
+        format!("{} / {name} / claude", store.workspaces()[0].name)
+    );
+    let columns: Vec<(&str, &str, bool)> = view.rows[2..]
         .iter()
         .map(|row| {
             let pane = row.pane.as_ref().unwrap();
@@ -551,9 +643,9 @@ fn the_window_reads_the_panes_agents_statuses_and_branch_and_opens_the_pane() {
             ("terminal", "shell", false)
         ]
     );
-    let indicator = view.rows[2].pane.as_ref().unwrap().indicator.as_ref();
+    let indicator = view.rows[3].pane.as_ref().unwrap().indicator.as_ref();
     assert_eq!(indicator.map(|indicator| indicator.status), Some(AgentStatus::Blocked));
-    assert_eq!(view.selected, Some(1), "on the focused pane");
+    assert_eq!(view.selected, Some(2), "on the focused pane");
 
     core.goto_key(window, GotoKey::Down);
     core.goto_key(window, GotoKey::Enter);
@@ -565,6 +657,12 @@ fn the_window_reads_the_panes_agents_statuses_and_branch_and_opens_the_pane() {
     core.goto_open(window, left(other));
     assert_eq!(selected_session(&core, window), Some(other));
     assert!(core.goto_view(window).is_none());
+
+    core.toggle_goto(window);
+    core.goto_open(window, GotoTarget::Session(first));
+    assert_eq!(selected_session(&core, window), Some(first));
+    let session = core.library().store(window).unwrap().session(first).unwrap();
+    assert!(session.split.focused, "the session keeps its focused pane");
 }
 
 #[test]
@@ -595,21 +693,21 @@ fn a_status_on_the_other_pane_reads_unknown_and_a_remote_workspace_has_no_branch
     );
     core.toggle_goto(window);
     let view = core.goto_view(window).unwrap();
-    let main_pane = view.rows[1].pane.clone().unwrap();
+    let main_pane = view.rows[2].pane.clone().unwrap();
     assert_eq!((main_pane.agent, main_pane.status), ("claude", PaneStatus::Unknown));
     assert_eq!(
-        view.rows[2].pane.as_ref().unwrap().status,
+        view.rows[3].pane.as_ref().unwrap().status,
         PaneStatus::Working,
         "the pane holding the status"
     );
-    assert_eq!(view.rows[3].label, "remote");
-    assert_eq!(view.rows[3].meta, "", "no branch is read for a remote session");
+    assert_eq!(view.rows[4].label, "remote");
+    assert_eq!(view.rows[4].meta, "", "no branch is read for a remote session");
     status(&mut core, first, "completed", "left");
     let view = core.goto_view(window).unwrap();
-    assert_eq!(view.rows[1].pane.as_ref().unwrap().status, PaneStatus::Done, "live");
+    assert_eq!(view.rows[2].pane.as_ref().unwrap().status, PaneStatus::Done, "live");
     status(&mut core, first, "idle", "left");
     let view = core.goto_view(window).unwrap();
-    assert_eq!(view.rows[1].pane.as_ref().unwrap().status, PaneStatus::Idle);
+    assert_eq!(view.rows[2].pane.as_ref().unwrap().status, PaneStatus::Idle);
 }
 
 #[test]
@@ -852,10 +950,17 @@ fn a_status_with_no_agent_record_shows_in_its_column_and_its_filter() {
     split(&mut core, first);
     status(&mut core, first, "blocked", "right");
     core.toggle_goto(window);
-    assert_eq!(pane_columns(&core, window, 1), ("terminal", PaneStatus::Shell));
-    assert_eq!(pane_columns(&core, window, 2), ("terminal", PaneStatus::Blocked));
+    assert_eq!(pane_columns(&core, window, 2), ("terminal", PaneStatus::Shell));
+    assert_eq!(pane_columns(&core, window, 3), ("terminal", PaneStatus::Blocked));
     core.goto_key(window, text("b"));
-    assert_eq!(targets(&core, window), [GotoTarget::Workspace(workspace), right(first)]);
+    assert_eq!(
+        targets(&core, window),
+        [
+            GotoTarget::Workspace(workspace),
+            GotoTarget::Session(first),
+            right(first)
+        ]
+    );
 }
 
 #[test]
@@ -867,13 +972,20 @@ fn a_status_from_the_scratch_shows_on_the_main_pane_row() {
     status(&mut core, first, "blocked", "scratch");
 
     core.toggle_goto(window);
-    assert_eq!(pane_columns(&core, window, 1), ("terminal", PaneStatus::Blocked));
-    assert_eq!(pane_columns(&core, window, 2), ("terminal", PaneStatus::Shell));
+    assert_eq!(pane_columns(&core, window, 2), ("terminal", PaneStatus::Blocked));
+    assert_eq!(pane_columns(&core, window, 3), ("terminal", PaneStatus::Shell));
     let view = core.goto_view(window).unwrap();
-    let glyph = view.rows[1].pane.as_ref().unwrap().indicator.as_ref();
+    let glyph = view.rows[2].pane.as_ref().unwrap().indicator.as_ref();
     assert_eq!(glyph.map(|indicator| indicator.status), Some(AgentStatus::Blocked));
     core.goto_key(window, text("b"));
-    assert_eq!(targets(&core, window), [GotoTarget::Workspace(workspace), left(first)]);
+    assert_eq!(
+        targets(&core, window),
+        [
+            GotoTarget::Workspace(workspace),
+            GotoTarget::Session(first),
+            left(first)
+        ]
+    );
 }
 
 #[test]

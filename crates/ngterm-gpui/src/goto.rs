@@ -3,9 +3,10 @@
 //! terminal area, the search line and the pane count (`go-to-search`, `go-to-count`) over the rows (`go-to-row-<id>`),
 //! and under them the selected row's detail, its cwd or branch, and the key hints (`go-to-detail`, `go-to-hints`).
 //!
-//! A workspace row is its name in bold with its branch trailing. A pane row hangs under it on a `├─`/`└─` connector,
-//! `◆` marking the focused pane, then the session's status glyph as the sidebar draws it on the pane that holds the
-//! status, the label, and the agent and status columns, which a narrow panel drops ([`Columns`]).
+//! A workspace row is its name in bold with its branch trailing. A session's row hangs under it on a `├─`/`└─`
+//! connector, and a split session's pane rows under that one a level deeper, each level a cell of the same width. A
+//! pane row shows `◆` marking the focused pane, then the session's status glyph as the sidebar draws it on the pane that
+//! holds the status, the label, and the agent and status columns, which a narrow panel drops ([`Columns`]).
 //!
 //! The panel holds the keyboard: the window's key hook hands it every press ([`goto_key`]), which it posts to the core,
 //! whose rows every sync hands back, so a status changing under the open window shows at once. A click opens its row.
@@ -38,6 +39,7 @@ const PANEL_WIDTH: f64 = 760.0;
 const BOTH_COLUMNS: f64 = 520.0;
 const AGENT_COLUMN: f64 = 300.0;
 const COLUMN_WIDTH: f64 = 90.0;
+const TREE_CELL: f64 = 22.0;
 const PANEL_CHROME: f64 = 150.0;
 const MINIMUM_ROWS: f64 = 120.0;
 
@@ -234,9 +236,10 @@ impl GotoPanel {
             .gap(modal::logical(metrics.scaled(4.0)))
             .px(modal::logical(metrics.scaled(12.0)))
             .py(modal::logical(metrics.scaled(8.0)))
+            .text_size(modal::logical(metrics.base))
             .child(
                 div()
-                    .text_size(modal::logical(metrics.secondary))
+                    .debug_selector(|| "go-to-title".to_owned())
                     .text_color(crate::chrome::color(modal::ACCENT, 1.0))
                     .child("Go to"),
             )
@@ -246,7 +249,6 @@ impl GotoPanel {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .text_size(modal::logical(metrics.base))
                     .child(
                         labelled("go-to-search", search)
                             .flex_1()
@@ -254,12 +256,7 @@ impl GotoPanel {
                             .truncate()
                             .text_color(if self.view.shows_placeholder() { dim } else { ink }),
                     )
-                    .child(
-                        labelled("go-to-count", count)
-                            .flex_none()
-                            .text_size(modal::logical(metrics.secondary))
-                            .text_color(dim),
-                    ),
+                    .child(labelled("go-to-count", count).flex_none().text_color(dim)),
             )
             .into_any_element()
     }
@@ -279,7 +276,7 @@ impl GotoPanel {
             .gap(px(2.))
             .px(modal::logical(metrics.scaled(12.0)))
             .py(modal::logical(metrics.scaled(8.0)))
-            .text_size(modal::logical(metrics.secondary))
+            .text_size(modal::logical(metrics.base))
             .child(
                 labelled("go-to-detail", detail)
                     .truncate()
@@ -317,8 +314,8 @@ impl GotoPanel {
             .min_w(px(0.))
             .truncate()
             .child(SharedString::from(row.label.clone()));
-        match &row.pane {
-            None => frame
+        if row.is_workspace() {
+            return frame
                 .child(label.font_weight(FontWeight::BOLD))
                 .child(
                     div()
@@ -326,39 +323,57 @@ impl GotoPanel {
                         .text_color(crate::chrome::color(colors.foreground, crate::chrome::DIM_ALPHA))
                         .child(SharedString::from(row.meta.clone())),
                 )
-                .into_any_element(),
-            Some(pane) => {
-                let glyph = self.glyphs.get(index).cloned().flatten();
-                frame
-                    .children(self.pane_lead(pane, glyph, colors, animate))
-                    .child(label)
-                    .children(self.pane_columns(pane, columns, colors))
-                    .into_any_element()
-            }
+                .into_any_element();
         }
+        let glyph = self.glyphs.get(index).cloned().flatten();
+        let current = row.pane.as_ref().is_some_and(|pane| pane.current);
+        frame
+            .children(self.tree(row, colors))
+            .children(self.pane_lead(current, glyph, colors, animate))
+            .child(label)
+            .children(
+                row.pane
+                    .as_ref()
+                    .map(|pane| self.pane_columns(pane, columns, colors))
+                    .unwrap_or_default(),
+            )
+            .into_any_element()
+    }
+
+    fn tree(&self, row: &GotoRow, colors: ChromeColors) -> Vec<AnyElement> {
+        let dim = crate::chrome::color(colors.foreground, crate::chrome::DIM_ALPHA);
+        let id = row.target.id();
+        row.tree
+            .iter()
+            .enumerate()
+            .map(|(level, &lines)| {
+                let selector = format!("go-to-tree-{id}-{level}");
+                div()
+                    .debug_selector(move || selector)
+                    .flex_none()
+                    .w(modal::logical(self.metrics.scaled(TREE_CELL)))
+                    .pl(modal::logical(self.metrics.scaled(4.0)))
+                    .text_color(dim)
+                    .child(lines)
+                    .into_any_element()
+            })
+            .collect()
     }
 
     fn pane_lead(
         &self,
-        pane: &PaneColumns,
+        current: bool,
         glyph: Option<GlyphLook>,
         colors: ChromeColors,
         animate: bool,
-    ) -> [AnyElement; 3] {
+    ) -> [AnyElement; 2] {
         let dim = crate::chrome::color(colors.foreground, crate::chrome::DIM_ALPHA);
-        let connector = if pane.last { "└─" } else { "├─" };
         [
-            div()
-                .flex_none()
-                .pl(modal::logical(self.metrics.scaled(4.0)))
-                .text_color(dim)
-                .child(connector)
-                .into_any_element(),
             div()
                 .flex_none()
                 .w(modal::logical(self.metrics.scaled(10.0)))
                 .text_color(dim)
-                .when(pane.current, |marker| marker.child("◆"))
+                .when(current, |marker| marker.child("◆"))
                 .into_any_element(),
             div()
                 .flex_none()
