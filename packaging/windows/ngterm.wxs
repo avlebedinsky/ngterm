@@ -19,7 +19,9 @@
     (the terminal fonts are compiled into ngterm.exe, so only their licenses are files here)
   - a Start-menu shortcut whose System.AppUserModel.ID is the app id the app runs under, so the shortcut, the taskbar
     and the toasts are one app (crates/ngterm-gpui/src/notifications/windows.rs); uninstall removes the app id's
-    registration the app writes at each launch
+    registration the app writes at each launch. The shortcut has no icon of its own, so the shell shows ngterm.exe's
+    icon resource: a taskbar pin copies the shortcut's icon path, and the path of an Icon element is in the product's
+    own Installer folder, which the removal of that product deletes (the pin then shows a blank icon after an upgrade)
 
   Not installed: share\ngterm\session-BUILD, the session server's build id, which names the staged binary's size and
   modification time to the nanosecond (crates/ngterm-session/src/build_id.rs): an installed file gets the install's
@@ -102,7 +104,7 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut">
         <Shortcut Id="StartMenuShortcut" Name="ngterm" Description="A terminal driven by ngtermctl"
-                  Target="[#ngterm.exe]" WorkingDirectory="NGTERMHOME" Icon="ngterm.ico">
+                  Target="[#ngterm.exe]" WorkingDirectory="NGTERMHOME">
           <ShortcutProperty Key="System.AppUserModel.ID" Value="$(var.AppId)" />
         </Shortcut>
         <!-- the app id's registration (DisplayName, IconUri), which the app writes at each launch -->

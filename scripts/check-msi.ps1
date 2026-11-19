@@ -14,14 +14,16 @@ build identity and the licenses are in the staged layout; no session build id (p
 `ngterm.exe --build-identity` names the version the installed share\ngterm\app-BUILD records, which is the first
 package's version; the user's PATH in the registry holds bin\ and keeps its value kind (REG_EXPAND_SZ), and a new
 PowerShell given that PATH finds the installed ngtermctl and runs it; the Start-menu shortcut targets ngterm.exe, starts
-in the user's profile and carries the app id as its System.AppUserModel.ID. With -UpgradeMsi, that MSI (a higher
-version, built from the same tree) replaces the first: the first product is gone, the second installed, the files in
-place, bin\ on the user's PATH once, and a file in the app's state directory is kept. The removal of the first product
-removes no file and no shortcut (its upgrade log has no FileRemove or ShortcutRemove): it runs after the new install,
-whose components are the same, so ngterm.exe and the Start-menu shortcut stay in place. Then the uninstall, after the
-app id's toast registration is written as the app writes it at each launch: no install folder, shortcut, product
-registration, PATH entry (the user's PATH has its entries and kind back), HKCU\Software\ngterm or app id registration is
-left, and the state directory's file stays (user state is never the installer's).
+in the user's profile, carries the app id as its System.AppUserModel.ID and takes its icon from ngterm.exe (a taskbar
+pin copies the shortcut's icon path, and a path under the product's own Installer folder goes away with that product).
+With -UpgradeMsi, that MSI (a higher version, built from the same tree) replaces the first: the first product is gone,
+the second installed, the files in place, bin\ on the user's PATH once, and a file in the app's state directory is kept.
+The removal of the first product removes no file and no shortcut (its upgrade log has no FileRemove or ShortcutRemove):
+it runs after the new install, whose components are the same, so ngterm.exe and the Start-menu shortcut stay in place.
+Then the uninstall, after the app id's toast registration is written as the app writes it at each launch: no install
+folder, shortcut, product registration, icon folder of either product, PATH entry (the user's PATH has its entries and
+kind back), HKCU\Software\ngterm or app id registration is left, and the state directory's file stays (user state is
+never the installer's).
 
 Each msiexec run logs verbosely under -Log. The exit status is 0 when every check passed.
 
@@ -141,6 +143,8 @@ function Test-Installed([string] $msi, [bool] $versioned) {
         $folder = (New-Object -ComObject Shell.Application).Namespace((Split-Path $shortcut))
         $aumid = $folder.ParseName('ngterm.lnk').ExtendedProperty('System.AppUserModel.ID')
         Check "the shortcut's System.AppUserModel.ID is $AppId (got '$aumid')" ($aumid -eq $AppId)
+        # no icon of its own: the shell shows ngterm.exe's, which a pin keeps across an upgrade
+        Check "the shortcut takes its icon from ngterm.exe (got '$($link.IconLocation)')" ($link.IconLocation -eq ',0')
     }
     $code
 }
@@ -154,6 +158,7 @@ if ((Get-ProductState $code) -eq 5 -or (Test-Path $root)) {
 $originalPath = Get-RawUserPath
 Invoke-Msiexec @('/i', "`"$Msi`"") 'install'
 $installed = Test-Installed $Msi $true
+$products = @($installed)
 
 # user state the installer never owns: a file in the app's state directory (the Windows state dir is
 # %LOCALAPPDATA%\ngterm, crates/ngterm-core/src/paths.rs)
@@ -175,6 +180,7 @@ if ($UpgradeMsi) {
     Check "the upgrade removed product $installed" ((Get-ProductState $installed) -eq -1)
     # built from the same binaries with a higher package version (scripts/build-msi.sh --version)
     $installed = Test-Installed $UpgradeMsi $false
+    $products += $installed
     Check "the user's PATH holds $bin once after the upgrade ($(Get-UserPathCount))" ((Get-UserPathCount) -eq 1)
     Check 'the upgrade kept the state directory' (Test-Path -PathType Leaf $stateFile)
 }
@@ -194,6 +200,12 @@ Check "the user's PATH has its entries and kind back (was $($originalPath[1]) '$
     (& $entries $restored[0]) -eq (& $entries $originalPath[0]) -and
     ($restored[1] -eq $originalPath[1] -or ($originalPath[1] -eq 'absent' -and $restored[0] -eq '')))
 Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
+# Windows Installer keeps a product's icons (the Icon table) in that folder while a shortcut of an installed component
+# uses one, also after the product is gone
+foreach ($product in $products) {
+    $icons = Join-Path $env:APPDATA "Microsoft\Installer\$product"
+    Check "no icon folder of product $product is left ($icons)" (-not (Test-Path $icons))
+}
 Check "no app id registration is left ($aumidKey)" (-not (Test-Path $aumidKey))
 Check 'the state directory is kept' (Test-Path -PathType Leaf $stateFile)
 Remove-Item -Force $stateFile
