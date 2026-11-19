@@ -187,8 +187,8 @@ def app_version(tag):
 
 
 def previous_tag(tag):
-    """The published stable app release just below TAG, or "" for the first: where TAG's generated notes start, so
-    that they never start at a `web-engine-<key>` release, which is created at TAG's own commit just before it."""
+    """Return the published stable app release below TAG, or "" for the first release.
+    Exclude `web-engine-<key>` releases because the workflow publishes them before the app release."""
     current = app_version(tag)
     if current is None:
         raise ArtifactError(f"{tag} is not a vMAJOR.MINOR.PATCH tag")
