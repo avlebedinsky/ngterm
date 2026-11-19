@@ -434,9 +434,8 @@ fn columns(pane: &GotoPane) -> PaneColumns {
     }
 }
 
-/// The selected row of `rows`: the row of `selected`, a session's main pane once the session has no session row, a
-/// pane's session row once the pane has no row, the first row when it is gone, the first pane row with nothing
-/// selected; `None` with no rows.
+/// The selected row of `rows`: the row of `selected`, else its session's row, else its session's main pane, the first
+/// row when all are gone, the first pane row with nothing selected; `None` with no rows.
 #[must_use]
 pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<usize> {
     if rows.is_empty() {
@@ -444,16 +443,14 @@ pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<
     }
     let position = |target| rows.iter().position(|row| row.target == target);
     Some(match selected {
-        Some(GotoTarget::Session(session)) => position(GotoTarget::Session(session))
+        Some(target @ (GotoTarget::Session(session) | GotoTarget::Pane { session, .. })) => position(target)
+            .or_else(|| position(GotoTarget::Session(session)))
             .or_else(|| {
                 position(GotoTarget::Pane {
                     session,
                     pane: StatusPane::Left,
                 })
             })
-            .unwrap_or(0),
-        Some(target @ GotoTarget::Pane { session, .. }) => position(target)
-            .or_else(|| position(GotoTarget::Session(session)))
             .unwrap_or(0),
         Some(target) => position(target).unwrap_or(0),
         None => rows.iter().position(|row| row.pane.is_some()).unwrap_or(0),

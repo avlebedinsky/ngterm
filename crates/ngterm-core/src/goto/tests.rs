@@ -520,6 +520,14 @@ fn the_top_level_filter_keeps_every_workspace_with_its_top_level_sessions_alone(
         Some(GotoTarget::Session(api)),
         "a workspace of split sessions is a stop"
     );
+    press(&mut state, &family.tree, &[GotoKey::Left]);
+    assert_eq!(selected(&state, &family.tree), Some(left(family.lav)));
+    press(&mut state, &family.tree, &[GotoKey::Left]);
+    assert_eq!(
+        selected(&state, &family.tree),
+        Some(left(family.lav)),
+        "nothing before it"
+    );
     press(&mut state, &family.tree, &[GotoKey::Backspace]);
     assert_eq!(
         state.view(&family.tree.workspaces).rows.len(),
@@ -562,6 +570,45 @@ fn the_top_level_filter_moves_a_selection_it_hides_to_its_top_level_session() {
         press(&mut state, &family.tree, &[GotoKey::Enter]),
         GotoOutcome::Open(GotoTarget::Session(family.zsh))
     );
+}
+
+#[test]
+fn the_top_level_filter_keeps_a_selected_workspace_row() {
+    let family = family();
+    let home = GotoTarget::Workspace(family.tree.workspaces[0].id);
+    let mut state = GotoState::opened(Some(home));
+    press(&mut state, &family.tree, &[text("t")]);
+    let view = state.view(&family.tree.workspaces);
+    assert_eq!(view.filter, Some(GotoFilter::TopLevel));
+    assert_eq!(view.selected_row().map(|row| row.target), Some(home));
+}
+
+#[test]
+fn the_top_level_filter_keeps_a_selection_whose_session_is_gone_on_the_first_row() {
+    let mut family = family();
+    let mut state = GotoState::opened(Some(left(family.zsh)));
+    family.tree.workspaces[0].panes.pop();
+    press(&mut state, &family.tree, &[text("t")]);
+    let view = state.view(&family.tree.workspaces);
+    assert_eq!(labels(&view.rows), ["home", "lav", "build", "empty"]);
+    assert_eq!(view.selected, Some(0));
+    press(&mut state, &family.tree, &[text("j")]);
+    assert_eq!(selected(&state, &family.tree), Some(left(family.lav)));
+}
+
+#[test]
+fn a_status_filter_after_the_top_level_filter_drops_the_selection_it_lifted() {
+    let family = family();
+    for (opened, key, filter, first_pane) in [
+        (left(family.test), "b", GotoFilter::Blocked, left(family.deep)),
+        (left(family.deep), "w", GotoFilter::Working, left(family.test)),
+    ] {
+        let mut state = GotoState::opened(Some(opened));
+        press(&mut state, &family.tree, &[text("t"), text(key)]);
+        let view = state.view(&family.tree.workspaces);
+        assert_eq!(view.filter, Some(filter), "{key}");
+        assert_eq!(view.selected_row().map(|row| row.target), Some(first_pane), "{key}");
+    }
 }
 
 #[test]
@@ -1585,6 +1632,24 @@ fn the_top_level_filter_keeps_the_selection_it_lifted_when_the_companion_closes(
     let _ = core.commit();
     assert!(core.goto_holds(window));
     assert_eq!(targets(&core, window).len(), 2);
+    let view = core.goto_view(window).unwrap();
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(first)));
+}
+
+#[test]
+fn a_selected_split_pane_whose_split_closes_keeps_the_selection_on_its_session() {
+    let (mut core, window) = core("/tmp");
+    let first = selected_session(&core, window).unwrap();
+    split(&mut core, first);
+
+    core.toggle_goto(window);
+    let view = core.goto_view(window).unwrap();
+    assert_eq!(view.selected_row().map(|row| row.target), Some(right(first)));
+    core.library_mut().store_mut(window).unwrap().close_split(first);
+    let _ = core.commit();
+    assert!(core.goto_holds(window));
+    let home = core.library().store(window).unwrap().workspaces()[0].id();
+    assert_eq!(targets(&core, window), [GotoTarget::Workspace(home), left(first)]);
     let view = core.goto_view(window).unwrap();
     assert_eq!(view.selected_row().map(|row| row.target), Some(left(first)));
 }
