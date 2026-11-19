@@ -21,7 +21,11 @@ internal final class ClipboardReadTests: XCTestCase {
         XCTAssertTrue(app.switches["clipboard-remember"].exists)
         try FakeApp.auditSheet(app)
         app.buttons["clipboard-deny"].tap()
-        XCTAssertTrue(app.staticTexts["Let docs-site read your clipboard?"].waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(
+            app.staticTexts["Let docs-site read your clipboard?"],
+            "the first read's question",
+            lasting: 10
+        )
         FakeApp.expect(app.staticTexts["Let notes read your clipboard?"], "the next read's question")
         XCTAssertFalse(app.switches["clipboard-remember"].exists, "a read with no password keeps no grant")
     }
@@ -41,7 +45,11 @@ internal final class ClipboardReadTests: XCTestCase {
         app.buttons["clipboard-reveal"].tap()
         FakeApp.expect(app.staticTexts["npm run deploy -- --prod"], "what the read would hand over, once asked for")
         app.buttons["clipboard-allow"].tap()
-        XCTAssertTrue(app.staticTexts["Let docs-site read your clipboard?"].waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(
+            app.staticTexts["Let docs-site read your clipboard?"],
+            "the first read's question",
+            lasting: 10
+        )
         FakeApp.expect(app.staticTexts["Let notes read your clipboard?"], "the next read's question")
         XCTAssertEqual(app.buttons["clipboard-allow"].label, "Allow once", "the next read asks again")
     }
@@ -54,7 +62,11 @@ internal final class ClipboardReadTests: XCTestCase {
         let foot = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         heading.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.05, thenDragTo: foot, withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(app.staticTexts["Let docs-site read your clipboard?"].waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(
+            app.staticTexts["Let docs-site read your clipboard?"],
+            "the first read's question",
+            lasting: 10
+        )
         // the read was answered: the next one's question shows, and the first's doesn't come back
         FakeApp.expect(app.staticTexts["Let notes read your clipboard?"], "the next read's question")
         XCTAssertFalse(app.staticTexts["Let docs-site read your clipboard?"].exists)

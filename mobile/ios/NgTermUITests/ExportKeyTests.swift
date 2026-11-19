@@ -146,9 +146,13 @@ internal final class ExportKeyTests: XCTestCase {
         let unprotected = app.switches["export-unprotected"]
         FakeApp.expect(unprotected, "Export without a passphrase")
         let isOn = NSPredicate(format: "value == '1'")
-        for _ in 0..<3 where unprotected.value as? String != "1" {
+        var turnedOn = false
+        for _ in 0..<3 where !turnedOn {
             unprotected.switches.firstMatch.press(forDuration: 0.6)
-            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: isOn, object: unprotected)], timeout: 3)
+            let read = ScreenRead.step(lasting: 3).poll {
+                ScreenRead.shows(unprotected, matching: isOn)
+            }
+            turnedOn = read.held
         }
         XCTAssertEqual(unprotected.value as? String, "1")
         FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")

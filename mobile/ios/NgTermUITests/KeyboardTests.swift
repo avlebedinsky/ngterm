@@ -28,21 +28,22 @@ internal final class KeyboardTests: XCTestCase {
             return
         }
         introduction.buttons["Continue"].tap()
-        XCTAssertTrue(introduction.waitForNonExistence(timeout: wait), "the slide-to-type introduction stayed")
+        FakeApp.expectGone(introduction, "the slide-to-type introduction", lasting: wait)
     }
 
     // Reads the bench's `line` again until its text `matches` or the wait ends, and returns the last text read. The
     // test reads the line itself: an XCTNSPredicateExpectation that reads the line once before the app updates it then
     // captures the element's debug description, and on a loaded simulator that capture can use all the wait, so the
-    // expectation reads the line no second time.
+    // expectation reads the line no second time. The wait is a number of reads, as FakeApp's waits are.
     @MainActor
     private static func read(_ line: String, in app: XCUIApplication, until matches: (String) -> Bool) -> String {
         let element = app.staticTexts[line]
-        let end = Date.now.addingTimeInterval(wait)
-        var text = element.label
-        while !matches(text), Date.now < end {
-            _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: readBeat)
-            text = element.label
+        var text = ""
+        ScreenRead.Wait(lasting: wait, beat: readBeat).poll {
+            ScreenRead.shows(element) { snapshot in
+                text = snapshot.label
+                return matches(text)
+            }
         }
         return text
     }
@@ -89,10 +90,10 @@ internal final class KeyboardTests: XCTestCase {
         XCTAssertEqual(Self.key("control", in: app).value as? String, "Off")
         // the keyboard's key closes the soft keyboard, and the extra keys stay
         Self.key("keyboard", in: app).tap()
-        XCTAssertTrue(keyboard.waitForNonExistence(timeout: Self.wait))
+        FakeApp.expectGone(keyboard, "the soft keyboard", lasting: Self.wait)
         XCTAssertTrue(Self.key("escape", in: app).exists)
         Self.key("keyboard", in: app).tap()
-        XCTAssertTrue(keyboard.waitForExistence(timeout: Self.wait))
+        FakeApp.expect(keyboard, "the soft keyboard again", lasting: Self.wait)
     }
 
     @MainActor

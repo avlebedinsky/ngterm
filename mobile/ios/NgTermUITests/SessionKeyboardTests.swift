@@ -77,16 +77,12 @@ internal final class SessionKeyboardTests: XCTestCase {
     @MainActor
     private static func expectTyping(in app: XCUIApplication, _ what: String) {
         expectPromptFocus(in: app, what)
-        let field = app.descendants(matching: .any)["chat-prompt"].firstMatch
         type("hi", in: app)
-        let typed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value ==[c] 'hi' AND hasKeyboardFocus == true"),
-            object: field
-        )
-        XCTAssertEqual(
-            XCTWaiter.wait(for: [typed], timeout: wait),
-            .completed,
-            "the prompt field on \(what) reads '\(field.value as? String ?? "")', not the typing"
+        let typed = NSPredicate(format: "identifier == 'chat-prompt' AND value ==[c] 'hi' AND hasKeyboardFocus == true")
+        FakeApp.expect(
+            app.descendants(matching: .any).matching(typed).firstMatch,
+            "the typing in the prompt field on \(what)",
+            lasting: wait
         )
     }
 

@@ -65,8 +65,7 @@ internal final class SessionsTests: XCTestCase {
         FakeApp.expect(FakeApp.element(containing: "End \(name)?", in: app), "End session confirmation")
         confirmEnd(in: app)
         let title = app.descendants(matching: .any)["session-title"].firstMatch
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: title)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 10), .completed, "the session view stayed")
+        FakeApp.expectGone(title, "the session view", lasting: 10)
     }
 
     @MainActor

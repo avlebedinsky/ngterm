@@ -29,7 +29,7 @@ internal final class AskTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["The tests passed on main."].exists)
         try FakeApp.auditSheet(app)
         app.buttons["ask-button-deploy"].tap()
-        XCTAssertTrue(app.staticTexts[Self.question].waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(app.staticTexts[Self.question], "the ask's sheet", lasting: 10)
         FakeApp.expect(FakeApp.element(containing: "Deploying to production", in: app), "the origin acting on it")
     }
 
@@ -41,7 +41,7 @@ internal final class AskTests: XCTestCase {
         let foot = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         heading.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.05, thenDragTo: foot, withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(heading.waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(heading, "the ask's sheet", lasting: 10)
         FakeApp.expect(FakeApp.element(containing: "Deploy called off", in: app), "the origin escaping")
     }
 
@@ -52,7 +52,7 @@ internal final class AskTests: XCTestCase {
         FakeApp.expect(title, "the question about notifying")
         try FakeApp.auditSheet(app)
         app.buttons["notifications-later"].tap()
-        XCTAssertTrue(title.waitForNonExistence(timeout: 10))
+        FakeApp.expectGone(title, "the question about notifying", lasting: 10)
         FakeApp.expect(app.descendants(matching: .any)["session-title"].firstMatch, "the session view")
     }
 

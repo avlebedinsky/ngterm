@@ -109,12 +109,7 @@ internal final class LogsTests: XCTestCase {
         LogsPage.enter(in: app)
 
         app.buttons["logs-share"].tap()
-        let written = NSPredicate { _, _ in Self.exported(in: directory) != nil }
-        let came = XCTWaiter.wait(
-            for: [XCTNSPredicateExpectation(predicate: written, object: nil)],
-            timeout: LogsPage.wait
-        )
-        XCTAssertEqual(came, .completed, "Share wrote no file")
+        ScreenRead.expect("Share wrote no file", lasting: LogsPage.wait) { Self.exported(in: directory) != nil }
         let whole = Self.exported(in: directory) ?? ""
         LogsPage.assertTold("the shared file", whole, Self.told)
         Self.assertClean("the shared file", whole)

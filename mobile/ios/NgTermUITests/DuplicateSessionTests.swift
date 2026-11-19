@@ -83,11 +83,7 @@ internal final class DuplicateSessionTests: XCTestCase {
     // waits until the app has `count` windows of its own
     @MainActor
     private static func expectWindows(_ count: Int, in app: XCUIApplication) {
-        let windows = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "count == %d", count),
-            object: contentWindows(of: app)
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [windows], timeout: windowWait), .completed, "not \(count) windows")
+        ScreenRead.expect("not \(count) windows", lasting: windowWait) { contentWindows(of: app).count == count }
     }
 
     // closes the session windows: Detach in the More of a session window in front, or, with the app's own window in
@@ -110,18 +106,18 @@ internal final class DuplicateSessionTests: XCTestCase {
             } else {
                 front.buttons["session-menu"].tap()
                 let detach = app.buttons["session-detach"]
-                guard detach.waitForExistence(timeout: windowWait) else {
+                let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.Answer(detach.exists) }
+                guard shown.held else {
                     isMoreMissed = true
                     closeMenu(in: app)
                     continue
                 }
                 detach.tap()
             }
-            let closed = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "count < %d", count),
-                object: contentWindows(of: app)
-            )
-            _ = XCTWaiter.wait(for: [closed], timeout: windowWait)
+            // the last of the windows counted has gone, from a read that completed
+            ScreenRead.step(lasting: windowWait).poll {
+                ScreenRead.isGone(contentWindows(of: app).element(boundBy: count - 1))
+            }
         }
         XCTAssertEqual(contentWindows(of: app).count, 1, "the session windows stayed: \(app.debugDescription)")
     }
@@ -132,7 +128,8 @@ internal final class DuplicateSessionTests: XCTestCase {
         for name in names where any("session-\(name)", in: app).exists {
             any("session-\(name)", in: app).press(forDuration: longPress)
             let detach = app.buttons["Detach"]
-            if detach.waitForExistence(timeout: windowWait) {
+            let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.Answer(detach.exists) }
+            if shown.held {
                 detach.tap()
                 return true
             }

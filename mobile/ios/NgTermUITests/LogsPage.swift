@@ -68,9 +68,13 @@ internal enum LogsPage {
     /// Waits until the page's top line holds `text`.
     @MainActor
     internal static func expectNewest(_ text: String, in app: XCUIApplication) {
-        let newest = NSPredicate { _, _ in shownLines(in: app).first?.contains(text) == true }
-        let came = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: newest, object: nil)], timeout: wait)
-        XCTAssertEqual(came, .completed, "the newest line is not \"\(text)\": \(shownLines(in: app))")
+        ScreenRead.expect("the newest line is not \"\(text)\"", lasting: wait) {
+            // a snapshot that fails shows no lines: it tells nothing
+            guard let page = try? app.snapshot() else {
+                return .failed
+            }
+            return ScreenRead.Answer(lines(under: page).first?.contains(text) == true)
+        }
     }
 
     /// Taps `control` until `isDone`, and closes the system's offer to keep a password whenever it shows.
@@ -90,7 +94,6 @@ internal enum LogsPage {
         _ what: String
     ) -> Bool {
         let offer = app.buttons[offerDismiss]
-        let next = NSPredicate { _, _ in isDone() || offer.exists }
         var closed = false
         for _ in 0..<tries where !isDone() {
             closed = closeOffer(in: app, within: 0) || closed
@@ -98,7 +101,7 @@ internal enum LogsPage {
             if !isDone(), control.exists, control.isHittable {
                 control.tap()
             }
-            _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: next, object: nil)], timeout: wait)
+            ScreenRead.step(lasting: wait).poll { ScreenRead.Answer(isDone() || offer.exists) }
         }
         closed = closeOffer(in: app, within: 0) || closed
         XCTAssertTrue(isDone(), what)
@@ -195,8 +198,7 @@ internal enum LogsPage {
         }
         FakeApp.expect(paste, "the edit menu's Paste")
         paste.tap()
-        let filled = NSPredicate { _, _ in !(field.value as? String ?? "").isEmpty }
-        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: filled, object: nil)], timeout: wait)
+        ScreenRead.Wait(lasting: wait).poll { ScreenRead.shows(field) { !($0.value as? String ?? "").isEmpty } }
         let text = field.value as? String ?? ""
         app.buttons["BackButton"].firstMatch.tap()
         FakeApp.expect(app.navigationBars["Settings"], "Settings")
@@ -216,7 +218,7 @@ internal enum LogsPage {
             // a phone's is a sheet over the screen's lower half, which a tap above it dismisses
             app.navigationBars["Logs"].tap()
         }
-        XCTAssertTrue(sheet.waitForNonExistence(timeout: wait), "the share sheet stayed")
+        FakeApp.expectGone(sheet, "the share sheet", lasting: wait)
     }
 
     /// Clear logs asks first: Cancel keeps the lines, Clear logs leaves only the line that says so.
@@ -234,7 +236,7 @@ internal enum LogsPage {
             // an iPad's dialog is a popover, which a tap outside it dismisses
             tapOutsidePopover(in: app)
         }
-        XCTAssertTrue(confirm.waitForNonExistence(timeout: wait), "Clear logs' question stayed")
+        FakeApp.expectGone(confirm, "Clear logs' question", lasting: wait)
         let kept = shownLines(in: app)
         let isCleared = kept.count <= clearedLines || kept.contains { $0.contains("log cleared") }
         XCTAssertFalse(isCleared, "Cancel cleared the log: \(kept)")

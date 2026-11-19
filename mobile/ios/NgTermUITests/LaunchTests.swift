@@ -12,7 +12,7 @@ internal final class LaunchTests: XCTestCase {
         let firstScreen = app.buttons
             .matching(NSPredicate(format: "identifier == 'settings' OR label == 'Show machines'"))
             .firstMatch
-        XCTAssertTrue(firstScreen.waitForExistence(timeout: 30))
+        FakeApp.expect(firstScreen, "first screen", lasting: 30)
         return app
     }
 
@@ -22,10 +22,10 @@ internal final class LaunchTests: XCTestCase {
         let settings = app.buttons["settings"]
         if !settings.exists {
             app.buttons["Show machines"].tap()
-            XCTAssertTrue(settings.waitForExistence(timeout: 10))
+            FakeApp.expect(settings, "Settings in the machines' column", lasting: 10)
         }
         settings.tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        FakeApp.expect(app.navigationBars["Settings"], "Settings", lasting: 10)
     }
 
     @MainActor
@@ -38,7 +38,7 @@ internal final class LaunchTests: XCTestCase {
         for _ in 0..<Self.swipes where !version.exists {
             form.swipeUp()
         }
-        XCTAssertTrue(version.waitForExistence(timeout: 10))
+        FakeApp.expect(version, "the core's version", lasting: 10)
         XCTAssertTrue(version.label.contains("0.0.0-fake"), version.label)
     }
 

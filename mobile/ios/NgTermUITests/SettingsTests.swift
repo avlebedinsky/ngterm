@@ -60,8 +60,8 @@ internal final class SettingsTests: XCTestCase {
         let flipped = NSPredicate(format: "value == %@", value)
         for _ in 0..<3 {
             row.switches.firstMatch.press(forDuration: 0.6)
-            let read = XCTNSPredicateExpectation(predicate: flipped, object: row)
-            if XCTWaiter.wait(for: [read], timeout: 3) == .completed {
+            let read = ScreenRead.step(lasting: 3).poll { ScreenRead.shows(row, matching: flipped) }
+            if read.held {
                 return
             }
         }
