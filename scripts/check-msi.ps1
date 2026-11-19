@@ -28,6 +28,10 @@ Then the uninstall, after the app id's toast registration is written as the app 
 folder, shortcut, product registration, icon folder of either product, PATH entry (the user's PATH has its entries and
 kind back), HKCU\Software\ngterm or app id registration is left, and the state directory's file stays (user state is
 never the installer's).
+With -UpgradeMsi, a second pass then installs the first MSI into a folder that INSTALLFOLDER names, and upgrades it with
+no INSTALLFOLDER, as a user runs a newer MSI: the upgrade stays in that folder (nothing in the default one), removes no
+file or shortcut, and the user's PATH holds that folder's bin\ once. Its uninstall leaves no folder, shortcut, PATH
+entry or HKCU\Software\ngterm.
 
 Each msiexec run logs verbosely under -Log. The exit status is 0 when every check passed.
 
@@ -233,6 +237,41 @@ Check "no app id registration is left ($aumidKey)" (-not (Test-Path $aumidKey))
 Check 'the state directory is kept' (Test-Path -PathType Leaf $stateFile)
 Remove-Item -Force $stateFile
 if (-not $stateDirExisted) { Remove-Item -Force $stateDir }
+
+if ($UpgradeMsi) {
+    # an install in another folder, then an upgrade that names none: it goes into the recorded folder
+    # (HKCU\Software\ngterm\Installer InstallFolder), not into the default one
+    $customRoot = Join-Path ([IO.Path]::GetTempPath()) "check-msi-$PID\ngterm"
+    $customBin = Join-Path $customRoot 'bin'
+    $customCount = { @((Get-UserPath) -split ';' | Where-Object { $_.TrimEnd('\') -ieq $customBin }).Count }
+    Invoke-Msiexec @('/i', "`"$Msi`"", "INSTALLFOLDER=`"$customRoot\`"") 'install-custom-folder'
+    $folder = (Get-ItemProperty 'HKCU:\Software\ngterm\Installer' -ErrorAction SilentlyContinue).InstallFolder
+    Check "the custom install folder is recorded (got '$folder')" ("$folder".TrimEnd('\') -ieq $customRoot)
+    Invoke-Msiexec @('/i', "`"$UpgradeMsi`"") 'upgrade-custom-folder'
+    $removed = @(Select-String -Path (Join-Path $Log 'upgrade-custom-folder.log') -Pattern $removalPattern).Count
+    Check "the upgrade without INSTALLFOLDER removed no file or shortcut (got $removed)" ($removed -eq 0)
+    Check "the upgrade stays in $customRoot" (Test-Path -PathType Leaf (Join-Path $customBin 'ngterm.exe'))
+    Check "and puts nothing into $root" (-not (Test-Path $root))
+    $code = Get-MsiProperty $UpgradeMsi 'ProductCode'
+    Check "product $code is installed" ((Get-ProductState $code) -eq 5)
+    if (Test-Path $shortcut) {
+        $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+        Check "the shortcut targets the custom folder's ngterm.exe (got '$target')" ($target -ieq (Join-Path $customBin 'ngterm.exe'))
+    } else {
+        Check 'the Start-menu shortcut is installed' $false
+    }
+    Check "the user's PATH holds $customBin once ($(& $customCount))" ((& $customCount) -eq 1)
+    Check "and not $bin" (-not (Test-OnUserPath))
+    Invoke-Msiexec @('/x', $code) 'uninstall-custom-folder'
+    Check "no custom install folder is left ($customRoot)" (-not (Test-Path $customRoot))
+    Check 'no Start-menu shortcut is left' (-not (Test-Path $shortcut))
+    Check "the user's PATH no longer holds $customBin" ((& $customCount) -eq 0)
+    Check 'no HKCU\Software\ngterm is left' (-not (Test-Path 'HKCU:\Software\ngterm'))
+    foreach ($product in $products) {
+        Check "no icon folder of product $product is left" (-not (Test-Path (Join-Path $env:APPDATA "Microsoft\Installer\$product")))
+    }
+    Remove-Item -Recurse -Force (Split-Path $customRoot) -ErrorAction SilentlyContinue
+}
 
 if ($failures -gt 0) {
     Write-Output "$failures check(s) failed"
