@@ -394,7 +394,11 @@ fn viewer_messages_other_than_replies_and_pastes_complete_nothing() {
     assert_eq!(fx.outgoing.len(), 1);
 }
 
-/// What a managed bridge client writes for one role change, after its hello.
+/// A snapshot that pushes the Kitty keyboard flags.
+const SNAPSHOT: &[u8] = b"\x1b[>1ukeys-ready";
+
+/// What a managed bridge client writes for one role change after its hello, in the server's order: the role, then the
+/// connection's first snapshot.
 fn role_written(roles_in_bridge: bool) -> Vec<u8> {
     let now = Instant::now();
     let mut relay = Relay::new(Some("n1".into()), GridSize { cols: 80, rows: 24 }, None);
@@ -404,11 +408,19 @@ fn role_written(roles_in_bridge: bool) -> Vec<u8> {
     relay.start(false, now, &mut fx);
     let mut fx = Effects::default();
     relay.role(LeadRole::Leader, 5, now, &mut fx);
+    assert!(
+        fx.stdout.is_empty(),
+        "the role went before the snapshot: {:?}",
+        fx.stdout
+    );
+    relay.snapshot_begin();
+    relay.output(SNAPSHOT, &mut fx);
+    relay.snapshot_end(now, &mut fx);
     fx.stdout
 }
 
 #[test]
-fn a_client_behind_conpty_sends_its_role_in_the_bridge_after_the_title() {
+fn a_client_behind_conpty_sends_its_role_in_the_bridge_after_the_snapshot_and_the_title() {
     let written = role_written(true);
     let title = b"\x1b]2;ngterm-live-role;n1:leader:5\x1b\\";
     let parts = ngterm_core::attach_bridge::Decoder::default().feed(&written);
@@ -419,7 +431,7 @@ fn a_client_behind_conpty_sends_its_role_in_the_bridge_after_the_title() {
     else {
         panic!("{parts:?}");
     };
-    assert_eq!(bytes, title);
+    assert_eq!(bytes, &[SNAPSHOT, title].concat());
     assert_eq!(
         envelope,
         &Envelope {
@@ -431,6 +443,9 @@ fn a_client_behind_conpty_sends_its_role_in_the_bridge_after_the_title() {
 }
 
 #[test]
-fn a_client_in_a_posix_terminal_sends_its_role_as_the_title_only() {
-    assert_eq!(role_written(false), b"\x1b]2;ngterm-live-role;n1:leader:5\x1b\\");
+fn a_client_in_a_posix_terminal_sends_its_role_as_the_title_only_after_the_snapshot() {
+    assert_eq!(
+        role_written(false),
+        [SNAPSHOT, b"\x1b]2;ngterm-live-role;n1:leader:5\x1b\\"].concat()
+    );
 }

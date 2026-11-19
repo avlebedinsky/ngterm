@@ -9,7 +9,10 @@
 //!   relay (`role.zig` of upstream's `scripts/zmx-patches/0001-explicit-leadership.patch`). A sequence that stays
 //!   unfinished for [`INJECT_WAIT`] is ended with CAN, which only a terminal whose client is changing role or relaying
 //!   sees. On Windows an attach under the bridge also sends the report as a bridge envelope right after the title
-//!   ([`Relay::report_roles_in_bridge`]).
+//!   ([`Relay::report_roles_in_bridge`]). The server sends a client its role before its snapshot, so a report waits
+//!   from the start of a connection, and of each snapshot, until that snapshot ended ([`Relay::snapshot_end`]): the
+//!   outer terminal has the session's state then, its Kitty keyboard flags too. A viewer that took the lead uncovers
+//!   its pane on the report, and keys pressed before the replay reached it went out in the legacy encodings.
 //! - A probe at the start, when the client runs in a terminal: OSC 10, 11 and 12, OSC 4 for the 256 colours, `CSI 16
 //!   t` (the cell's pixels), `CSI ? 996 n` (dark or light), a Kitty graphics query, and DA1 last, whose answer (the
 //!   fence) says every answer before it is in. Mode 2031 is turned on in the outer terminal, so a change of its
@@ -215,6 +218,36 @@ enum RoleChannel {
     TitleAndBridge,
 }
 
+/// The newest role a managed client was told and has not written yet (module docs).
+#[derive(Debug)]
+struct PendingRole {
+    newest: Option<(LeadRole, u32)>,
+    /// True from the start of a connection, and of each snapshot, until that snapshot ended: the role waits for it.
+    snapshot_due: bool,
+}
+
+impl Default for PendingRole {
+    /// The server sends a managed client its role before its first snapshot.
+    fn default() -> Self {
+        Self {
+            newest: None,
+            snapshot_due: true,
+        }
+    }
+}
+
+impl PendingRole {
+    /// Whether a role waits and no snapshot is due.
+    fn due(&self) -> bool {
+        self.newest.is_some() && !self.snapshot_due
+    }
+
+    /// The role to write now: none while a snapshot is due.
+    fn take_due(&mut self) -> Option<(LeadRole, u32)> {
+        if self.snapshot_due { None } else { self.newest.take() }
+    }
+}
+
 /// The attach client's state between the session and the outer terminal (module docs).
 #[derive(Debug)]
 pub struct Relay {
@@ -224,8 +257,8 @@ pub struct Relay {
     filtered_decoder: ngterm_core::attach_bridge::Suppressor,
     /// The managed attach's nonce, for its role titles.
     nonce: Option<String>,
-    /// The newest role not yet written.
-    role: Option<(LeadRole, u32)>,
+    /// The newest role not yet written, and the snapshot it waits for.
+    role: PendingRole,
     pending: Vec<Injection>,
     /// When the oldest of the client's own sequences waiting was queued.
     waiting_since: Option<Instant>,
@@ -266,7 +299,7 @@ impl Relay {
             program_decoder: ngterm_core::attach_bridge::Suppressor::default(),
             filtered_decoder: ngterm_core::attach_bridge::Suppressor::default(),
             nonce,
-            role: None,
+            role: PendingRole::default(),
             pending: Vec::new(),
             waiting_since: None,
             fences: VecDeque::new(),
@@ -405,12 +438,31 @@ impl Relay {
         }
     }
 
-    /// The client's role changed: its title is written at the next ground place.
+    /// The client's role changed: its title is written at the next ground place after the snapshot that is due.
     pub fn role(&mut self, role: LeadRole, generation: u32, now: Instant, fx: &mut Effects) {
         if self.nonce.is_none() {
             return;
         }
-        self.role = Some((role, generation));
+        self.role.newest = Some((role, generation));
+        self.role_due(now, fx);
+    }
+
+    /// A snapshot starts: a role that comes now waits for its end.
+    pub fn snapshot_begin(&mut self) {
+        self.role.snapshot_due = true;
+    }
+
+    /// The snapshot ended: the outer terminal has the session's state, and the role that waited is written.
+    pub fn snapshot_end(&mut self, now: Instant, fx: &mut Effects) {
+        self.role.snapshot_due = false;
+        self.role_due(now, fx);
+    }
+
+    /// The role, when one waits and no snapshot is due, is written at the next ground place.
+    fn role_due(&mut self, now: Instant, fx: &mut Effects) {
+        if !self.role.due() {
+            return;
+        }
         self.waiting_since.get_or_insert(now);
         if self.filter.can_inject() {
             self.flush(fx);
@@ -612,7 +664,7 @@ impl Relay {
         self.pending
             .retain(|injection| !matches!(injection.fence, Some(Fence::Kitty(_))) && injection.completion.is_none());
         let _ = self.give_up_read();
-        self.role = None;
+        self.role = PendingRole::default();
         self.unqueued();
         self.kitty_answers.clear();
     }
@@ -689,7 +741,7 @@ impl Relay {
     }
 
     fn has_pending(&self) -> bool {
-        self.role.is_some() || !self.pending.is_empty()
+        self.role.due() || !self.pending.is_empty()
     }
 
     /// Queues the client's `bytes`, written at the next ground place, with the fence they end with.
@@ -711,9 +763,9 @@ impl Relay {
         }
     }
 
-    /// Writes the role title and the queued sequences, at ground.
+    /// Writes the role title (not while a snapshot is due) and the queued sequences, at ground.
     fn flush(&mut self, fx: &mut Effects) {
-        if let (Some((role, generation)), Some(nonce)) = (self.role.take(), &self.nonce) {
+        if let (Some((role, generation)), Some(nonce)) = (self.role.take_due(), &self.nonce) {
             fx.stdout
                 .extend_from_slice(role_title(nonce, role, generation).as_bytes());
             self.bridge_role(role_report(nonce, role, generation), fx);

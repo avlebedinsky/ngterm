@@ -1,10 +1,11 @@
 #![cfg(feature = "local")]
 //! Live panes attached in process to the cargo-built session server (`crate::session_io`), on every OS: a fresh
 //! session's prompt, typing and a resize reaching it, its environment and directory, the pane dropped leaving the
-//! session running and a reattach painting its snapshot, a pane looping on titles dropped in time, the role a managed pane is told, the session's end and an
-//! attach that cannot start ending the pane, and, as reply owner, the server answering the program with the pane's
-//! theme, a clipboard read and a Kitty query answered through the pane. Each test runs under its own state directory,
-//! so its own namespace and server, reaped through that server alone.
+//! session running and a reattach painting its snapshot, a pane looping on titles dropped in time, the role a managed
+//! pane is told (also when another client takes the lead), the session's end and an attach that cannot start ending
+//! the pane, and, as reply owner, the server answering the program with the pane's theme, a clipboard read and a Kitty
+//! query answered through the pane. Each test runs under its own state directory, so its own namespace and server,
+//! reaped through that server alone.
 //!
 //! The session's shell is the OS's live shell with a stand-in integration that sets the prompt `live-ready$ `: bash
 //! on Linux; zsh on macOS, whose bash (3.2) never reads its integration and whose `/etc/profile` sets a prompt of its
@@ -142,7 +143,12 @@ impl Live {
 
     /// A fresh pane's wrap configuration, managed under `lead`.
     fn configuration_with(&self, lead: Option<LeadAttachment>) -> TestResult<Configuration> {
-        let configuration = self.runtime.configuration(Uuid::new_v4(), BTreeMap::new(), lead);
+        self.configuration_for(Uuid::new_v4(), lead)
+    }
+
+    /// The wrap configuration of the pane `identity`, managed under `lead`: a second one attaches the same session.
+    fn configuration_for(&self, identity: Uuid, lead: Option<LeadAttachment>) -> TestResult<Configuration> {
+        let configuration = self.runtime.configuration(identity, BTreeMap::new(), lead);
         Ok(configuration.map_err(|rejection| format!("the host cannot wrap a pane: {rejection:?}"))?)
     }
 
@@ -476,6 +482,35 @@ fn a_managed_live_pane_reports_its_role_as_its_title() -> TestResult {
         return Err(format!("not one role report: {events:#?}").into());
     };
     assert_eq!(report.nonce, "n1");
+    Ok(())
+}
+
+/// Whether `events` hold a role report of the attachment `nonce` with `role`.
+fn reported(events: &[PaneEvent], nonce: &str, role: &str) -> bool {
+    events.iter().any(|event| {
+        matches!(event, PaneEvent::Title(title)
+            if ngterm_core::live::lead::LeadNotice::parse(title)
+                .is_some_and(|notice| notice.nonce == nonce && <&str>::from(notice.role) == role))
+    })
+}
+
+/// A role the pane is told after its snapshot, when another client claims the lead, reaches it as its first one did.
+#[test]
+fn a_managed_live_pane_is_told_when_another_client_takes_the_lead() -> TestResult {
+    let live = Live::new()?;
+    let identity = Uuid::new_v4();
+    let lead = |nonce: &str| {
+        Some(LeadAttachment {
+            nonce: nonce.to_owned(),
+            claim: true,
+        })
+    };
+    let first = live.pane(&live.configuration_for(identity, lead("n1"))?)?;
+    wait_events(&first, |events| reported(events, "n1", "leader"));
+    wait_frame(&first, prompt_painted);
+    let second = live.pane(&live.configuration_for(identity, lead("n2"))?)?;
+    wait_events(&second, |events| reported(events, "n2", "leader"));
+    wait_events(&first, |events| reported(events, "n1", "follower"));
     Ok(())
 }
 

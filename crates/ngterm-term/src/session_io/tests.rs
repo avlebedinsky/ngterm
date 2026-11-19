@@ -552,3 +552,41 @@ fn a_pane_that_left_is_not_ended_by_its_attach_failing() {
         "no exit reported"
     );
 }
+
+#[test]
+fn a_role_report_waits_for_the_snapshot_due_and_the_newest_follows_it() {
+    let report = |generation: u32| format!("ngterm-live-role;n1:leader:{generation}");
+    let mut hold = RoleHold::default();
+    // the server's order for a managed client: its role, then its first snapshot
+    assert_eq!(hold.report(report(1)), None);
+    assert_eq!(hold.report(report(2)), None);
+    hold.snapshot_begin();
+    assert_eq!(hold.snapshot_end(), Some(LiveMail::Role(report(2))));
+    assert_eq!(hold.snapshot_end(), None);
+    // between snapshots a report goes at once, in order with the output
+    assert_eq!(hold.report(report(3)), Some(LiveMail::Role(report(3))));
+    // one that comes during a resync's snapshot waits for its end
+    hold.snapshot_begin();
+    assert_eq!(hold.report(report(4)), None);
+    assert_eq!(hold.snapshot_end(), Some(LiveMail::Role(report(4))));
+}
+
+#[test]
+fn a_role_report_mail_is_the_panes_title_event() {
+    let pane = pane();
+    let live = Live::new(ReadPause::new(), 1024, true);
+    handle(
+        &live,
+        pane.shared(),
+        LiveMail::Role("ngterm-live-role;n1:leader:1".to_owned()),
+    );
+    let titles: Vec<_> = pane
+        .take_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            PaneEvent::Title(title) => Some(title),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(titles, ["ngterm-live-role;n1:leader:1"]);
+}

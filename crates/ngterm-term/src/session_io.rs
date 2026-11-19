@@ -10,11 +10,11 @@
 //! - **Threads**: `pane-live` connects (starting the server when none runs), reads the stream and hands its output to
 //!   the pane's mailbox, pausing while the mailbox is past its high mark (the server then resyncs the pane, as any
 //!   slow client); the other events that must follow the output fed before them (a snapshot's end, a reply ownership
-//!   change, a Kitty barrier, a delegated request) go through the mailbox too, and the IO worker handles them
-//!   ([`handle`]). `pane-live-out` sends what the pane queues ([`Live::input`] within the pane's write limit, never
-//!   blocking the caller) in order. A connection that ends without the session's exit (a server stopping, or handing
-//!   its sessions to a new build) is attached again as the CLI attaches ([`attach_again`]), under the lead the pane
-//!   held, its terminal reset first ([`snapshot::RESYNC_RESET`]).
+//!   change, a Kitty barrier, a delegated request, a role report) go through the mailbox too, and the IO worker
+//!   handles them ([`handle`]). `pane-live-out` sends what the pane queues ([`Live::input`] within the pane's write
+//!   limit, never blocking the caller) in order. A connection that ends without the session's exit (a server
+//!   stopping, or handing its sessions to a new build) is attached again as the CLI attaches ([`attach_again`]), under
+//!   the lead the pane held, its terminal reset first ([`snapshot::RESYNC_RESET`]).
 //! - **Replies**: the server answers the program's queries; the pane's terminal answers none but Kitty graphics
 //!   commands, whose answers complete the server's barriers ([`crate::outlet::ReplyOutlet`]). The pane is the reply owner
 //!   when the server makes it one: it sends its facts (theme colours, cell size, colour scheme, Kitty graphics) with
@@ -22,7 +22,10 @@
 //!   ([`crate::PaneEvent::ClipboardRead`]). The clipboard reads in the output are the server's to delegate, so the
 //!   pane does not stop at them.
 //! - **Lead**: a managed pane's role comes as the attach contract's role title, reported as the pane's title
-//!   ([`crate::PaneEvent::Title`]) without touching its terminal's own.
+//!   ([`crate::PaneEvent::Title`]) without touching its terminal's own. The server sends the role before the snapshot,
+//!   so the report waits from the start of a connection, and of each snapshot, until that snapshot ended, and then
+//!   follows it through the mailbox: a pane uncovered on the report has the session's state, its Kitty keyboard
+//!   flags too, as the attach CLI's does.
 //! - **End**: the session's exit ends the pane under its [`crate::ExitPolicy`], as the attach CLI's exit with the
 //!   program's status did; an attach that fails (no session to reattach, the server refusing, a broken contract)
 //!   writes why and ends it with the CLI's status. Dropping the pane detaches it, leaving the session running.
@@ -122,6 +125,49 @@ pub(crate) enum LiveMail {
         request: Delegated,
         connection: u64,
     },
+    /// A managed pane's role report, after the snapshot it waited for.
+    Role(String),
+}
+
+/// A managed pane's role report on its way to the pane, for one connection: it waits from the connection's start, and
+/// from each snapshot's start, until that snapshot ended (module docs).
+#[derive(Debug)]
+struct RoleHold {
+    snapshot_due: bool,
+    /// The newest report that waits.
+    held: Option<String>,
+}
+
+impl Default for RoleHold {
+    /// The server sends a managed client its role before its first snapshot.
+    fn default() -> Self {
+        Self {
+            snapshot_due: true,
+            held: None,
+        }
+    }
+}
+
+impl RoleHold {
+    fn snapshot_begin(&mut self) {
+        self.snapshot_due = true;
+    }
+
+    /// The snapshot ended: the report that waited, to follow it.
+    fn snapshot_end(&mut self) -> Option<LiveMail> {
+        self.snapshot_due = false;
+        self.held.take().map(LiveMail::Role)
+    }
+
+    /// A report came: the mail to deliver now, or none while a snapshot is due.
+    fn report(&mut self, report: String) -> Option<LiveMail> {
+        if self.snapshot_due {
+            self.held = Some(report);
+            None
+        } else {
+            Some(LiveMail::Role(report))
+        }
+    }
 }
 
 /// What the pane sends the server, in order.
@@ -498,6 +544,10 @@ pub(crate) fn handle(live: &Live, shared: &Shared, mail: LiveMail) {
             shared.send(event);
             shared.wake();
         }
+        LiveMail::Role(report) => {
+            shared.send(PaneEvent::Title(report));
+            shared.wake();
+        }
     }
 }
 
@@ -602,6 +652,7 @@ impl Reader {
         let mailbox = self.shared.mailbox();
         // a reattach's first snapshot starts over from a fresh terminal, as a resync's does
         let mut reset = connection > 1;
+        let mut role_hold = RoleHold::default();
         let mut output_filter = ngterm_session::attach_tty::filter::OutputFilter::clipboard_only();
         loop {
             let event = match reader.recv() {
@@ -613,6 +664,7 @@ impl Reader {
             };
             match event {
                 AttachEvent::SnapshotBegin { .. } => {
+                    role_hold.snapshot_begin();
                     let mut filtered = Vec::new();
                     output_filter.delegated_clipboards(false, &mut filtered);
                     if std::mem::take(&mut reset) {
@@ -640,7 +692,12 @@ impl Reader {
                         return Ended::Left;
                     }
                 }
-                AttachEvent::SnapshotEnd => mailbox.deliver_live(LiveMail::SnapshotEnd),
+                AttachEvent::SnapshotEnd => {
+                    mailbox.deliver_live(LiveMail::SnapshotEnd);
+                    if let Some(mail) = role_hold.snapshot_end() {
+                        mailbox.deliver_live(mail);
+                    }
+                }
                 AttachEvent::ReplyOwner { .. } => mailbox.deliver_live(LiveMail::Owner),
                 AttachEvent::KittyBarrier(barrier) => {
                     mailbox.deliver(output_filter.apc_dispatch_prefix());
@@ -649,10 +706,10 @@ impl Reader {
                 AttachEvent::Delegated(request) => mailbox.deliver_live(LiveMail::Delegated { request, connection }),
                 AttachEvent::Role { role: told, generation } => {
                     *role = Some(told);
-                    if let Some(managed) = &session.managed {
-                        self.shared
-                            .send(PaneEvent::Title(lead::role_report(&managed.nonce, told, generation)));
-                        self.shared.wake();
+                    if let Some(managed) = &session.managed
+                        && let Some(mail) = role_hold.report(lead::role_report(&managed.nonce, told, generation))
+                    {
+                        mailbox.deliver_live(mail);
                     }
                 }
                 AttachEvent::Resized { .. } => {}

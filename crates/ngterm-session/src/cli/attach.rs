@@ -545,6 +545,7 @@ impl<'a> Loop<'a> {
         let now = Instant::now();
         match event {
             Ok(Some(AttachEvent::SnapshotBegin { .. })) => {
+                self.relay.snapshot_begin();
                 if self.first_snapshot {
                     self.first_snapshot = false;
                     let reset = if self.connection == 1 {
@@ -568,7 +569,8 @@ impl<'a> Loop<'a> {
                 return Err(Outcome::ok(exit_code(&status)));
             }
             Ok(Some(AttachEvent::ReplyOwner { owner, .. })) => self.relay.reply_owner(owner),
-            Ok(Some(AttachEvent::SnapshotEnd | AttachEvent::Resized { .. })) => {}
+            Ok(Some(AttachEvent::SnapshotEnd)) => self.relay.snapshot_end(now, &mut fx),
+            Ok(Some(AttachEvent::Resized { .. })) => {}
             // the client's own detach or close
             Ok(None) => return Err(Outcome::ok(EXIT_OK)),
             Ok(Some(AttachEvent::Shutdown(_))) | Err(ClientError::Disconnected) => {

@@ -308,6 +308,7 @@ fn a_role_title_waits_for_ground_and_the_newest_wins() {
     let now = Instant::now();
     let mut fx = Effects::default();
     relay.start(false, now, &mut fx);
+    relay.snapshot_end(now, &mut fx);
     relay.output(b"\x1b]0;unfinished", &mut fx);
     relay.role(LeadRole::Unowned, 5, now, &mut fx);
     relay.role(LeadRole::Follower, 6, now, &mut fx);
@@ -323,6 +324,7 @@ fn an_unfinished_sequence_is_cancelled_at_the_deadline() {
     let now = Instant::now();
     let mut fx = Effects::default();
     relay.start(false, now, &mut fx);
+    relay.snapshot_end(now, &mut fx);
     relay.output(b"\x1bPnever finished", &mut fx);
     relay.role(LeadRole::Leader, 7, now, &mut fx);
     assert_eq!(relay.next_deadline(), Some(now + INJECT_WAIT));
@@ -342,8 +344,57 @@ fn an_unmanaged_client_writes_no_role() {
     let now = Instant::now();
     let mut fx = Effects::default();
     relay.start(false, now, &mut fx);
+    relay.snapshot_end(now, &mut fx);
     relay.role(LeadRole::Leader, 1, now, &mut fx);
     assert!(fx.stdout.is_empty());
+}
+
+#[test]
+fn a_role_waits_for_the_snapshot_due_and_follows_it() {
+    const TITLE: &str = "\x1b]2;ngterm-live-role;n1:leader:2\x1b\\";
+    let mut relay = Relay::new(Some("n1".to_owned()), GRID, None);
+    let now = Instant::now();
+    let mut fx = Effects::default();
+    relay.start(false, now, &mut fx);
+    // the server's order for a managed client: its role, then its first snapshot
+    relay.role(LeadRole::Follower, 1, now, &mut fx);
+    relay.role(LeadRole::Leader, 2, now, &mut fx);
+    assert!(fx.stdout.is_empty());
+    // a snapshot cut inside a sequence is not ended with CAN for the role that waits
+    assert_eq!(relay.next_deadline(), None);
+    relay.snapshot_begin();
+    relay.output(b"\x1b[>1ukeys-ready", &mut fx);
+    assert_eq!(fx.stdout, b"\x1b[>1ukeys-ready");
+    relay.snapshot_end(now, &mut fx);
+    assert_eq!(
+        String::from_utf8_lossy(&fx.stdout),
+        format!("\x1b[>1ukeys-ready{TITLE}")
+    );
+
+    // a role that comes during a resync's snapshot waits for its end too
+    let mut fx = Effects::default();
+    relay.snapshot_begin();
+    relay.output(b"\x1b[>1u", &mut fx);
+    relay.role(LeadRole::Follower, 3, now, &mut fx);
+    relay.output(b"resynced", &mut fx);
+    relay.snapshot_end(now, &mut fx);
+    assert_eq!(
+        String::from_utf8_lossy(&fx.stdout),
+        "\x1b[>1uresynced\x1b]2;ngterm-live-role;n1:follower:3\x1b\\"
+    );
+
+    // and so does the first role of a new connection
+    let mut fx = Effects::default();
+    relay.reattached();
+    relay.role(LeadRole::Leader, 4, now, &mut fx);
+    assert!(fx.stdout.is_empty());
+    relay.snapshot_begin();
+    relay.output(b"again", &mut fx);
+    relay.snapshot_end(now, &mut fx);
+    assert_eq!(
+        String::from_utf8_lossy(&fx.stdout),
+        "again\x1b]2;ngterm-live-role;n1:leader:4\x1b\\"
+    );
 }
 
 #[test]
