@@ -148,7 +148,7 @@ internal final class ExportKeyTests: XCTestCase {
         let isOn = NSPredicate(format: "value == '1'")
         for attempt in 0..<3 {
             // the switch can turn on after the last read of the step, and a second press turns it off: press again
-            // only when a read that completed tells it is off (no read completed: the assert below tells)
+            // only when a read that completed tells it is off (no read completed: the wait below tells)
             if attempt > 0, ScreenRead.now({ ScreenRead.shows(unprotected, matching: isOn) }) != .doesNotHold {
                 break
             }
@@ -160,7 +160,9 @@ internal final class ExportKeyTests: XCTestCase {
                 break
             }
         }
-        XCTAssertEqual(unprotected.value as? String, "1")
+        ScreenRead.expect("Export without a passphrase never turned on", lasting: 3) {
+            ScreenRead.shows(unprotected, matching: isOn)
+        }
         FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")
         XCTAssertFalse(app.secureTextFields["export-passphrase"].exists)
 
