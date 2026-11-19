@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::branch::git_branch;
 use super::state::{GotoOutcome, GotoState};
 use super::*;
-use crate::model::{AgentStatus, NewSession, SessionContent, WindowLibrary};
+use crate::model::{AgentStatus, CompanionOptions, NewSession, SessionContent, WindowLibrary};
 use crate::pane_env::uuid_string;
 use crate::persist::AppSettings;
 use crate::{Core, CoreConfig, CoreState};
@@ -27,6 +27,7 @@ struct Tree {
 fn pane(session: Uuid, pane: StatusPane, name: &str) -> GotoPane {
     GotoPane {
         session,
+        parent: None,
         pane,
         session_name: name.to_owned(),
         split: false,
@@ -217,6 +218,350 @@ fn a_filter_keeping_one_pane_of_a_split_session_keeps_its_session_row_over_it() 
     );
     let searched = rows(&tree.workspaces, "/src/ai", None);
     assert_eq!(drawn(&searched), [(vec![], "nix-os"), (vec!["└─"], "ai")]);
+}
+
+fn child(pane: GotoPane, parent: Uuid) -> GotoPane {
+    GotoPane {
+        parent: Some(parent),
+        ..pane
+    }
+}
+
+#[test]
+fn child_sessions_nest_under_their_parent_to_any_depth_in_sidebar_order() {
+    let [home, lav, one, deep, deeper, two, zsh] = [(); 7].map(|()| Uuid::new_v4());
+    let panes = vec![
+        pane(lav, StatusPane::Left, "lav"),
+        child(pane(one, StatusPane::Left, "111"), lav),
+        child(pane(deep, StatusPane::Left, "deep"), one),
+        child(pane(deeper, StatusPane::Left, "deeper"), deep),
+        child(pane(two, StatusPane::Left, "222"), lav),
+        pane(zsh, StatusPane::Left, "zsh"),
+    ];
+    let rows = rows(&[workspace(home, "home", None, panes)], "", None);
+    assert_eq!(
+        drawn(&rows),
+        [
+            (vec![], "home"),
+            (vec!["├─"], "lav"),
+            (vec!["│", "├─"], "111"),
+            (vec!["│", "│", "└─"], "deep"),
+            (vec!["│", "│", "", "└─"], "deeper"),
+            (vec!["│", "└─"], "222"),
+            (vec!["└─"], "zsh"),
+        ]
+    );
+    assert_eq!(rows[1].target, left(lav), "an unsplit parent's row is its pane's");
+    assert_eq!(
+        (rows[4].target, rows[4].detail.as_str()),
+        (left(deeper), "home / deeper")
+    );
+    assert!(
+        rows[1..].iter().all(|row| row.pane.is_some()),
+        "every session row is a terminal"
+    );
+}
+
+#[test]
+fn a_split_sessions_panes_come_before_its_child_sessions() {
+    let [home, build, test, logs, zsh] = [(); 5].map(|()| Uuid::new_v4());
+    let mut panes = Vec::from(split_session(build, "build"));
+    panes.extend(split_session(test, "test").map(|pane| child(pane, build)));
+    panes.push(child(pane(logs, StatusPane::Left, "logs"), build));
+    panes.push(pane(zsh, StatusPane::Left, "zsh"));
+    let rows = rows(&[workspace(home, "home", None, panes)], "", None);
+    assert_eq!(
+        drawn(&rows),
+        [
+            (vec![], "home"),
+            (vec!["├─"], "build"),
+            (vec!["│", "├─"], "terminal · build"),
+            (vec!["│", "├─"], "terminal · build"),
+            (vec!["│", "├─"], "test"),
+            (vec!["│", "│", "├─"], "terminal · test"),
+            (vec!["│", "│", "└─"], "terminal · test"),
+            (vec!["│", "└─"], "logs"),
+            (vec!["└─"], "zsh"),
+        ]
+    );
+    assert_eq!(
+        [1, 3, 4, 6].map(|index| rows[index].target),
+        [
+            GotoTarget::Session(build),
+            right(build),
+            GotoTarget::Session(test),
+            right(test)
+        ]
+    );
+    assert_eq!(rows[6].detail, "home / test / terminal");
+}
+
+#[test]
+fn a_session_whose_parent_is_not_above_it_in_its_workspace_stands_at_the_top_as_in_the_sidebar() {
+    let [home, work, lav, orphan, late, stray] = [(); 6].map(|()| Uuid::new_v4());
+    let workspaces = [
+        workspace(
+            home,
+            "home",
+            None,
+            vec![
+                pane(lav, StatusPane::Left, "lav"),
+                child(pane(orphan, StatusPane::Left, "orphan"), Uuid::new_v4()),
+                child(pane(late, StatusPane::Left, "late"), lav),
+            ],
+        ),
+        workspace(
+            work,
+            "work",
+            None,
+            vec![child(pane(stray, StatusPane::Left, "stray"), lav)],
+        ),
+    ];
+    assert_eq!(
+        drawn(&rows(&workspaces, "", None)),
+        [
+            (vec![], "home"),
+            (vec!["├─"], "lav"),
+            (vec!["├─"], "orphan"),
+            (vec!["└─"], "late"),
+            (vec![], "work"),
+            (vec!["└─"], "stray"),
+        ]
+    );
+}
+
+struct Family {
+    tree: Tree,
+    lav: Uuid,
+    one: Uuid,
+    deep: Uuid,
+    two: Uuid,
+    build: Uuid,
+    test: Uuid,
+    zsh: Uuid,
+}
+
+fn family() -> Family {
+    let [home, lav, one, deep, two, build, test, zsh] = [(); 8].map(|()| Uuid::new_v4());
+    let mut panes = vec![
+        pane(lav, StatusPane::Left, "lav"),
+        child(pane(one, StatusPane::Left, "111"), lav),
+        child(
+            with_agent(
+                pane(deep, StatusPane::Left, "deep"),
+                AgentKind::Claude,
+                PaneStatus::Blocked,
+            ),
+            one,
+        ),
+        child(pane(two, StatusPane::Left, "222"), lav),
+    ];
+    panes.extend(split_session(build, "build"));
+    panes.push(child(
+        with_agent(
+            pane(test, StatusPane::Left, "test"),
+            AgentKind::Codex,
+            PaneStatus::Working,
+        ),
+        build,
+    ));
+    panes.push(pane(zsh, StatusPane::Left, "zsh"));
+    Family {
+        tree: Tree {
+            workspaces: vec![
+                workspace(home, "home", Some("main"), panes),
+                workspace(Uuid::new_v4(), "empty", None, Vec::new()),
+            ],
+            ..tree()
+        },
+        lav,
+        one,
+        deep,
+        two,
+        build,
+        test,
+        zsh,
+    }
+}
+
+#[test]
+fn a_search_or_a_filter_keeps_the_sessions_over_a_row_it_keeps() {
+    let family = family();
+    let workspaces = &family.tree.workspaces;
+    let searched = rows(workspaces, "deep", None);
+    assert_eq!(
+        drawn(&searched),
+        [
+            (vec![], "home"),
+            (vec!["└─"], "lav"),
+            (vec!["", "└─"], "111"),
+            (vec!["", "", "└─"], "deep"),
+        ]
+    );
+    assert_eq!(
+        searched[1..]
+            .iter()
+            .map(|row| (row.target, row.pane.is_some()))
+            .collect::<Vec<_>>(),
+        [
+            (GotoTarget::Session(family.lav), false),
+            (GotoTarget::Session(family.one), false),
+            (left(family.deep), true)
+        ],
+        "a session kept over its child is a session row"
+    );
+    let working = rows(workspaces, "", Some(GotoFilter::Working));
+    assert_eq!(
+        drawn(&working),
+        [(vec![], "home"), (vec!["└─"], "build"), (vec!["", "└─"], "test")]
+    );
+    assert_eq!(working[1].target, GotoTarget::Session(family.build));
+
+    let mut state = GotoState::opened(None);
+    press(&mut state, &family.tree, &[text("b")]);
+    let view = state.view(workspaces);
+    assert_eq!(labels(&view.rows), ["home", "lav", "111", "deep"]);
+    assert_eq!(view.count_label(), "1 terminal");
+    let selected_row = view.selected_row().map(|row| (row.target, row.detail.as_str()));
+    assert_eq!(
+        selected_row,
+        Some((left(family.deep), "home / deep")),
+        "the first pane row"
+    );
+    assert_eq!(
+        press(&mut state, &family.tree, &[GotoKey::Up, GotoKey::Enter]),
+        GotoOutcome::Open(GotoTarget::Session(family.one))
+    );
+}
+
+#[test]
+fn the_selection_stays_on_a_nested_row_across_syncs() {
+    let mut family = family();
+    let mut state = GotoState::opened(Some(left(family.deep)));
+    assert_eq!(state.view(&family.tree.workspaces).selected, Some(3));
+    let panes = &mut family.tree.workspaces[0].panes;
+    panes.insert(0, pane(Uuid::new_v4(), StatusPane::Left, "new"));
+    panes.insert(3, child(pane(Uuid::new_v4(), StatusPane::Left, "sibling"), family.one));
+    let view = state.view(&family.tree.workspaces);
+    assert_eq!(
+        labels(&view.rows[..7]),
+        ["home", "new", "lav", "111", "sibling", "deep", "222"]
+    );
+    assert_eq!(view.selected, Some(5));
+    press(&mut state, &family.tree, &[text("j")]);
+    assert_eq!(selected(&state, &family.tree), Some(left(family.two)));
+    press(&mut state, &family.tree, &[text("j")]);
+    assert_eq!(selected(&state, &family.tree), Some(GotoTarget::Session(family.build)));
+    let state = GotoState::opened(Some(GotoTarget::Session(family.lav)));
+    assert_eq!(
+        selected(&state, &family.tree),
+        Some(left(family.lav)),
+        "an unsplit session's row is its pane's"
+    );
+}
+
+fn holding_the_status(mut family: Family) -> Family {
+    let panes = &mut family.tree.workspaces[0].panes;
+    panes[4].current = true;
+    panes[5] = with_agent(panes[5].clone(), AgentKind::Claude, PaneStatus::Blocked);
+    panes[5].indicator = Some(AgentIndicator {
+        status: AgentStatus::Blocked,
+        ..AgentIndicator::default()
+    });
+    family
+}
+
+#[test]
+fn the_top_level_filter_keeps_every_workspace_with_its_top_level_sessions_alone() {
+    let mut family = holding_the_status(family());
+    let api = Uuid::new_v4();
+    let work = workspace(Uuid::new_v4(), "work", None, Vec::from(split_session(api, "api")));
+    family.tree.workspaces.insert(1, work);
+    let mut state = GotoState::opened(None);
+    press(&mut state, &family.tree, &[text("t")]);
+    let view = state.view(&family.tree.workspaces);
+    assert_eq!(
+        drawn(&view.rows),
+        [
+            (vec![], "home"),
+            (vec!["├─"], "lav"),
+            (vec!["├─"], "build"),
+            (vec!["└─"], "zsh"),
+            (vec![], "work"),
+            (vec!["└─"], "api"),
+            (vec![], "empty"),
+        ]
+    );
+    let build = &view.rows[2];
+    assert_eq!(
+        (build.target, build.detail.as_str()),
+        (GotoTarget::Session(family.build), "home / build")
+    );
+    let columns = build.pane.clone().unwrap();
+    assert_eq!(
+        (columns.agent, columns.status, columns.current),
+        ("claude", PaneStatus::Blocked, true),
+        "a split session's row reads its pane that holds the status"
+    );
+    assert!(columns.indicator.is_some());
+    assert_eq!(
+        (view.search_line().as_str(), view.count_label().as_str()),
+        ("/ top level", "4 terminals")
+    );
+    assert!(!view.shows_placeholder());
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(family.lav)));
+    assert_eq!(
+        press(&mut state, &family.tree, &[text("j"), GotoKey::Enter]),
+        GotoOutcome::Open(GotoTarget::Session(family.build))
+    );
+    press(&mut state, &family.tree, &[GotoKey::Right]);
+    assert_eq!(
+        selected(&state, &family.tree),
+        Some(GotoTarget::Session(api)),
+        "a workspace of split sessions is a stop"
+    );
+    press(&mut state, &family.tree, &[GotoKey::Backspace]);
+    assert_eq!(
+        state.view(&family.tree.workspaces).rows.len(),
+        15,
+        "Backspace drops the filter"
+    );
+}
+
+#[test]
+fn the_top_level_filter_moves_a_selection_it_hides_to_its_top_level_session() {
+    let mut family = family();
+    for (hidden, shown) in [
+        (left(family.deep), left(family.lav)),
+        (right(family.build), GotoTarget::Session(family.build)),
+        (left(family.test), GotoTarget::Session(family.build)),
+        (left(family.zsh), left(family.zsh)),
+    ] {
+        let mut state = GotoState::opened(Some(hidden));
+        press(&mut state, &family.tree, &[text("t")]);
+        assert_eq!(selected(&state, &family.tree), Some(shown), "{hidden:?}");
+    }
+    let mut state = GotoState::opened(Some(left(family.deep)));
+    press(&mut state, &family.tree, &[text("t"), text("j")]);
+    assert_eq!(selected(&state, &family.tree), Some(GotoTarget::Session(family.build)));
+    let mut state = GotoState::opened(Some(left(family.zsh)));
+    press(&mut state, &family.tree, &[text("t")]);
+    let panes = &mut family.tree.workspaces[0].panes;
+    let zsh = panes.len() - 1;
+    panes[zsh].split = true;
+    panes.push(GotoPane {
+        pane: StatusPane::Right,
+        ..panes[zsh].clone()
+    });
+    assert_eq!(
+        selected(&state, &family.tree),
+        Some(GotoTarget::Session(family.zsh)),
+        "a sync that splits the session keeps its row"
+    );
+    assert_eq!(
+        press(&mut state, &family.tree, &[GotoKey::Enter]),
+        GotoOutcome::Open(GotoTarget::Session(family.zsh))
+    );
 }
 
 #[test]
@@ -1102,4 +1447,62 @@ fn an_agent_that_exited_to_its_shell_reads_as_a_terminal() {
     probe.set_foreground_pid(Some(100));
     core.toggle_goto(window);
     assert_eq!(pane_columns(&core, window, 1), ("terminal", PaneStatus::Shell));
+}
+
+#[test]
+fn the_window_nests_a_companion_under_its_parent_and_the_top_level_filter_lifts_its_selection() {
+    let (mut core, window) = core("/tmp");
+    let first = selected_session(&core, window).unwrap();
+    let store = core.library_mut().store_mut(window).unwrap();
+    let home = store.current_workspace_id().unwrap();
+    let logs = store.add_session(home, background("logs", "/var/log")).unwrap();
+    let options = CompanionOptions {
+        name: Some("notes".to_owned()),
+        select: false,
+        ..CompanionOptions::default()
+    };
+    let notes = store.add_companion(first, options, "/tmp").unwrap();
+    let other = store.add_workspace("other");
+    let stray = NewSession {
+        parent: Some(first),
+        ..background("stray", "/tmp")
+    };
+    let stray = store.add_session(other, stray).unwrap();
+    store.select_session(Some(notes));
+    let _ = core.commit();
+
+    core.toggle_goto(window);
+    let view = core.goto_view(window).unwrap();
+    let store = core.library().store(window).unwrap();
+    let (workspace, name) = (
+        &store.workspaces()[0].name,
+        store.session(first).unwrap().display_name(),
+    );
+    assert_eq!(
+        drawn(&view.rows),
+        [
+            (vec![], workspace.as_str()),
+            (vec!["├─"], name.as_str()),
+            (vec!["│", "└─"], "notes"),
+            (vec!["└─"], "logs"),
+            (vec![], "other"),
+            (vec!["└─"], "stray"),
+        ]
+    );
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(notes)));
+    core.goto_key(window, text("t"));
+    assert_eq!(
+        targets(&core, window),
+        [
+            GotoTarget::Workspace(home),
+            left(first),
+            left(logs),
+            GotoTarget::Workspace(other),
+            left(stray)
+        ]
+    );
+    let view = core.goto_view(window).unwrap();
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(first)));
+    core.goto_key(window, GotoKey::Enter);
+    assert_eq!(selected_session(&core, window), Some(first));
 }

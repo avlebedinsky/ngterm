@@ -243,6 +243,7 @@ impl Core {
                 };
                 GotoPane {
                     session: session.id(),
+                    parent: session.parent_id(),
                     pane,
                     session_name: session.display_name(),
                     split,

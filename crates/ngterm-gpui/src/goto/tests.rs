@@ -149,6 +149,7 @@ struct Opened {
 fn pane(session: Uuid, name: &str, agent: Option<AgentKind>, status: PaneStatus) -> GotoPane {
     GotoPane {
         session,
+        parent: None,
         pane: StatusPane::Left,
         session_name: name.to_owned(),
         split: false,
@@ -567,4 +568,84 @@ fn a_split_sessions_pane_draws_a_level_deeper_on_a_rail_and_the_footer_names_it(
         .find(|(_, node)| node.author_id() == Some("go-to-detail"))
         .and_then(|(_, node)| node.value());
     assert_eq!(detail, Some("home / build / terminal"));
+}
+
+fn nested_view() -> (GotoView, [Uuid; 4]) {
+    let [workspace, lav, one, deep, zsh] = [(); 5].map(|()| Uuid::new_v4());
+    let child = |session, name, parent| GotoPane {
+        parent: Some(parent),
+        ..pane(session, name, None, PaneStatus::Shell)
+    };
+    let workspaces = [GotoWorkspace {
+        id: workspace,
+        name: "home".to_owned(),
+        branch: None,
+        panes: vec![
+            pane(lav, "lav", None, PaneStatus::Shell),
+            child(one, "111", lav),
+            child(deep, "deep", one),
+            pane(zsh, "zsh", None, PaneStatus::Shell),
+        ],
+    }];
+    let view = GotoView {
+        rows: rows(&workspaces, "", None),
+        selected: Some(1),
+        query: String::new(),
+        searching: false,
+        filter: None,
+    };
+    (view, [lav, one, deep, zsh])
+}
+
+fn cell(cx: &mut VisualTestContext, session: Uuid, level: usize) -> Option<Bounds<Pixels>> {
+    cx.debug_bounds(tree_cell(main_pane(session), level))
+}
+
+#[gpui_kit::test]
+fn child_sessions_draw_a_level_under_their_parent_on_its_rail(cx: &mut TestAppContext) {
+    let (view, [lav, one, deep, zsh]) = nested_view();
+    let (_, cx, _) = open(cx, view);
+    let parent = cell(cx, lav, 0).expect("the parent's connector");
+    let child = cell(cx, one, 1).expect("the child's connector");
+    let grandchild = cell(cx, deep, 2).expect("the grandchild's connector");
+    for (session, level, under) in [(one, 0, parent), (deep, 0, parent), (deep, 1, child)] {
+        let rail = cell(cx, session, level).expect("a rail");
+        assert_eq!(
+            rail.left(),
+            under.left(),
+            "the rail at level {level} runs under its session"
+        );
+    }
+    assert!(
+        child.left() > parent.right(),
+        "the child hangs a level under its parent"
+    );
+    assert!(
+        grandchild.left() > child.right(),
+        "the grandchild a level under the child"
+    );
+    assert!(cell(cx, deep, 3).is_none());
+    assert_eq!(
+        cell(cx, zsh, 0).expect("the next session's connector").left(),
+        parent.left()
+    );
+    assert!(cell(cx, zsh, 1).is_none(), "the next session is back at the top");
+    let tops: Vec<Pixels> = [lav, one, deep, zsh]
+        .map(|session| cx.debug_bounds(selector(main_pane(session))).expect("the row").top())
+        .to_vec();
+    assert!(tops.is_sorted(), "{tops:?}");
+    cx.activate_a11y();
+    let tree = cx.a11y_tree_update().expect("the panel's accessibility tree");
+    let label = |session: Uuid| {
+        let id = format!("go-to-row-{}", main_pane(session).id());
+        tree.nodes
+            .iter()
+            .find(|(_, node)| node.author_id() == Some(id.as_str()))
+            .and_then(|(_, node)| node.label())
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        [lav, one, deep, zsh].map(label),
+        ["lav", "111", "deep", "zsh"].map(|name| Some(name.to_owned()))
+    );
 }

@@ -30,6 +30,16 @@ impl Shell<'_> {
     fn goto_holds_keyboard(&mut self) -> bool {
         self.holds(|view, cx| view.goto().map(|goto| goto.read(cx).focus_handle()))
     }
+
+    fn goto_drawn(&mut self, row: &'static str) -> bool {
+        for _ in 0..8 {
+            if self.cx.update(gpui_kit::Window::simulate_next_frame) == 0 {
+                break;
+            }
+            self.cx.run_until_parked();
+        }
+        self.cx.debug_bounds(row).is_some()
+    }
 }
 
 #[gpui_kit::test]
@@ -152,4 +162,67 @@ fn the_go_to_window_fits_the_whole_window_with_the_sidebar_shown_or_hidden(cx: &
     assert_eq!(sidebar(&mut s), px(0.), "the sidebar hides");
     let hidden = s.cx.debug_bounds("go-to").expect("the panel");
     assert_eq!(shown.size.width, hidden.size.width);
+}
+
+#[gpui_kit::test]
+fn go_to_nests_a_companion_under_its_parent_and_t_keeps_the_top_level_rows(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let u = s.session("u").unwrap();
+    let options = ngterm_core::model::CompanionOptions {
+        name: Some("notes".to_owned()),
+        select: false,
+        ..ngterm_core::model::CompanionOptions::default()
+    };
+    let notes = s
+        .state
+        .core
+        .library_mut()
+        .store_mut(s.window)
+        .unwrap()
+        .add_companion(u, options, "/home/u")
+        .unwrap();
+    s.settle();
+    s.press_go_to();
+    let view = s.goto_view().unwrap();
+    let drawn: Vec<(Vec<&str>, &str)> = view
+        .rows
+        .iter()
+        .map(|row| (row.tree.clone(), row.label.as_str()))
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            (vec![], "workspace 1"),
+            (vec!["├─"], "u"),
+            (vec!["│", "└─"], "notes"),
+            (vec!["└─"], "var")
+        ]
+    );
+    let row = |session: Uuid| {
+        let target = ngterm_core::goto::GotoTarget::Pane {
+            session,
+            pane: ngterm_core::model::StatusPane::Left,
+        };
+        &*Box::leak(format!("go-to-row-{}", target.id()).into_boxed_str())
+    };
+    let (u_row, notes_row) = (row(u), row(notes));
+    assert!(s.goto_drawn(notes_row));
+    s.cx.simulate_keystrokes("t");
+    s.settle();
+    assert_eq!(s.goto_labels(), ["workspace 1", "u", "var"]);
+    assert!(!s.goto_drawn(notes_row), "the companion's row is gone");
+    assert!(s.goto_drawn(u_row));
+    s.cx.activate_a11y();
+    let tree = s.cx.a11y_tree_update().expect("the window's accessibility tree");
+    let value = |id: &str| {
+        tree.nodes
+            .iter()
+            .find(|(_, node)| node.author_id() == Some(id))
+            .and_then(|(_, node)| node.value())
+            .map(str::to_owned)
+    };
+    assert_eq!(value("go-to-search").as_deref(), Some("/ top level"));
+    let hints = value("go-to-hints").unwrap_or_default();
+    assert!(hints.contains("a/b/w/i/d/t filter"), "{hints}");
 }

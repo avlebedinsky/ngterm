@@ -3,16 +3,19 @@
 //!
 //! A workspace row names the workspace and the branch checked out where its first session's main pane started
 //! ([`branch::git_branch`], read when the window opens; none for a session attached from another machine). Under it
-//! comes one row per terminal session (a page companion has none) on a `├─`/`└─` connector: an unsplit session's row
-//! is its pane's, labelled with the session's name; a split session's row names the session and holds one row per
-//! pane, labelled `{agent} · {session}` on a second connector, after a `│` while more sessions follow. A pane's
-//! agent is the one the hooks last reported in it (`terminal` without one); its status is the session's while the pane
-//! holds the session's status, as the sidebar's glyph shows it (`shell` while that is idle with no agent), and on the
-//! other pane `unknown` with an agent, `shell` without one.
+//! comes one row per terminal session (a page companion has none) on a `├─`/`└─` connector, nested as the sidebar nests
+//! them: a session's child sessions (its companions) hang a level under its row, to any depth, a `│` running down a
+//! level while more of its rows follow. An unsplit session's row is its pane's, labelled with the session's name; a
+//! split session's row names the session and holds one row per pane, labelled `{agent} · {session}`, ahead of its child
+//! sessions. A pane's agent is the one the hooks last reported in it (`terminal` without one); its status is
+//! the session's while the pane holds the session's status, as the sidebar's glyph shows it (`shell` while that is idle
+//! with no agent), and on the other pane `unknown` with an agent, `shell` without one.
 //!
 //! The query's words must all be in one field of a pane (its workspace and branch, the session, the label, the cwd,
-//! the agent, the pane's title), and a workspace that matches keeps every pane. A filter keeps the panes of one
-//! status. With either on, a workspace left with no pane hides.
+//! the agent, the pane's title), and a workspace that matches keeps every pane. A status filter keeps the panes of one
+//! status. With either on, a workspace left with no pane hides, and a session kept only over a child's rows shows as a
+//! session row. The top-level filter keeps every workspace with its top-level sessions alone, a split one as one
+//! session row, and moves a selection it hides to its top-level session's row.
 //!
 //! herdr: `src/client/shell/aggregate_navigation.rs` (`navigator_rows`, `navigator_selected_index`),
 //! `src/client/shell/overlay_input.rs` (the navigator's keys, `move_navigator_selection`, `move_navigator_workspace`),
@@ -24,6 +27,8 @@
 pub mod branch;
 mod runtime;
 mod state;
+
+use std::iter::Peekable;
 
 use uuid::Uuid;
 
@@ -38,7 +43,7 @@ pub use state::GotoKey;
 pub const PLACEHOLDER: &str = "/ search agents and terminals";
 /// What the rows say when nothing matches.
 pub const NO_MATCH: &str = "No matching agents or terminals";
-pub const HINTS: &str = "↑↓/j/k rows · ←→ workspace · / search · a/b/w/i/d filter · enter open · esc close";
+pub const HINTS: &str = "↑↓/j/k rows · ←→ workspace · / search · a/b/w/i/d/t filter · enter open · esc close";
 /// The key hints while the query takes the keys.
 pub const SEARCH_HINTS: &str = "search type · move ↑↓/ctrl+n/p · open enter · back esc";
 
@@ -47,7 +52,7 @@ pub const SEARCH_HINTS: &str = "search type · move ↑↓/ctrl+n/p · open ente
 pub enum GotoTarget {
     /// A workspace: its first session.
     Workspace(Uuid),
-    /// A split session, its focus as it is.
+    /// A session row's session (a split one's, or one kept over its children's rows), its focus as it is.
     Session(Uuid),
     /// A session's main pane ([`StatusPane::Left`]) or split pane ([`StatusPane::Right`]).
     Pane { session: Uuid, pane: StatusPane },
@@ -64,27 +69,29 @@ impl GotoTarget {
     }
 }
 
-/// The status filter: `b`, `w`, `i` and `d`.
+/// The filter: a status's (`b`, `w`, `i` and `d`), or the top-level sessions' (`t`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GotoFilter {
     Blocked,
     Working,
     Idle,
     Done,
+    TopLevel,
 }
 
 impl GotoFilter {
     #[must_use]
     pub fn name(self) -> &'static str {
-        self.status().name()
+        self.status().map_or("top level", PaneStatus::name)
     }
 
-    fn status(self) -> PaneStatus {
+    fn status(self) -> Option<PaneStatus> {
         match self {
-            Self::Blocked => PaneStatus::Blocked,
-            Self::Working => PaneStatus::Working,
-            Self::Idle => PaneStatus::Idle,
-            Self::Done => PaneStatus::Done,
+            Self::Blocked => Some(PaneStatus::Blocked),
+            Self::Working => Some(PaneStatus::Working),
+            Self::Idle => Some(PaneStatus::Idle),
+            Self::Done => Some(PaneStatus::Done),
+            Self::TopLevel => None,
         }
     }
 
@@ -94,6 +101,7 @@ impl GotoFilter {
             "w" => Self::Working,
             "i" => Self::Idle,
             "d" => Self::Done,
+            "t" => Self::TopLevel,
             _ => return None,
         })
     }
@@ -133,7 +141,7 @@ impl PaneStatus {
     }
 
     fn passes(self, filter: Option<GotoFilter>) -> bool {
-        filter.is_none_or(|filter| filter.status() == self)
+        filter.and_then(GotoFilter::status).is_none_or(|status| status == self)
     }
 }
 
@@ -141,6 +149,7 @@ impl PaneStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GotoPane {
     pub session: Uuid,
+    pub parent: Option<Uuid>,
     pub pane: StatusPane,
     pub session_name: String,
     /// The session has a split pane.
@@ -182,7 +191,7 @@ pub struct GotoWorkspace {
 pub struct GotoRow {
     pub target: GotoTarget,
     /// The tree lines before the label, one per level under the workspace: `├─`, or `└─` on the last row of its
-    /// level, and on a split session's pane `│` (blank under the last session) before its own; none on a workspace row.
+    /// level, after a `│` for each session it hangs under (blank under a last row); none on a workspace row.
     pub tree: Vec<&'static str>,
     pub label: String,
     /// The first line under the rows: `{workspace} / {session}`, `{workspace} / {session} / {agent}` on a split
@@ -190,7 +199,8 @@ pub struct GotoRow {
     pub detail: String,
     /// The second: a session's or a pane's cwd, or a workspace's branch.
     pub meta: String,
-    /// A pane row's columns; `None` on a workspace or a split session row.
+    /// A pane row's columns, and under the top-level filter a split session's (its pane that holds the status, current
+    /// with either pane); `None` on a workspace or another session row.
     pub pane: Option<PaneColumns>,
 }
 
@@ -222,51 +232,134 @@ pub fn rows(workspaces: &[GotoWorkspace], query: &str, filter: Option<GotoFilter
         let value = value.to_lowercase();
         words.iter().all(|word| value.contains(word))
     };
-    let filtering = filter.is_some() || !words.is_empty();
+    let status = filter.and_then(GotoFilter::status);
+    let narrowing = status.is_some() || !words.is_empty();
     let mut rows = Vec::new();
     for workspace in workspaces {
         let workspace_matches = matches(&workspace.name) || workspace.branch.as_deref().is_some_and(matches);
-        let sessions: Vec<(&GotoPane, Vec<&GotoPane>)> = workspace
-            .panes
-            .chunk_by(|one, other| one.session == other.session)
-            .filter_map(|panes| {
-                let main = panes.first()?;
-                let kept: Vec<&GotoPane> = panes
-                    .iter()
-                    .filter(|pane| pane.status.passes(filter) && (workspace_matches || pane_matches(pane, &matches)))
-                    .collect();
-                (!kept.is_empty()).then_some((main, kept))
-            })
-            .collect();
-        if !filtering || !sessions.is_empty() || (filter.is_none() && workspace_matches) {
+        let keeps = |pane: &GotoPane| pane.status.passes(filter) && (workspace_matches || pane_matches(pane, &matches));
+        let sessions: Vec<Node> = nodes(workspace).iter().filter_map(|node| node.kept(&keeps)).collect();
+        if !narrowing || !sessions.is_empty() || (status.is_none() && workspace_matches) {
             rows.push(workspace_row(workspace));
-            let last = sessions.len().saturating_sub(1);
-            for (index, (main, kept)) in sessions.iter().enumerate() {
-                session_rows(&mut rows, workspace, (main, kept), index == last);
-            }
+            workspace_sessions(&mut rows, workspace, &sessions, filter == Some(GotoFilter::TopLevel));
         }
     }
     rows
 }
 
+struct Node<'a> {
+    main: &'a GotoPane,
+    panes: Vec<&'a GotoPane>,
+    children: Vec<Node<'a>>,
+}
+
+impl<'a> Node<'a> {
+    fn kept(&self, keeps: &impl Fn(&GotoPane) -> bool) -> Option<Self> {
+        let panes: Vec<&'a GotoPane> = self.panes.iter().copied().filter(|pane| keeps(pane)).collect();
+        let children: Vec<Self> = self.children.iter().filter_map(|child| child.kept(keeps)).collect();
+        (!panes.is_empty() || !children.is_empty()).then_some(Self {
+            main: self.main,
+            panes,
+            children,
+        })
+    }
+
+    fn holds(&self, session: Uuid) -> bool {
+        self.main.session == session || self.children.iter().any(|child| child.holds(session))
+    }
+}
+
+fn nodes(workspace: &GotoWorkspace) -> Vec<Node<'_>> {
+    let mut sessions = workspace
+        .panes
+        .chunk_by(|one, other| one.session == other.session)
+        .filter_map(|panes| Some((panes.first()?, panes)))
+        .peekable();
+    nested(&mut sessions, None)
+}
+
+fn nested<'a>(
+    sessions: &mut Peekable<impl Iterator<Item = (&'a GotoPane, &'a [GotoPane])>>,
+    parent: Option<Uuid>,
+) -> Vec<Node<'a>> {
+    let mut nodes = Vec::new();
+    while let Some((main, panes)) =
+        sessions.next_if(|(main, _)| parent.is_none_or(|parent| main.parent == Some(parent)))
+    {
+        nodes.push(Node {
+            main,
+            panes: panes.iter().collect(),
+            children: nested(sessions, Some(main.session)),
+        });
+    }
+    nodes
+}
+
+fn workspace_sessions(rows: &mut Vec<GotoRow>, workspace: &GotoWorkspace, sessions: &[Node<'_>], top_level: bool) {
+    let last = sessions.len().saturating_sub(1);
+    for (index, session) in sessions.iter().enumerate() {
+        if top_level {
+            rows.push(top_level_row(workspace, session, tree(&[], index == last)));
+        } else {
+            session_rows(rows, workspace, session, (&[], index == last));
+        }
+    }
+}
+
+fn tree(rails: &[&'static str], last: bool) -> Vec<&'static str> {
+    let connector = if last { LAST_BRANCH } else { BRANCH };
+    rails.iter().copied().chain([connector]).collect()
+}
+
 fn session_rows(
     rows: &mut Vec<GotoRow>,
     workspace: &GotoWorkspace,
-    (main, kept): (&GotoPane, &[&GotoPane]),
-    last: bool,
+    session: &Node<'_>,
+    (rails, last): (&[&'static str], bool),
 ) {
-    let connector = if last { LAST_BRANCH } else { BRANCH };
-    if !main.split {
-        rows.extend(kept.iter().map(|pane| pane_row(workspace, pane, vec![connector])));
-        return;
+    let split_panes: &[&GotoPane] = if session.main.split { &session.panes } else { &[] };
+    rows.push(match session.panes.first() {
+        Some(pane) if !session.main.split => pane_row(workspace, pane, tree(rails, last)),
+        _ => session_row(workspace, session.main, tree(rails, last)),
+    });
+    let rails: Vec<&'static str> = rails.iter().copied().chain([if last { "" } else { RAIL }]).collect();
+    let under = split_panes.len() + session.children.len();
+    for (index, pane) in split_panes.iter().enumerate() {
+        rows.push(pane_row(workspace, pane, tree(&rails, index + 1 == under)));
     }
-    rows.push(session_row(workspace, main, connector));
-    let rail = if last { "" } else { RAIL };
-    let final_pane = kept.len().saturating_sub(1);
-    rows.extend(kept.iter().enumerate().map(|(index, pane)| {
-        let connector = if index == final_pane { LAST_BRANCH } else { BRANCH };
-        pane_row(workspace, pane, vec![rail, connector])
-    }));
+    for (index, child) in session.children.iter().enumerate() {
+        session_rows(rows, workspace, child, (&rails, split_panes.len() + index + 1 == under));
+    }
+}
+
+fn top_level_row(workspace: &GotoWorkspace, session: &Node<'_>, tree: Vec<&'static str>) -> GotoRow {
+    if !session.main.split {
+        return pane_row(workspace, session.main, tree);
+    }
+    let holder = session
+        .panes
+        .iter()
+        .copied()
+        .find(|pane| pane.indicator.is_some())
+        .unwrap_or(session.main);
+    GotoRow {
+        pane: Some(PaneColumns {
+            current: session.panes.iter().any(|pane| pane.current),
+            ..columns(holder)
+        }),
+        ..session_row(workspace, session.main, tree)
+    }
+}
+
+fn top_level_target(workspaces: &[GotoWorkspace], target: GotoTarget) -> GotoTarget {
+    let (GotoTarget::Session(session) | GotoTarget::Pane { session, .. }) = target else {
+        return target;
+    };
+    workspaces
+        .iter()
+        .flat_map(nodes)
+        .find(|node| node.holds(session))
+        .map_or(target, |node| GotoTarget::Session(node.main.session))
 }
 
 fn pane_matches(pane: &GotoPane, matches: &impl Fn(&str) -> bool) -> bool {
@@ -288,10 +381,10 @@ fn workspace_row(workspace: &GotoWorkspace) -> GotoRow {
     }
 }
 
-fn session_row(workspace: &GotoWorkspace, main: &GotoPane, connector: &'static str) -> GotoRow {
+fn session_row(workspace: &GotoWorkspace, main: &GotoPane, tree: Vec<&'static str>) -> GotoRow {
     GotoRow {
         target: GotoTarget::Session(main.session),
-        tree: vec![connector],
+        tree,
         label: main.session_name.clone(),
         detail: format!("{} / {}", workspace.name, main.session_name),
         meta: main.cwd.clone(),
@@ -314,16 +407,20 @@ fn pane_row(workspace: &GotoWorkspace, pane: &GotoPane, tree: Vec<&'static str>)
             session
         },
         meta: pane.cwd.clone(),
-        pane: Some(PaneColumns {
-            agent: pane.kind(),
-            status: pane.status,
-            indicator: pane.indicator.clone(),
-            current: pane.current,
-        }),
+        pane: Some(columns(pane)),
     }
 }
 
-/// The selected row of `rows`: the row of `selected`, a session's main pane once the session is no longer split, the
+fn columns(pane: &GotoPane) -> PaneColumns {
+    PaneColumns {
+        agent: pane.kind(),
+        status: pane.status,
+        indicator: pane.indicator.clone(),
+        current: pane.current,
+    }
+}
+
+/// The selected row of `rows`: the row of `selected`, a session's main pane once the session has no session row, the
 /// first row when it is gone, the first pane row with nothing selected; `None` with no rows.
 #[must_use]
 pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<usize> {
@@ -372,7 +469,7 @@ impl GotoView {
         !self.searching && self.filter.is_none() && self.query.is_empty()
     }
 
-    /// `N terminal(s)`: the pane rows shown.
+    /// `N terminal(s)`: the rows shown with pane columns.
     #[must_use]
     pub fn count_label(&self) -> String {
         let count = self.rows.iter().filter(|row| row.pane.is_some()).count();

@@ -3,7 +3,7 @@
 //! herdr: `src/client/shell/overlay_input.rs` (the navigator's keys, `move_navigator_selection`,
 //! `move_navigator_workspace`) at `HERDR_REV` (`build/pins.env`), licensed under the Apache License 2.0, modified.
 
-use super::{GotoFilter, GotoRow, GotoTarget, GotoView, GotoWorkspace, rows, selected_index};
+use super::{GotoFilter, GotoRow, GotoTarget, GotoView, GotoWorkspace, rows, selected_index, top_level_target};
 
 const PAGE: isize = 8;
 
@@ -55,7 +55,7 @@ impl GotoState {
     pub(crate) fn view(&self, workspaces: &[GotoWorkspace]) -> GotoView {
         let rows = self.rows(workspaces);
         GotoView {
-            selected: selected_index(&rows, self.selected),
+            selected: selected_index(&rows, self.selection(workspaces)),
             rows,
             query: self.query.clone(),
             searching: self.searching,
@@ -78,9 +78,18 @@ impl GotoState {
         rows(workspaces, &self.query, self.filter)
     }
 
+    fn selection(&self, workspaces: &[GotoWorkspace]) -> Option<GotoTarget> {
+        let selected = self.selected?;
+        Some(if self.filter == Some(GotoFilter::TopLevel) {
+            top_level_target(workspaces, selected)
+        } else {
+            selected
+        })
+    }
+
     fn open(&self, workspaces: &[GotoWorkspace]) -> GotoOutcome {
         let rows = self.rows(workspaces);
-        selected_index(&rows, self.selected)
+        selected_index(&rows, self.selection(workspaces))
             .and_then(|index| rows.get(index))
             .map_or(GotoOutcome::Stay, |row| GotoOutcome::Open(row.target))
     }
@@ -140,7 +149,9 @@ impl GotoState {
                 if let Some(filter) = GotoFilter::of_key(key) {
                     self.query.clear();
                     self.filter = Some(filter);
-                    self.selected = None;
+                    if filter != GotoFilter::TopLevel {
+                        self.selected = None;
+                    }
                 }
             }
         }
@@ -153,7 +164,7 @@ impl GotoState {
 
     fn step(&mut self, delta: isize, workspaces: &[GotoWorkspace]) {
         let rows = self.rows(workspaces);
-        let Some(index) = selected_index(&rows, self.selected) else {
+        let Some(index) = selected_index(&rows, self.selection(workspaces)) else {
             self.selected = None;
             return;
         };
@@ -167,7 +178,7 @@ impl GotoState {
 
     fn jump_workspace(&mut self, forward: bool, workspaces: &[GotoWorkspace]) {
         let rows = self.rows(workspaces);
-        let Some(selected) = selected_index(&rows, self.selected) else {
+        let Some(selected) = selected_index(&rows, self.selection(workspaces)) else {
             return;
         };
         let section = rows[..=selected]

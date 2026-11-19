@@ -4,9 +4,10 @@
 //! selected row's detail, its cwd or branch, and the key hints (`go-to-detail`, `go-to-hints`).
 //!
 //! A workspace row is its name in bold with its branch trailing. A session's row hangs under it on a `├─`/`└─`
-//! connector, and a split session's pane rows under that one a level deeper, each level a cell of the same width. A
-//! pane row shows `◆` marking the focused pane, then the session's status glyph as the sidebar draws it on the pane that
-//! holds the status, the label, and the agent and status columns, which a narrow panel drops ([`Columns`]).
+//! connector, and a split session's pane rows and a session's child sessions under that one a level deeper, each level
+//! a cell of the same width. A pane row shows `◆` marking the focused pane, then the session's status glyph as the
+//! sidebar draws it on the pane that holds the status, the label, and the agent and status columns, which a narrow
+//! panel drops ([`Columns`]).
 //!
 //! The panel holds the keyboard: the window's key hook hands it every press ([`goto_key`]), which it posts to the core,
 //! whose rows every sync hands back, so a status changing under the open window shows at once. A click opens its row.
