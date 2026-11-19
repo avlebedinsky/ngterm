@@ -1594,7 +1594,10 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   agterm-peer`), held by `rust-passing-windows.txt`; the report
   and the stage are kept as artifacts; `coverage-windows`, the suite on the instrumented build; and `windows-report`
   and `windows-report-cov`, which join the two, the second judging the instrumented run by
-  `conformance/coverage/e2e-floor-desktop-windows.txt` only ([Sharded suite](#sharded-suite)).
+  `conformance/coverage/e2e-floor-desktop-windows.txt` only ([Sharded suite](#sharded-suite)); and `msi`: the MSI
+  built with the pinned WiX from `windows-build`'s release stage (the build and `scripts/stage.sh` a release ships), and
+  one of the next patch version, then `scripts/check-msi.ps1` installs, checks, upgrades and uninstalls it on the
+  runner; the MSI is kept as the `ngterm-msi` artifact.
 - `android.yml` (path-filtered to the mobile core, the crates under it, `mobile/android/` and the Android scripts and
   pins): `app` sets up the pinned toolchain (`scripts/setup-android.sh`), runs
   `scripts/build-android.sh check assembleDebug` (Spotless, detekt, Android Lint, the JVM unit and Roborazzi screenshot
@@ -1611,9 +1614,6 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   unsigned); `results` gathers the result bundles and the failed snapshots' images of the test jobs that failed.
 - `ios-release.yml`: a release tag's signed iOS build, uploaded to TestFlight, and dry runs by hand or from `ci/**`
   pushes ([docs/ios-release.md](ios-release.md)).
-- `windows-installer.yml` (the same triggers, and by hand): the release build staged, the MSI built from it with the
-  pinned WiX and one of the next patch version, then `scripts/check-msi.ps1` installs, checks, upgrades and
-  uninstalls it on the runner; the MSI is kept as the `ngterm-msi` artifact.
 - `lint.yml` (path-filtered to the workflows, the scripts, the Git hooks, their linters' settings and
   `packaging/release/pins.env`): `scripts/lint.sh`, which runs actionlint over the workflows
   and shellcheck over `scripts/*.sh`, `scripts/lib/*.sh`, `.githooks/*` and every `run:` block, both pinned and
@@ -1640,6 +1640,37 @@ already holds changes no file, so the path-filtered workflows don't start on it.
   check on such a pull request has to name a workflow. A dispatched run builds the branch as pushed, not its merge
   with `main`.
 - `reference-macos.yml` (PRs that change `conformance/`, and by hand): the suite against upstream's macOS release.
+
+### CI caches
+
+The repository has 10 GB of Actions cache. Above that, GitHub removes the entries used least recently, and a job
+whose cargo cache is gone builds its dependencies again, 5 to 15 minutes more. All the caches one main push uses must
+fit at once, so one job saves each cache and only these save (sizes of November 2026):
+
+| cache | saved by | read by | size |
+|---|---|---|---|
+| cargo `linux` | `linux.yml` `linux` | `cross-platform.yml`'s Ubuntu leg | 1.6 GB |
+| cargo `crates` | `cross-platform.yml` `crates`, macOS and Windows | | 1.4 and 1.6 GB |
+| cargo `conformance-windows` | `cross-platform.yml` `windows build (release)` | `release.yml`'s Windows build | 0.7 GB |
+| cargo `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.7 GB |
+| cargo `ios` | `ios.yml` `core` | `core-tests`, `ios-release.yml`, `release.yml`'s iOS build | 0.6 GB |
+| vendor `ubuntu-26.04` | `linux.yml` `linux` | `headless-e2e`, `cross-platform.yml`'s Ubuntu leg | 0.25 GB |
+| vendor `arch` | `linux.yml` `wpe` | the other jobs in its container | 0.25 GB |
+| vendor `windows-2025` | `cross-platform.yml` `crates` | `windows build`, `release.yml`'s Windows build | 0.3 GB |
+| vendor `macos-26` | `cross-platform.yml` `crates` | | 0.25 GB |
+| vendor `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.4 GB |
+| vendor `xcode-27` | `ios.yml` `core` | the other `ios.yml` jobs, `ios-release.yml`, `release.yml` | 0.3 GB |
+| Gradle | `android.yml` (setup-gradle) | | 0.7 GB |
+| the iOS core | `ios.yml` `core` | | 0.05 GB for each |
+
+That is about 9 GB. The saved cargo caches are those that save the most time on each workflow's longest path; the other
+jobs build their dependencies in each run (`conformance build (release)` then takes about as long as the `linux` job its
+shards also wait for). A vendor cache also holds Zig's global cache with the libghostty-vt builds of the job that saved
+it ([Native dependencies](#native-dependencies)), so its key hashes `zig_build.rs` and `.cargo/config.toml` too: when
+what the build passes zig changes, a new entry is saved, and later runs do not build the library again. `release.yml`
+and `ios-release.yml` save no cache: a tag's caches serve only that tag. Before a job saves another cache, make sure
+that it fits: `gh api 'repos/{owner}/{repo}/actions/cache/usage'` after a main run gives the total, `gh api
+'repos/{owner}/{repo}/actions/caches'` each entry.
 
 ### Sharded suite
 

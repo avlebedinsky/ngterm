@@ -20,7 +20,7 @@ name: dependabot-lock-checks
 
 on:
   workflow_run:
-    workflows: [android, conformance-gate, cross-platform, ios, linux, windows-installer]
+    workflows: [android, conformance-gate, cross-platform, ios, linux]
     types: [requested, in_progress, completed]
     branches: ["dependabot/cargo/**"]
 

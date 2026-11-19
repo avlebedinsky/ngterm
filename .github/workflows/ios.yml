@@ -48,8 +48,8 @@
 #
 # The vendor root (the pinned Zig, its global cache, the libghostty-vt prefixes and the vendored SwiftLint) and cargo's
 # registry and target directory are cached as cross-platform.yml's macOS leg caches them, under keys of this image;
-# cargo's cache is `core`'s to save (`core-tests` reads it). Only main saves caches: a branch's would crowd main's
-# out of the repository's cache space. The simulator runtime is the image's; Xcode's derived data is not cached.
+# both are `core`'s to save (the other jobs read them). Only main saves caches: a branch's would crowd main's out of
+# the repository's cache space. The simulator runtime is the image's; Xcode's derived data is not cached.
 #
 # Path-filtered to what the app builds from: the mobile core and the crates it builds on, the workspace manifest, lock
 # file, toolchain and cargo config, mobile/ios/ and the fonts it shares with Android, the scripts, patches and pins of
@@ -128,12 +128,13 @@ jobs:
         with:
           shared-key: ios
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the vendor root, keyed like cross-platform.yml's legs', with the iOS setup that installs SwiftLint into it
+      # the vendor root, keyed like cross-platform.yml's legs', with the iOS setup that installs SwiftLint into it and
+      # the library's builds for the device and the simulator
       - uses: actions/cache@v6
         if: steps.built.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         with: &vendor
           path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh') }}
+          key: vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: steps.built.outputs.cache-hit != 'true' && github.ref != 'refs/heads/main'
         with: *vendor
@@ -172,13 +173,9 @@ jobs:
         with:
           shared-key: ios
           save-if: false
-      - &vendor-cache
-        uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: *vendor
+      # the core job's vendor root, read only
       - &vendor-restore
         uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
         with: *vendor
       - &ghostty-vt
         name: Zig and the libghostty-vt prefix (build/pins.env)
@@ -200,7 +197,6 @@ jobs:
     steps:
       - *checkout
       - *rust-toolchain
-      - *vendor-cache
       - *vendor-restore
       - *ghostty-vt
       - *ios-toolchain
@@ -229,7 +225,6 @@ jobs:
     steps:
       - *checkout
       - *rust-toolchain
-      - *vendor-cache
       - *vendor-restore
       - *ghostty-vt
       - *ios-toolchain
@@ -336,7 +331,6 @@ jobs:
     steps:
       - *checkout
       - *rust-toolchain
-      - *vendor-cache
       - *vendor-restore
       - *ghostty-vt
       - *ios-toolchain
@@ -387,7 +381,6 @@ jobs:
     steps:
       - *checkout
       - *rust-toolchain
-      - *vendor-cache
       - *vendor-restore
       - *ghostty-vt
       - *ios-toolchain

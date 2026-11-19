@@ -51,18 +51,20 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      # only main saves caches: a branch's would crowd main's out of the repository's cache space
+      # Only main saves caches: a branch's would crowd main's out of the repository's cache space. Both are this
+      # image's only ones: cross-platform.yml's Ubuntu leg and the headless-e2e job read them.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: linux
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The prefixes, the Zig toolchain libghostty-vt's was prepared with and the Zig global cache of its builds;
-      # keyed like the prefixes themselves (`ngterm`: the share/ngterm manifest layout; native.sh holds `prefix_key`
-      # and the libghostty-vt prefix's layout, part of its key).
+      # The prefixes, the Zig toolchain libghostty-vt's was prepared with and the Zig global cache of its builds (the
+      # library's too); keyed like the libghostty-vt prefix (native.sh holds `prefix_key` and its layout) and by what
+      # its build passes zig (zig_build.rs, the deployment targets in .cargo/config.toml), so a new build is saved.
       - uses: actions/cache@v6
         if: github.ref == 'refs/heads/main'
         with: &vendor-linux
           path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-${{ runner.os }}-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/**', 'scripts/lib/native.sh') }}
+          key: vendor-ngterm-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: github.ref != 'refs/heads/main'
         with: *vendor-linux
@@ -204,19 +206,19 @@ jobs:
           [[ "$installed" == "$WPE_VERSION"-* ]]
       - name: rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the gir binary and the unpacked package the regeneration reads its .gir files from, and the libghostty-vt
-      # source with its Zig global cache; keyed like the prefixes
+      # No cargo cache: the repository's 10 GB hold the caches that save the most time, and this job's is not one of
+      # them (docs/development.md, CI caches).
+      # The gir binary and the unpacked package the regeneration reads its .gir files from, the libghostty-vt source
+      # with its Zig global cache and the library's build, the fonts and lavapipe: this container's one vendor cache,
+      # which the other jobs in it read. Keyed like the prefixes and by what the library's build passes zig.
       - uses: actions/cache@v6
         if: github.ref == 'refs/heads/main'
-        with: &vendor-wpe
+        with: &vendor-arch
           path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-wpe-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/**', 'scripts/lib/native.sh') }}
+          key: vendor-ngterm-arch-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: github.ref != 'refs/heads/main'
-        with: *vendor-wpe
+        with: *vendor-arch
       # Before the first clippy: the WPE crates reach ngterm-ghostty-vt-sys too, whose build script needs the source
       # prepared here, and a cold vendor cache has none. The app with its HTML overlays (feature `html`, the default)
       # gets its clippy, its unit tests and the headless page harness below (the real engine on lavapipe, in SHM: no
@@ -314,17 +316,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: &vendor-unit-coverage
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-arch-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/**', 'scripts/lib/native.sh') }}
+      # No cargo cache: the repository's 10 GB hold the caches that save the most time, and this job's is not one of
+      # them (docs/development.md, CI caches).
+      # the wpe job's vendor root, read only
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
-        with: *vendor-unit-coverage
+        with: *vendor-arch
       - name: libghostty-vt prefix
         run: scripts/build-ghostty-vt.sh
       - name: terminal fonts
@@ -405,18 +401,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the libghostty-vt prefix, keyed like cross-platform.yml's Ubuntu leg's
-      - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: &vendor-headless-e2e
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh') }}
+      # No cargo cache: the repository's 10 GB hold the caches that save the most time, and this job's is not one of
+      # them (docs/development.md, CI caches).
+      # the linux job's vendor root (the libghostty-vt prefix and its build), read only
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
-        with: *vendor-headless-e2e
+        with: *vendor-linux
       - name: sshd for the mobile e2e
         run: |
           sudo apt-get update
@@ -558,18 +547,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          key: ${{ matrix.build }}
-      - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: &vendor-conformance
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-arch-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/**', 'scripts/lib/native.sh') }}
+      # No cargo cache: the repository's 10 GB hold the caches that save the most time, and this job's is not one of
+      # them (docs/development.md, CI caches).
+      # the wpe job's vendor root, read only
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
-        with: *vendor-conformance
+        with: *vendor-arch
       # the source the app's libghostty-vt is built from, with the stage's terminfo, themes and shell integration
       # (Ghostty's at the same pin)
       - name: libghostty-vt prefix
@@ -652,11 +634,10 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No cargo cache: the repository's 10 GB hold the caches that save the most time, and this job's is not one of
+      # them (docs/development.md, CI caches).
       - uses: actions/cache/restore@v6
-        with: *vendor-conformance
+        with: *vendor-arch
       - name: libghostty-vt prefix
         run: scripts/build-ghostty-vt.sh
       - name: terminal fonts

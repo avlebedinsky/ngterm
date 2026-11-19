@@ -41,7 +41,7 @@ MESSAGE = "build(deps): re-point the Cargo.lock edges the update moved\n\n[depen
 IDENTITY = ["-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com"]
 # a push with GITHUB_TOKEN starts no workflow, so the repair workflow dispatches these on the repaired branch, and
 # dependabot-lock-checks.yml reports their runs on the commit
-WORKFLOWS = ["android.yml", "conformance-gate.yml", "cross-platform.yml", "ios.yml", "linux.yml", "windows-installer.yml"]
+WORKFLOWS = ["android.yml", "conformance-gate.yml", "cross-platform.yml", "ios.yml", "linux.yml"]
 
 
 class Refused(Exception):

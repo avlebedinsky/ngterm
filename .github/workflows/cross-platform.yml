@@ -20,8 +20,8 @@
 # libghostty-vt (ngterm-ghostty-vt-sys, its wrapper ngterm-ghostty-vt) builds here from the prefix
 # scripts/build-ghostty-vt.sh prepares with the pinned Zig of each runner's OS and arch (Git Bash on Windows, stock
 # bash 3.2 on macOS); the sys crate's build script runs `zig build` over it, offline. The vendor cache keeps the
-# prefix, the pinned Zig and Zig's global cache (the C runtime and compiler_rt builds); the library itself is rebuilt
-# in each run, since the workspace crates' build outputs are not cached. The three Zig targets no runner here runs
+# prefix, the pinned Zig and Zig's global cache (the C runtime and compiler_rt builds, and the library itself, which
+# the sys crate's build script caches there for each target it builds). The three Zig targets no runner here runs
 # natively are cross-built (`cargo build --target` of the sys crate, which runs its zig build; nothing is linked):
 # aarch64 Linux and x86_64 macOS on the Linux job, aarch64 Windows on the Windows one, since Zig builds windows-msvc
 # only against an MSVC installation (from Linux, simdutf and Wuffs' translate-c find no MSVC headers).
@@ -68,12 +68,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The Ubuntu leg saves no cache: it reads the caches linux.yml's linux job saves on the same image (the
+          # whole workspace's dependencies, a superset of these crates'). The repository's caches budget:
+          # docs/development.md, CI caches.
           - os: ubuntu-26.04
             cross: aarch64-unknown-linux-gnu x86_64-apple-darwin
+            rust-cache: linux
+            save-caches: false
           - os: macos-26
             cross: ""
+            rust-cache: crates
+            save-caches: true
           - os: windows-2025
             cross: aarch64-pc-windows-msvc
+            rust-cache: crates
+            save-caches: true
     runs-on: ${{ matrix.os }}
     # Measured 2026-10-19 with cold caches: the prefix 25 s (Ubuntu), 1 min (macOS), 2 min (Windows); the first
     # cargo step (clippy), which builds libghostty-vt first, 3 min (Ubuntu), 4.5 min (macOS), 2 min (Windows); each
@@ -88,16 +97,18 @@ jobs:
       # only main saves caches: a branch's would crowd main's out of the repository's cache space
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The libghostty-vt prefix, the pinned Zig it was prepared with and Zig's global cache; keyed like the prefix
-      # (its pins and patches, native.sh holding its layout).
+          shared-key: ${{ matrix.rust-cache }}
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.save-caches }}
+      # The libghostty-vt prefix, the pinned Zig it was prepared with and Zig's global cache with the library builds
+      # in it; keyed like the prefix (its pins and patches, native.sh holding its layout) and by what the library's
+      # build passes zig (zig_build.rs, the deployment targets in .cargo/config.toml), so a new build is saved.
       - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && matrix.save-caches
         with: &vendor-crates
           path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh') }}
+          key: vendor-ngterm-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' || !matrix.save-caches
         with: *vendor-crates
       - name: libghostty-vt prefix
         run: scripts/build-ghostty-vt.sh
@@ -202,9 +213,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # the cargo caches the unsharded jobs saved
           - build: release
-            cache: conformance-windows
             stage: conformance-stage
             artifact: rust-windows-stage
             retention: 5
@@ -221,18 +230,18 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
+      # the release build's cargo cache, under the name the unsharded job saved it; the coverage build has none
+      # (docs/development.md, CI caches)
       - uses: Swatinem/rust-cache@v2
+        if: matrix.build == 'release'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          shared-key: ${{ matrix.cache }}
-      - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: &vendor-windows
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh') }}
+          shared-key: conformance-windows
+      # the vendor root the crates job's Windows leg saves on the same image, read only
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
-        with: *vendor-windows
+        with:
+          path: ~/.cache/ngterm/vendor
+          key: vendor-ngterm-windows-2025-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - name: libghostty-vt prefix
         run: scripts/build-ghostty-vt.sh
       - name: terminal fonts
@@ -274,7 +283,6 @@ jobs:
       matrix:
         include:
           - build: coverage
-            cache: coverage-coverage-windows
             stage: conformance-stage-cov
             artifact: rust-windows-stage-cov
             retention: 1
@@ -476,3 +484,51 @@ jobs:
           - out: rust-windows-coverage
             coverage: true
     steps: *windows-report-steps
+
+  # The Windows installer (packaging/windows/ngterm.wxs, scripts/build-msi.sh): the release stage windows-build makes
+  # (the same `cargo build --release` and scripts/stage.sh the installer ships), the MSI built from it with the pinned
+  # WiX Toolset (build/pins.env), then checked by scripts/check-msi.ps1: installed for the runner's user, what it
+  # installed run (the build identity beside ngterm.exe, ngtermctl from a PATH read back from the registry, the
+  # Start-menu shortcut's app id), upgraded to an MSI of the next patch version and uninstalled, which must leave none
+  # of its files, its shortcut, its PATH entry or its registry keys. The MSI is kept as an artifact.
+  msi:
+    needs: windows-build
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: download the stage
+        uses: actions/download-artifact@v8
+        with:
+          name: rust-windows-stage
+          path: target
+      - name: unpack the stage
+        run: conformance/tools/stage-archive.sh unpack target/conformance-stage.tar target/conformance-stage
+      # the fonts' licenses the package carries; the pinned WiX installs into the vendor root on first use
+      - name: terminal fonts
+        run: scripts/fetch-fonts.sh
+      # the MSI, and one of the next patch version from the same tree, which the check upgrades to
+      - name: MSI
+        run: |
+          version="$(head -n1 target/conformance-stage/share/ngterm/app-BUILD | tr -d '\r')"
+          scripts/build-msi.sh "dist/ngterm-$version-x64.msi" --staged target/conformance-stage
+          IFS=. read -r major minor patch <<<"$version"
+          scripts/build-msi.sh "$(cygpath -u "$RUNNER_TEMP")/upgrade/ngterm-upgrade.msi" \
+            --staged target/conformance-stage --version "$major.$minor.$((patch + 1))"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ngterm-msi
+          path: dist/*.msi
+          if-no-files-found: error
+      - name: install, upgrade and uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem dist\*.msi).FullName
+          scripts\check-msi.ps1 -Msi $msi -UpgradeMsi "$env:RUNNER_TEMP\upgrade\ngterm-upgrade.msi" -Log "$env:RUNNER_TEMP\msi"
+      - name: upload the installer logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ngterm-msi-logs
+          path: ${{ runner.temp }}/msi/
+          if-no-files-found: ignore

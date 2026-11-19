@@ -80,19 +80,23 @@ jobs:
           java-version: "21"
       - name: rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
-      # only main saves caches: a branch's would crowd main's out of the repository's cache space
+      # Only main saves caches: a branch's would crowd main's out of the repository's cache space. Both are
+      # android's own, which the emulator job and release.yml's Android build read: the mobile core for both ABIs
+      # (and the host's bindgen) is the same build in each.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: android
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the libghostty-vt prefix, keyed like cross-platform.yml's Ubuntu leg's
+      # the libghostty-vt prefix, Zig's global cache and the library's builds for the two ABIs and the host; keyed like
+      # the prefix and by what the library's build passes zig, so a new build is saved
       - uses: actions/cache@v6
         if: github.ref == 'refs/heads/main'
-        with: &vendor-app
+        with: &vendor-android
           path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh') }}
+          key: vendor-ngterm-android-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: github.ref != 'refs/heads/main'
-        with: *vendor-app
+        with: *vendor-android
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
@@ -143,17 +147,13 @@ jobs:
           java-version: "21"
       - name: rust toolchain (rust-toolchain.toml)
         run: rustup toolchain install
+      # the app job's caches, read only
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/cache@v6
-        if: github.ref == 'refs/heads/main'
-        with: &vendor-emulator
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh') }}
+          shared-key: android
+          save-if: false
       - uses: actions/cache/restore@v6
-        if: github.ref != 'refs/heads/main'
-        with: *vendor-emulator
+        with: *vendor-android
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
