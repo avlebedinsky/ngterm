@@ -29,9 +29,12 @@
   handoff), as `cargo run` does.
 
   Upgrades are major upgrades under the one UpgradeCode below (never change it): the new version is installed over the
-  earlier one, which is removed after it, so ngterm.exe and the Start-menu shortcut never disappear and Explorer keeps
-  the user's taskbar pin (removing the earlier version first made it drop the pin); user state (the state, config and
-  agent directories) is never the installer's.
+  earlier one, which is removed after it (RemoveExistingProducts after InstallExecute). WiX derives each component's
+  GUID from its path, so both versions hold the same components and the removal of the earlier one removes nothing the
+  new one installs: ngterm.exe, the Start-menu shortcut and the PATH entry stay, and a taskbar pin keeps its target
+  (removing the earlier version first deleted every file and the shortcut until the new install put them back). Never
+  give a component a fixed Guid: one path with two GUIDs would let the removal delete a file the new version installed.
+  User state (the state, config and agent directories) is never the installer's.
 
   ICE38, ICE64 and ICE91 are suppressed by the build script: they ask a component under the user's profile to key on
   an HKCU value, list its folders for removal, and vary with ALLUSERS, for the roaming profiles and per-user copies of
