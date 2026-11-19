@@ -74,13 +74,12 @@ internal final class SessionViewTests: XCTestCase {
         return app
     }
 
+    // waits for pane `number`'s tab to show as selected; the wait reads the screen again on each try (FakeApp.expect),
+    // as one read can take as long as a short timed wait on a loaded runner
     @MainActor
     private func expectSelected(_ number: Int, in app: XCUIApplication) {
-        let tab = app.buttons["pane-\(number)"]
-        FakeApp.expect(tab, "pane \(number)'s tab")
-        let selected = NSPredicate(format: "isSelected == true")
-        let waited = XCTNSPredicateExpectation(predicate: selected, object: tab)
-        XCTAssertEqual(XCTWaiter.wait(for: [waited], timeout: 10), .completed, "pane \(number) isn't selected")
+        let selected = NSPredicate(format: "identifier == %@ AND isSelected == true", "pane-\(number)")
+        FakeApp.expect(app.buttons.matching(selected).firstMatch, "pane \(number)'s tab, selected")
     }
 
     @MainActor
@@ -232,14 +231,14 @@ internal final class SessionViewTests: XCTestCase {
         let detach = app.buttons["session-detach"]
         FakeApp.expect(detach, "Detach in the session's menu")
         detach.tap()
-        let title = app.descendants(matching: .any)["session-title"].firstMatch
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: title)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 10), .completed, "the session view stayed")
+        FakeApp.expectGone(app.descendants(matching: .any)["session-title"].firstMatch, "the session view")
         FakeApp.expect(app.descendants(matching: .any)["session-work"].firstMatch, "the session's row again")
     }
 
     // the fake core lists the session's machine without it before End answers: the view closes all the same, rather
-    // than staying on the session gone
+    // than staying on the session gone. The waits read the screen a number of times (FakeApp): on a CI tablet at load
+    // 320 on 3 CPUs, a 10 s wait for "work is gone" to go failed, while the screen recording showed the empty list
+    // and no such view from 2 s after the End
     @MainActor
     internal func testEndClosesTheSessionView() throws {
         let app = openSession()
@@ -250,14 +249,9 @@ internal final class SessionViewTests: XCTestCase {
         FakeApp.expect(FakeApp.element(containing: "End work?", in: app), "End session confirmation")
         let confirm = app.buttons.matching(identifier: "End session").allElementsBoundByIndex.first(where: \.isHittable)
         try XCTUnwrap(confirm, "no End session in the confirmation").tap()
-        let absent = NSPredicate(format: "exists == false")
-        let title = app.descendants(matching: .any)["session-title"].firstMatch
-        let live = XCTNSPredicateExpectation(predicate: absent, object: title)
-        XCTAssertEqual(XCTWaiter.wait(for: [live], timeout: 10), .completed, "the session view stayed")
+        FakeApp.expectGone(app.descendants(matching: .any)["session-title"].firstMatch, "the session view")
         FakeApp.expect(FakeApp.element(containing: "No sessions on split", in: app), "the machine's empty list")
-        let goneShown = FakeApp.element(containing: "work is gone", in: app)
-        let gone = XCTNSPredicateExpectation(predicate: absent, object: goneShown)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 10), .completed, "the view stayed on the session gone")
+        FakeApp.expectGone(FakeApp.element(containing: "work is gone", in: app), "the view on the session gone")
     }
 
     deinit {
