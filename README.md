@@ -92,6 +92,7 @@ download, see [release signing](docs/release-signing.md).
    | Scratch terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> |
    | Dashboard | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> |
    | Jump to a session | <kbd>Ctrl</kbd>+<kbd>P</kbd> |
+   | Search the sessions in the sidebar | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> |
    | Everything else, in the command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 
 2. **Connect your agents.** On first launch, ngterm offers to install the agent skill and the agent status hooks.

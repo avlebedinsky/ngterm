@@ -129,7 +129,8 @@ points — the read side of `sidebar width`, on `tree` only), `workspaceFilter`,
 quick terminal is shown — the read side of the write-only `quick` command; app-level, so every window
 reports the same value), `zoomedSurface`, the four `dashboard*` fields, `pickPending`, `askPending` (GUI asks only), and `app` (the
 serving app's `version`, plus `commit` when the build recorded one — the same value `ngtermctl version`
-returns). reference.md lists every one with its exact shape. List windows with
+returns), and `sidebarSearch` (the sidebar search field's text, omitted while empty; it narrows only what the
+sidebar shows, never the selection or `session go`). reference.md lists every one with its exact shape. List windows with
 `ngtermctl window list --json`; each window also reports `autoFollowMs`, `sidebarVisible`, `geometry`
 (the live frame `{x, y, width, height, display}` in the units `window move`/`window resize` take — the
 read side, so record it then restore the exact frame), and `fullscreen`/`zoomed`/`minimized` (the read side

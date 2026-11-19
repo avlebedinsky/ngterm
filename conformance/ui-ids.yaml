@@ -147,3 +147,7 @@ rust:
   settings-shell-profile-hint: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
   settings-shell-profile-missing: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
   settings-shell-profile-live: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
+  sidebar-search: {status: uncovered, site: crates/ngterm-gpui/src/sidebar_search.rs}
+  sidebar-search-clear: {status: uncovered, site: crates/ngterm-gpui/src/sidebar_search.rs}
+  sidebar-search-empty: {status: uncovered, site: crates/ngterm-gpui/src/sidebar/view.rs}
+  sidebar-search-empty-clear: {status: uncovered, site: crates/ngterm-gpui/src/sidebar/view.rs}

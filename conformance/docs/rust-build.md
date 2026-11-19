@@ -121,6 +121,7 @@ share is asserted directly, with no capability.
 | `agterm-peer` |  | Rust-only: a Mac running upstream agterm is a remote origin too: `live tree HOST` and `live attach HOST ID` reach its `agtermctl zmx`, its panes attach through its own zmx, `agterm:HOST` and `ngterm:HOST` pin the app, and the listing and the title bar name what agterm lacks |
 | `web-worker-faults` |  | Rust-only, Linux: the HTML pages' engine runs in a worker process (`ngterm-web`) a launch can make misbehave (`launch(web_worker_fault=...)`): end before its hello, fail its read before it, stop reading after it, say hello only once its app is gone, answer an evaluation with a second hello, send a frame for a page the app closed, hold the answers to a page's requests until a page closes |
 | `shell-profiles` |  | Rust-only: a pane runs a shell profile (an absolute executable, its arguments and variables) in place of the login shell: Settings' `defaultShellProfile` for new sessions, a `shellProfiles` entry from the sidebar's + menu for one session, kept by the pane through splits, duplicates and restores |
+| `sidebar-search` |  | Rust-only: the sidebar's session search: a field over the sidebar (`focus_sidebar_search`, Search Sessions…) keeps the sessions whose name holds its text, case-insensitive, under their workspaces, a matching companion's parent as context; Return opens the first match, Escape empties it, and the tree reads its text back as `sidebarSearch` |
 | `window-geometry` | yes | window x/y position is settable through `window.move`, read back as `geometry` and restored |
 | `window-minimize` | yes | `window.minimize` and `window.new --minimized` take effect and read back as `minimized` |
 | `sidebar-min-width` | yes | `sidebar.width` narrows the sidebar down to the 160-point floor and reads that back |
@@ -165,7 +166,8 @@ never ahead of it. It claims (`CAPABILITIES` in `ngterm-gpui`'s `app.rs`, plus t
 - `kitty-clipboard`: on every OS, a program's Kitty clipboard protocol (OSC 5522), a Rust-only extension (below);
 - `agterm-peer`: on every OS, attaching an upstream agterm Mac's live sessions, a Rust-only extension (below);
 - `shell-profiles`: on every OS, a pane's shell profile in place of the login shell, a Rust-only extension (below);
-- `web-worker-faults`: on Linux, the faults a launch asks of the pages' engine worker, a Rust-only extension (below).
+- `web-worker-faults`: on Linux, the faults a launch asks of the pages' engine worker, a Rust-only extension (below);
+- `sidebar-search`: on every OS, the sidebar's session search, a Rust-only extension (below).
 
 It does not claim:
 
@@ -210,8 +212,8 @@ ghostty config sets `copy-on-select = false`.
 A Rust-only extension is a capability the reference does not claim, so its tests (`requires` on it) skip as
 `unsupported` on the reference and the reference discipline holds them to nothing there: the Rust CI validates them
 instead, with `--must-pass` on the capability in every job whose host can claim it.
-Today there are seven: `live-any-shell`, `agent-chat`, `pages-survive`, `kitty-clipboard`, `agterm-peer`,
-`shell-profiles` and `web-worker-faults`. `live-any-shell`: a Live pane runs its shell in its live session (the password database's login
+Today there are eight: `live-any-shell`, `agent-chat`, `pages-survive`, `kitty-clipboard`, `agterm-peer`,
+`shell-profiles`, `web-worker-faults` and `sidebar-search`. `live-any-shell`: a Live pane runs its shell in its live session (the password database's login
 shell, or the one ghostty `command` names in its place), zsh and fish as upstream, bash and PowerShell as well, each
 started with its shell integration the way libghostty starts a shell it spawns itself (`ZDOTDIR` for zsh, `ENV` in
 POSIX mode for bash, `XDG_DATA_DIRS` for fish, the integration's root merged in front of the pane's own value as
@@ -313,6 +315,17 @@ says hello only once its app hung up ends when the app quits during its start. I
 `tests/protocol/test_page_worker.py`, each on an instance of its own: the engine starts once per process. Windows' and
 macOS' pages run in the app's own WebView2 and WKWebView, with no worker, so the build claims it on Linux alone
 (`CAPABILITIES` in `ngterm-gpui`'s `app.rs`), and the three Linux legs run with `--must-pass web-worker-faults`.
+
+`sidebar-search`: upstream's sidebar has no search. This build puts a field over the sidebar, in the title bar (atop
+the sidebar's column while the toolbar is hidden), that narrows the rows to the sessions whose name holds its text,
+case-insensitive, within what the focus filter and the flagged view keep; a matching companion brings its parent as
+context, and a workspace name never matches (docs/development.md > Names, paths and differences from upstream). The
+keymap's `focus_sidebar_search` (Ctrl+Alt+Shift+F, the palette's and the View menu's Search Sessions…) gives the field
+the keyboard; Return opens the first match, Escape empties the field and gives the terminal the keyboard back. The tree
+reads its text back as `sidebarSearch`, after upstream's fields and omitted while empty. Its test is in
+`tests/ui/test_sidebar_search.py`, on the ids under `rust:` in `ui-ids.yaml`. The build claims it on every OS
+(`CAPABILITIES` in `ngterm-gpui`'s `app.rs`), and the three Linux legs run with `--must-pass sidebar-search`;
+Windows' `windows` job runs the test under the ratchet alone until it is green there.
 
 ### Commands
 

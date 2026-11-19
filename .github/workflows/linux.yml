@@ -476,7 +476,8 @@ jobs:
   #   Android chat view), `--must-pass kitty-clipboard` (a program's Rust-only Kitty clipboard protocol),
   #   `--must-pass agterm-peer` (the Rust-only attach of an upstream agterm Mac, whose tests reach a loopback sshd:
   #   openssh below), `--must-pass shell-profiles` (the Rust-only shell profiles a pane runs in place of the login
-  #   shell) and `--must-pass web-worker-faults` (the page worker's faults a launch asks for, Rust-only).
+  #   shell), `--must-pass web-worker-faults` (the page worker's faults a launch asks for, Rust-only) and
+  #   `--must-pass sidebar-search` (the Rust-only sidebar session search).
   # - coverage (the `-cov` jobs): the zsh entry again on the instrumented stage (run-linux.sh --coverage: the
   #   toolchain's llvm-tools read
   #   each shard's profiles against the staged programs), every layer. The report job joins the shards' lcov into the
@@ -682,7 +683,7 @@ jobs:
             coverage: false
             must-pass: >-
               --must-pass live-any-shell --must-pass agent-chat --must-pass kitty-clipboard --must-pass agterm-peer
-              --must-pass shell-profiles --must-pass web-worker-faults
+              --must-pass shell-profiles --must-pass web-worker-faults --must-pass sidebar-search
           - shell: zsh
             out: rust-linux-zsh
             stage: conformance-stage
@@ -690,7 +691,7 @@ jobs:
             must-pass: >-
               --must-pass live-sessions --must-pass live-any-shell --must-pass agent-chat --must-pass pages-survive
               --must-pass kitty-clipboard --must-pass agterm-peer --must-pass shell-profiles
-              --must-pass web-worker-faults
+              --must-pass web-worker-faults --must-pass sidebar-search
           - shell: fish
             out: rust-linux-fish
             stage: conformance-stage
@@ -698,7 +699,7 @@ jobs:
             must-pass: >-
               --must-pass live-sessions --must-pass live-any-shell --must-pass agent-chat --must-pass pages-survive
               --must-pass kitty-clipboard --must-pass agterm-peer --must-pass shell-profiles
-              --must-pass web-worker-faults
+              --must-pass web-worker-faults --must-pass sidebar-search
     container: *conformance-container
     env: *conformance-env
     steps: &conformance-steps

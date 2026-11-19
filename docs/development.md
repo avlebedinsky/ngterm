@@ -71,6 +71,17 @@ Linux build unless it names another OS.
   starts with Attach All, then New Session, then the sessions, so Enter on an untouched picker attaches all. Attach All
   shows whenever the machine lists a session; with all of them attached here it attaches nothing and shows no error.
   A typed session name still selects that session (`session_items` in `crates/ngterm-core/src/remote/attach.rs`).
+- Another extension beyond upstream, which has no sidebar search: a search field over the sidebar, in the title bar
+  (atop the sidebar's column while the toolbar is hidden), keeps the sessions whose shown name holds its text,
+  case-insensitive. Matches stay under their workspace rows, a workspace with none hides, and a matching companion
+  brings its parent along, dimmed, as context. A workspace name does not match: a short text would keep whole
+  workspaces. The search narrows what the focus filter and the flagged view keep. It never moves the selection, and
+  navigation does not follow it (the session steps, `session go`, Ctrl-Tab): text typed in the GUI does not change what
+  a script reaches. The field's Up and Down move its cursor among the matches instead. `focus_sidebar_search`
+  (Ctrl+Alt+Shift+F, Search Sessions… in the palette and the View menu) gives the field the keyboard and shows a
+  hidden sidebar. Return opens the cursor's match and gives its terminal the keyboard, the text kept. Escape empties
+  the field and gives the terminal the keyboard back. The text survives a hidden sidebar but not a restart. The tree
+  reads it back as `sidebarSearch`, Rust-only capability `sidebar-search` (`crates/ngterm-core/src/model/sidebar_search.rs`).
 - Another extension beyond upstream: attached rows come back after a relaunch. Each window's file lists them, and the
   next launch lists each machine once and attaches every row it still offers where it stood; a machine that does not
   answer is listed again on the reconnect schedule for up to a week, and a session gone there is named in a banner

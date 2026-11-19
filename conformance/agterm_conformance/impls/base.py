@@ -201,6 +201,10 @@ CAPABILITIES: Mapping[str, str] = {
     "shell-profiles": "Rust-only: a pane runs a shell profile (an absolute executable, its arguments and variables) "
     "in place of the login shell: Settings' `defaultShellProfile` for new sessions, a `shellProfiles` entry from the "
     "sidebar's + menu for one session, kept by the pane through splits, duplicates and restores",
+    "sidebar-search": "Rust-only: the sidebar's session search: a field over the sidebar (`focus_sidebar_search`, "
+    "Search Sessions…) keeps the sessions whose name holds its text, case-insensitive, under their workspaces, a "
+    "matching companion's parent as context; Return opens the first match, Escape empties it, and the tree reads its "
+    "text back as `sidebarSearch`",
     "window-geometry": "window x/y position is settable through `window.move`, read back as `geometry` and restored",
     "window-minimize": "`window.minimize` and `window.new --minimized` take effect and read back as `minimized`",
     "sidebar-min-width": "`sidebar.width` narrows the sidebar down to the 160-point floor and reads that back",

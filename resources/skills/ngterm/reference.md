@@ -359,7 +359,10 @@ reading the tree gets its version floor without a second round-trip; it is not d
 `window.list`, where a caller uses `version` instead), `indexUnsaved` (true while the last write of
 the window index failed, omitted otherwise; app-wide, and it clears on the next index write that lands),
 and `snapshotUnsaved` (true while the last save of this window's sessions failed, omitted otherwise; per
-window, and it clears on the next save of that window that lands).
+window, and it clears on the next save of that window that lands), and `sidebarSearch` (the text of the window's
+sidebar search field as typed, omitted while the field is empty; `tree` only and read-only: the field narrows the
+sidebar to the sessions whose name holds it, case-insensitive, but never changes the selection, `session go` or what a
+target resolves to).
 `idleMs` is live
 and grows while the window is idle, so it is on `tree` only, never `window.list`; `sidebarVisible` is on
 both; `sidebarMode`, `sidebarWidth`, `workspaceFilter`, `quickVisible`, `zoomedSurface`, the four
@@ -2081,7 +2084,8 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
 `open_directory`, `rename_session`, `duplicate_session`, `new_companion`, `duplicate_companion`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
 `decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_horizontal_split`, `toggle_scratch`, `toggle_sidebar`,
-`focus_workspace`, `toggle_workspace_filter`, `edit_flagged_sessions`, `edit_focused_workspaces`, `quick_terminal`,
+`focus_workspace`, `toggle_workspace_filter`, `edit_flagged_sessions`, `edit_focused_workspaces`,
+`focus_sidebar_search` (Search Sessions…, on Ctrl-Alt-Shift-F), `quick_terminal`,
 `session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
 `first_session`, `last_session`, `previous_attention_session`, `next_attention_session`,
 `previous_window`, `next_window`, `focus_left_pane`, `focus_right_pane`, `select_theme`). Editing the keymap from a terminal: open
