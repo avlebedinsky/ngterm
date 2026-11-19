@@ -124,9 +124,9 @@ on:
 permissions:
   contents: read
 
-# the suite is in the group, so a run of one suite does not cancel a run of the other
+# Separate each caller workflow and suite, so a manual run cannot cancel the release.
 concurrency:
-  group: ios-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.suite == 'full') && 'full' || 'smoke' }}
+  group: ios-${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.suite == 'full') && 'full' || 'smoke' }}
   cancel-in-progress: true
 
 env:

@@ -591,11 +591,11 @@ UI_SMOKE_TESTS=(
 # The smoke set as ui runs it. A test name that is not in mobile/ios/NgTermUITests stops the run: xcodebuild would run
 # no test for it and pass.
 action_smoke() {
-  local test classes
-  classes="$(ui_test_classes)"
-  ONLY=()
+  local test file
+  local -a ONLY=()
   for test in "${UI_SMOKE_TESTS[@]}"; do
-    if ! grep -qx "${test%/*}" <<<"$classes" || ! grep -qE "func ${test#*/}\(" "$IOS_DIR"/NgTermUITests/*.swift; then
+    if ! file="$(grep -lE "^[a-z ]*class ${test%/*}: XCTestCase" "$IOS_DIR"/NgTermUITests/*.swift)" ||
+      ! grep -qE "func ${test#*/}\(" "$file"; then
       die "build-ios.sh: the smoke test $test is not in mobile/ios/NgTermUITests"
     fi
     ONLY+=("-only-testing:NgTermUITests/$test")
