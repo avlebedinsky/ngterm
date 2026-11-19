@@ -575,12 +575,14 @@ fn the_top_level_filter_moves_a_selection_it_hides_to_its_top_level_session() {
 #[test]
 fn the_top_level_filter_keeps_a_selected_workspace_row() {
     let family = family();
-    let home = GotoTarget::Workspace(family.tree.workspaces[0].id);
-    let mut state = GotoState::opened(Some(home));
+    let empty = GotoTarget::Workspace(family.tree.workspaces[1].id);
+    let mut state = GotoState::opened(Some(empty));
     press(&mut state, &family.tree, &[text("t")]);
     let view = state.view(&family.tree.workspaces);
     assert_eq!(view.filter, Some(GotoFilter::TopLevel));
-    assert_eq!(view.selected_row().map(|row| row.target), Some(home));
+    assert_eq!(view.selected, Some(4));
+    assert_eq!(view.selected_row().map(|row| row.label.as_str()), Some("empty"));
+    assert_eq!(view.selected_row().map(|row| row.target), Some(empty));
 }
 
 #[test]
