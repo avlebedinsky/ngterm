@@ -17,6 +17,7 @@ pub mod deck;
 pub mod external_texture;
 pub mod folder_chooser;
 pub mod global_hotkey;
+pub mod goto;
 pub mod html_overlay;
 pub mod hud;
 pub mod input_source;

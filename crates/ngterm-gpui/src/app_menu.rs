@@ -123,6 +123,7 @@ const VIEW: &[&[Item]] = &[
 const NAVIGATE: &[&[Item]] = &[
     &[
         Item::Builtin(BuiltinAction::SessionPalette),
+        Item::Row(PaletteCommand::GoTo),
         Item::Builtin(BuiltinAction::CommandPalette),
         Item::Builtin(BuiltinAction::CustomCommandPalette),
         Item::Row(PaletteCommand::ShowAttention),

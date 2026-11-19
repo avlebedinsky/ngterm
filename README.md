@@ -92,6 +92,7 @@ download, see [release signing](docs/release-signing.md).
    | Scratch terminal | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> |
    | Dashboard | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> |
    | Jump to a session | <kbd>Ctrl</kbd>+<kbd>P</kbd> |
+   | Go to any pane or agent | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> |
    | Everything else, in the command palette | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> |
 
 2. **Connect your agents.** On first launch, ngterm offers to install the agent skill and the agent status hooks.
@@ -185,6 +186,7 @@ Build instructions, tests, architecture and internals are in the
 
 ngterm is a Rust port of [agterm](https://github.com/umputun/agterm) by Umputun, and it stands on
 [Ghostty](https://ghostty.org)'s terminal engine, [GPUI](https://gpui.rs) from Zed, and
-[herdr](https://github.com/herdrdev/herdr)'s session server. Third-party notices are in [NOTICE](NOTICE).
+[herdr](https://github.com/herdrdev/herdr)'s session server and session navigator, the source of the Go to window.
+Third-party notices are in [NOTICE](NOTICE).
 
 Released under the [MIT License](LICENSE).

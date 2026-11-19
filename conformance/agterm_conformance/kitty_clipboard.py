@@ -29,7 +29,7 @@ MARKER = "kitty-request"
 # A 2x2 red PNG, one of the representations a write carries.
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mP4z8AARAwQCgAf7gP9Y167WwAAAABJRU5ErkJggg=="
 # A chord neither the keymap's defaults nor Ghostty's take, bound to `paste_from_selection` by `PASTE_SELECTION`.
-PASTE_CHORD = "ctrl+shift+k"
+PASTE_CHORD = "ctrl+shift+f5"
 PASTE_SELECTION = f"keybind = {PASTE_CHORD}=paste_from_selection\n"
 PROBE = f"""\
 import os, sys, time

@@ -179,6 +179,7 @@ pub struct Core {
     pub(crate) restore: commands::relaunch::RestoreRuntime,
     /// The command palette ([`crate::palette`]).
     pub(crate) palette: crate::palette::PaletteRuntime,
+    pub(crate) goto: crate::goto::GotoRuntime,
     /// The live-session host and what the core keeps about its daemons ([`commands::live`]).
     pub(crate) live: commands::live::LiveRuntime,
     /// The presentation streams of attached viewers and their hub ([`crate::remote`]).
@@ -272,6 +273,7 @@ impl Core {
             debug_appearance: commands::debug::DebugAppearance::default(),
             restore: commands::relaunch::RestoreRuntime::default(),
             palette: crate::palette::PaletteRuntime::default(),
+            goto: crate::goto::GotoRuntime::default(),
             live: commands::live::LiveRuntime::default(),
             remote: crate::remote::PresentationRuntime::default(),
             agents: commands::agent::AgentRecords::default(),
@@ -631,6 +633,7 @@ impl Core {
         self.sync_pages();
         self.sync_replica_pages();
         self.settle_palette();
+        self.settle_goto();
         let pane_focused = self.observe_pane_focus();
         let (events, debounced, pending_closes, finalized) = if let Some(persistence) = self.persistence.as_mut() {
             let commit = persistence.commit(&mut self.library);

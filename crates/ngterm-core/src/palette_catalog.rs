@@ -179,6 +179,7 @@ pub enum PaletteCommand {
     ToggleWorkspaceCollapse,
     FocusLeftPane,
     FocusRightPane,
+    GoTo,
 }
 
 impl PaletteCommand {
@@ -400,6 +401,7 @@ impl PaletteCommand {
             Self::ToggleWorkspaceCollapse => "Collapse Workspace",
             Self::FocusLeftPane => "Focus Left Pane",
             Self::FocusRightPane => "Focus Right Pane",
+            Self::GoTo => "Go to…",
         }
     }
 
@@ -455,6 +457,7 @@ impl PaletteCommand {
             Self::AttachRemote => BuiltinAction::AttachRemote,
             Self::EditFlaggedSessions => BuiltinAction::EditFlaggedSessions,
             Self::EditFocusedWorkspaces => BuiltinAction::EditFocusedWorkspaces,
+            Self::GoTo => BuiltinAction::GoTo,
             Self::EditKeymap
             | Self::ReloadKeymap
             | Self::EditHooks
@@ -609,6 +612,7 @@ mod tests {
                 "Collapse Workspace",
                 "Focus Left Pane",
                 "Focus Right Pane",
+                "Go to…",
             ]
         );
         for command in PaletteCommand::all() {
@@ -618,7 +622,7 @@ mod tests {
 
     #[test]
     fn catalog_has_the_expected_static_command_count() {
-        assert_eq!(PaletteCommand::all().count(), 61);
+        assert_eq!(PaletteCommand::all().count(), 62);
     }
 
     #[test]
@@ -1070,6 +1074,7 @@ mod tests {
         );
         assert_eq!(C::ResetFontSize.builtin_action(), Some(BuiltinAction::ResetFontSize));
         assert_eq!(C::Dashboard.builtin_action(), Some(BuiltinAction::Dashboard));
+        assert_eq!(C::GoTo.builtin_action(), Some(BuiltinAction::GoTo));
         assert_eq!(C::ReopenRecent.builtin_action(), Some(BuiltinAction::ReopenRecent));
         assert_eq!(C::UndoClose.builtin_action(), Some(BuiltinAction::UndoClose));
         assert_eq!(

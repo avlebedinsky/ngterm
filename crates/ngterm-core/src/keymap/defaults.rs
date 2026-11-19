@@ -18,8 +18,9 @@ pub struct ShippedDefaults {
 }
 
 impl ShippedDefaults {
-    /// Upstream agterm's macOS table verbatim, vacating `toggle_horizontal_split`, `dashboard`, `attach_remote` and
-    /// `toggle_overlay` (each a default added after files could already bind its chord).
+    /// Upstream agterm's macOS table plus this build's ⇧⌘K for `go_to`, vacating `toggle_horizontal_split`,
+    /// `dashboard`, `attach_remote`, `toggle_overlay` and `go_to` (each a default added after files could already bind
+    /// its chord).
     #[must_use]
     pub fn upstream() -> Self {
         Self::from_table(
@@ -29,6 +30,7 @@ impl ShippedDefaults {
                 BuiltinAction::Dashboard,
                 BuiltinAction::AttachRemote,
                 BuiltinAction::ToggleOverlay,
+                BuiltinAction::GoTo,
             ],
         )
     }
@@ -94,6 +96,7 @@ fn upstream_table() -> Vec<(BuiltinAction, Chord)> {
         (A::ShowAttention, ctrl | shift, "i"),
         (A::Dashboard, cmd | shift, "g"),
         (A::AttachRemote, cmd | shift, "r"),
+        (A::GoTo, cmd | shift, "k"),
         (A::FocusLeftPane, cmd | opt, "left"),
         (A::FocusRightPane, cmd | opt, "right"),
         (A::PreviousSession, cmd | opt, "up"),

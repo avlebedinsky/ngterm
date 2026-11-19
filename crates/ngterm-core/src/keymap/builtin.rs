@@ -1,5 +1,5 @@
 //! The rebindable built-in actions (upstream's `BuiltinAction.swift`): each case's `keymap.conf` name, in
-//! upstream's declaration order, which `keymap.list` and the starter file keep.
+//! upstream's declaration order, then this build's own (`go_to`), which `keymap.list` and the starter file keep.
 
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
@@ -61,6 +61,7 @@ pub enum BuiltinAction {
     AttachRemote,
     EditFlaggedSessions,
     EditFocusedWorkspaces,
+    GoTo,
 }
 
 impl BuiltinAction {
@@ -70,7 +71,7 @@ impl BuiltinAction {
         self.into()
     }
 
-    /// Every action, in upstream's declaration order.
+    /// Every action, in upstream's declaration order, then this build's own.
     pub fn all() -> impl Iterator<Item = Self> {
         <Self as strum::IntoEnumIterator>::iter()
     }
@@ -87,16 +88,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fifty_four_actions_with_upstreams_names() {
+    fn upstreams_fifty_four_actions_then_go_to() {
         let names: Vec<&str> = BuiltinAction::all().map(BuiltinAction::name).collect();
-        assert_eq!(names.len(), 54);
+        assert_eq!(names.len(), 55);
         assert_eq!(names[0], "new_window");
         assert_eq!(
             names[11..14],
             ["duplicate_session", "new_companion", "duplicate_companion"]
         );
         assert_eq!(names[51], "attach_remote");
-        assert_eq!(names[52..], ["edit_flagged_sessions", "edit_focused_workspaces"]);
+        assert_eq!(
+            names[52..],
+            ["edit_flagged_sessions", "edit_focused_workspaces", "go_to"]
+        );
         assert_eq!(BuiltinAction::ToggleOverlay.name(), "toggle_overlay");
         assert_eq!(
             names[25], "toggle_overlay",

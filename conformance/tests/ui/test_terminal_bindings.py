@@ -20,7 +20,7 @@ from agterm_conformance.ghostty_config import configured
 from agterm_conformance.match import assert_ok, find_session
 from agterm_conformance.wait import wait_until
 
-CLEAR = "ctrl+shift+k"
+CLEAR = "ctrl+shift+b"
 RESET = "ctrl+shift+u"
 WRITE_SCREEN = "ctrl+shift+l"
 SELECT_ALL = "ctrl+shift+y"

@@ -57,6 +57,7 @@ fn linux_table() -> Vec<(BuiltinAction, Chord)> {
         (A::ShowAttention, chord(CTRL_SHIFT, "i")),
         (A::Dashboard, chord(CTRL_SHIFT, "m")),
         (A::AttachRemote, chord(CTRL_SHIFT, "r")),
+        (A::GoTo, chord(CTRL_SHIFT, "k")),
         (A::FocusLeftPane, chord(CTRL_SHIFT, "left")),
         (A::FocusRightPane, chord(CTRL_SHIFT, "right")),
         (A::PreviousSession, chord(CTRL_SHIFT, "up")),
@@ -66,9 +67,9 @@ fn linux_table() -> Vec<(BuiltinAction, Chord)> {
     ]
 }
 
-/// The defaults added after the table's first letters (or fixed keys before), plus the `attach_remote` and
-/// `toggle_overlay` exceptions.
-fn linux_vacated() -> [BuiltinAction; 16] {
+/// The defaults added after the table's first letters (or fixed keys before), plus the `attach_remote`,
+/// `toggle_overlay` and `go_to` exceptions.
+fn linux_vacated() -> [BuiltinAction; 17] {
     use BuiltinAction as A;
     [
         A::ReopenRecent,
@@ -87,6 +88,7 @@ fn linux_vacated() -> [BuiltinAction; 16] {
         A::NextAttentionSession,
         A::AttachRemote,
         A::ToggleOverlay,
+        A::GoTo,
     ]
 }
 
@@ -131,7 +133,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(seen.len(), 32);
+        assert_eq!(seen.len(), 33);
     }
 
     #[test]
@@ -266,6 +268,19 @@ mod tests {
             Some(&Chord::new(CTRL_ALT_SHIFT, "j"))
         );
         assert!(keymap.commands()[0].shortcut.is_empty());
+    }
+
+    #[test]
+    fn go_to_ships_on_ctrl_shift_k_and_gives_it_up_to_an_existing_binding() {
+        let go_to = |keymap: &crate::keymap::Keymap| keymap.equivalent(BuiltinAction::GoTo).map(Chord::display_string);
+        assert_eq!(
+            go_to(&parse_keymap("", &linux_defaults()).0).as_deref(),
+            Some("ctrl+shift+k")
+        );
+        let (keymap, diagnostics) = parse_keymap("command \"Clear\" ctrl+shift+k clear", &linux_defaults());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(keymap.commands()[0].shortcut, "ctrl+shift+k");
+        assert_eq!(go_to(&keymap), None);
     }
 
     #[test]

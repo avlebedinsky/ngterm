@@ -147,3 +147,11 @@ rust:
   settings-shell-profile-hint: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
   settings-shell-profile-missing: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
   settings-shell-profile-live: {status: uncovered, site: crates/ngterm-gpui/src/settings/general.rs}
+  go-to: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-scrim: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-search: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-count: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-row-{item}: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-empty: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-detail: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}
+  go-to-hints: {status: uncovered, site: crates/ngterm-gpui/src/goto.rs}

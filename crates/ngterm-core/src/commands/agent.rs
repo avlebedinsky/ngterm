@@ -560,6 +560,10 @@ impl Core {
         Some(present)
     }
 
+    pub(crate) fn pane_agent(&self, identity: Uuid) -> Option<AgentKind> {
+        self.agents.by_pane.get(&identity).map(|record| record.agent)
+    }
+
     /// How many panes hold an agent record (tests).
     #[cfg(test)]
     pub(crate) fn agent_record_count(&self) -> usize {

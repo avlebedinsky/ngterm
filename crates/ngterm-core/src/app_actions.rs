@@ -308,6 +308,7 @@ impl Core {
             | BuiltinAction::SelectTheme
             | BuiltinAction::EditFlaggedSessions
             | BuiltinAction::EditFocusedWorkspaces
+            | BuiltinAction::GoTo
             | BuiltinAction::AttachRemote
             | BuiltinAction::ReopenRecent
             | BuiltinAction::IncreaseFontSize
@@ -423,6 +424,10 @@ impl Core {
             }
             BuiltinAction::EditFocusedWorkspaces => {
                 self.open_palette(window, PaletteMode::FocusEditor);
+                None
+            }
+            BuiltinAction::GoTo => {
+                self.toggle_goto(window);
                 None
             }
             // File ▸ Attach Remote runs in the core: its pickers are the window's modal slot ([`crate::remote`])

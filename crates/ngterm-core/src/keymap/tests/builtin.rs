@@ -51,10 +51,11 @@ fn names_are_the_kitty_style_names() {
         (A::ToggleOverlay, "toggle_overlay"),
         (A::EditFlaggedSessions, "edit_flagged_sessions"),
         (A::EditFocusedWorkspaces, "edit_focused_workspaces"),
+        (A::GoTo, "go_to"),
     ] {
         assert_eq!(action.name(), name);
     }
-    assert_eq!(BuiltinAction::all().count(), 54);
+    assert_eq!(BuiltinAction::all().count(), 55);
 }
 
 #[test]
@@ -151,8 +152,9 @@ fn the_default_chord_matches_the_shipped_table() {
         (A::AttachRemote, Some(chord(CMD | SHIFT, "r"))),
         (A::EditFlaggedSessions, None),
         (A::EditFocusedWorkspaces, None),
+        (A::GoTo, Some(chord(CMD | SHIFT, "k"))),
     ];
-    assert_eq!(expected.len(), 54);
+    assert_eq!(expected.len(), 55);
     for (action, chord) in expected {
         assert_eq!(default_chord(action), chord, "{}", action.name());
     }
@@ -162,7 +164,8 @@ fn the_default_chord_matches_the_shipped_table() {
             A::ToggleHorizontalSplit,
             A::Dashboard,
             A::AttachRemote,
-            A::ToggleOverlay
+            A::ToggleOverlay,
+            A::GoTo
         ]
     );
 }

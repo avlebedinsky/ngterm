@@ -1920,6 +1920,7 @@ fn a_control_gone_with_its_page_leaves_the_keyboard_on_the_settings_popup(cx: &m
     assert!(s.terminal_focused());
 }
 
+mod goto;
 mod overlay_visibility;
 
 #[gpui_kit::test]

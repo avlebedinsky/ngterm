@@ -571,3 +571,12 @@ exemptions:
     the suite's no-network constraints
   ui:remote-unknown: a remote window's strip for actions whose outcome it could not learn, exempted with
     ui:remote-connection
+  ui:go-to: the Rust build's Go to window, which agterm has no reference for; ngterm-gpui's unit tests drive its rows,
+    keys and clicks (src/goto/tests.rs, src/window/tests/goto.rs)
+  ui:go-to-scrim: the Go to window's scrim, exempted with ui:go-to
+  ui:go-to-search: the Go to window's search line, exempted with ui:go-to
+  ui:go-to-count: the Go to window's pane count, exempted with ui:go-to
+  ui:go-to-row-{item}: a Go to window row, exempted with ui:go-to
+  ui:go-to-empty: the Go to window's no-match line, exempted with ui:go-to
+  ui:go-to-detail: the Go to window's selected-row line, exempted with ui:go-to
+  ui:go-to-hints: the Go to window's key hints, exempted with ui:go-to

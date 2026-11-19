@@ -6,9 +6,9 @@
 //! The window's content is a column: the title bar (`titlebar.rs`), then the sidebar's place (Task 19) beside the
 //! deck, all on the chrome's background (`chrome.rs`); a window the client decorates gets resize handles along its
 //! free edges. Over it sit the window's modal layers ([`Layer`]), in the GTK build's order: the scrollback search bar, the
-//! Settings popup, the GUI ask, the native picker, the command palette, the Ctrl-Tab switcher and the title bar's
-//! popovers; each attaches its view to its layer ([`WindowView::set_layer`]), drawn over the whole window while
-//! attached. The window's alerts ([`crate::modal`]) come above everything.
+//! Settings popup, the GUI ask, the native picker, the command palette, the Go to window, the Ctrl-Tab switcher and
+//! the title bar's popovers; each attaches its view to its layer ([`WindowView::set_layer`]), drawn over the whole
+//! window while attached. The window's alerts ([`crate::modal`]) come above everything.
 //!
 //! The Settings popup ([`crate::settings`]) comes up over the window Settings… was asked from: centered over a dimmed
 //! layer that takes every click, a click outside the panel closing it as Escape and its close button do. It takes the
@@ -48,6 +48,7 @@ use uuid::Uuid;
 
 use crate::ask_dialog::{AskDialog, AskOpening, AskOwner};
 use crate::deck::{AnchorTarget, Deck};
+use crate::goto::GotoPanel;
 use crate::keymap_dispatch::KeyOrigin;
 use crate::modal::Metrics;
 use crate::palette::{Palette, PaletteView};
@@ -108,6 +109,7 @@ pub enum Layer {
     Ask,
     Picker,
     Palette,
+    GoTo,
     Switcher,
     Popover,
 }
@@ -224,6 +226,7 @@ pub struct WindowView {
     picker: Option<Entity<Picker>>,
     /// The command palette while this window draws it.
     palette: Option<Entity<Palette>>,
+    goto: Option<Entity<GotoPanel>>,
     /// The Settings popup while it is up, with the subscriptions that take it down when it asks and give it the
     /// keyboard back when what held it went away.
     settings: Option<(Entity<SettingsView>, [Subscription; 2])>,
@@ -361,6 +364,7 @@ impl WindowView {
             ask: None,
             picker: None,
             palette: None,
+            goto: None,
             settings: None,
             search,
             switcher,
@@ -573,6 +577,42 @@ impl WindowView {
         self.palette = Some(palette);
     }
 
+    fn sync_goto(
+        &mut self,
+        core: &Core,
+        place: (f64, Metrics),
+        refocus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = core.goto_view(self.id) else {
+            if self.goto.take().is_some() {
+                self.set_layer(Layer::GoTo, None, cx);
+            }
+            return;
+        };
+        let glyphs = crate::goto::glyphs(&view, core.settings());
+        if let Some(goto) = self.goto.as_ref() {
+            goto.update(cx, |goto, cx| goto.refresh((view, glyphs), place, cx));
+            if refocus {
+                let focus = goto.read(cx).focus_handle();
+                window.focus(&focus, cx);
+            }
+            return;
+        }
+        let sink = crate::goto::sink(self.id, &self.poster);
+        let goto = cx.new(|cx| GotoPanel::new((view, glyphs), place, sink, cx));
+        let focus = goto.read(cx).focus_handle();
+        window.focus(&focus, cx);
+        self.set_layer(Layer::GoTo, Some(goto.clone().into()), cx);
+        self.goto = Some(goto);
+    }
+
+    #[must_use]
+    pub fn goto(&self) -> Option<&Entity<GotoPanel>> {
+        self.goto.as_ref()
+    }
+
     /// The window's native picker while one is up.
     #[must_use]
     pub fn picker(&self) -> Option<&Entity<Picker>> {
@@ -665,12 +705,19 @@ impl WindowView {
             // the popup keeps every key, Ctrl+Tab's too
             return false;
         }
+        let focused = |handle: FocusHandle, window: &Window| handle.is_focused(window);
+        if let Some(goto) = self
+            .goto
+            .clone()
+            .filter(|goto| focused(goto.read(cx).focus_handle(), window))
+        {
+            return goto_takes(&goto, stroke, cx);
+        }
         if let Some(key) = crate::session_switcher::switch_key(stroke)
             && self.switcher.update(cx, |switcher, cx| switcher.press(key, cx))
         {
             return true;
         }
-        let focused = |handle: FocusHandle, window: &Window| handle.is_focused(window);
         if let Some(picker) = self
             .picker
             .clone()
@@ -858,6 +905,7 @@ impl WindowView {
             .map(|picker| picker.read(cx).focus_handle(cx))
             .or_else(|| self.ask.as_ref().map(|ask| ask.dialog.read(cx).focus_target(cx)))
             .or_else(|| self.palette.as_ref().map(|palette| palette.read(cx).focus_handle(cx)))
+            .or_else(|| self.goto.as_ref().map(|goto| goto.read(cx).focus_handle()))
             .or_else(|| {
                 let popovers = self.popovers.read(cx);
                 popovers.is_open().then(|| popovers.focus_handle().clone())
@@ -907,7 +955,7 @@ impl WindowView {
     pub fn sync(&mut self, core: &mut Core, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let id = self.id;
         crate::html_overlay::set_window_scale(id, f64::from(window.scale_factor()));
-        let dialog = core.modal_pending(id) || core.palette_holds(id);
+        let dialog = core.modal_pending(id) || core.palette_holds(id) || core.goto_holds(id);
         let alert = crate::modal::alert_open(window.window_handle(), cx);
         let alert_closed = std::mem::replace(&mut self.alert_up, alert) && !alert;
         self.sync_modals(core, alert_closed, window, cx);
@@ -954,6 +1002,7 @@ impl WindowView {
         self.sync_ask(core, refocus && !palette, window, cx);
         self.sync_picker(core, place, refocus && !palette, window, cx);
         self.sync_palette(core, place, refocus, window, cx);
+        self.sync_goto(core, place, refocus, window, cx);
         self.popovers.update(cx, |popovers, cx| popovers.sync(core, cx));
         self.sync_popover_layer(cx);
     }
@@ -1140,6 +1189,18 @@ fn render_settings(view: &AnyView, window: &Window, cx: &Context<WindowView>) ->
         )
         .child(div().w(panel.width).h(panel.height).child(view.clone()))
         .into_any_element()
+}
+
+fn goto_takes(goto: &Entity<GotoPanel>, stroke: &KeyStroke, cx: &App) -> bool {
+    if stroke.key.is_modifier()
+        || crate::keymap_dispatch::menu_action(stroke) == Some(ngterm_core::keymap::BuiltinAction::GoTo)
+    {
+        return false;
+    }
+    if let Some(key) = crate::goto::goto_key(stroke) {
+        goto.read(cx).key(key);
+    }
+    true
 }
 
 /// The window's own keys (module docs), which the key monitor runs first: whether the ngterm window `window` took the
