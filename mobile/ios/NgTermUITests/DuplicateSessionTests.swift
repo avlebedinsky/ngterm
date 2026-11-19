@@ -21,6 +21,8 @@ internal final class DuplicateSessionTests: XCTestCase {
     private static let windowWait: TimeInterval = 10
     // how often closing the session windows is tried, at most
     private static let closeTries = 6
+    // the identifiers of the elements that only the app's own windows show: the machines and a session
+    private static let contentMarks = ["session-title", "add-machine"]
 
     @MainActor
     private static func any(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
@@ -77,13 +79,33 @@ internal final class DuplicateSessionTests: XCTestCase {
     // keyboard has one more window with nothing in it (UIKit's, which hosts the keyboard), which is not counted
     @MainActor
     private static func contentWindows(of app: XCUIApplication) -> XCUIElementQuery {
-        app.windows.containing(NSPredicate(format: "identifier IN %@", ["session-title", "add-machine"]))
+        app.windows.containing(NSPredicate(format: "identifier IN %@", contentMarks))
     }
 
-    // waits until the app has `count` windows of its own
+    // the app's own windows under `node`, as `contentWindows(of:)` finds them, from a snapshot
+    @MainActor
+    private static func contentWindowCount(under node: any XCUIElementSnapshot) -> Int {
+        let children = node.children
+        let isOwn = node.elementType == .window && children.contains { shows(contentMarks, under: $0) }
+        return (isOwn ? 1 : 0) + children.reduce(0) { $0 + contentWindowCount(under: $1) }
+    }
+
+    // whether `node` or an element under it has one of the `identifiers`
+    @MainActor
+    private static func shows(_ identifiers: [String], under node: any XCUIElementSnapshot) -> Bool {
+        identifiers.contains(node.identifier) || node.children.contains { shows(identifiers, under: $0) }
+    }
+
+    // waits until the app has `count` windows of its own, from the snapshots that completed
     @MainActor
     private static func expectWindows(_ count: Int, in app: XCUIApplication) {
-        ScreenRead.expect("not \(count) windows", lasting: windowWait) { contentWindows(of: app).count == count }
+        ScreenRead.expect("not \(count) windows", lasting: windowWait) {
+            // a snapshot that fails shows no windows: it tells nothing
+            guard let snapshot = try? app.snapshot() else {
+                return .failed
+            }
+            return ScreenRead.Answer(contentWindowCount(under: snapshot) == count)
+        }
     }
 
     // closes the session windows: Detach in the More of a session window in front, or, with the app's own window in
