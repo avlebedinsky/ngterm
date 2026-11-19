@@ -218,7 +218,12 @@ internal final class LogsOnAMachineTests: XCTestCase {
         let page = app.descendants(matching: .any)["public-key-page"].firstMatch
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")
-        let closed = LogsPage.tap(done, until: { !page.exists }, in: app, "the public key page stayed after Done")
+        let closed = LogsPage.tap(
+            done,
+            until: { ScreenRead.isGone(page) },
+            in: app,
+            "the public key page stayed after Done"
+        )
         LogsPage.closeLateOffer(unless: closed, in: app)
     }
 

@@ -139,9 +139,9 @@ internal final class LogsTests: XCTestCase {
         // came at no fixed time, and took the next tap
         let done = app.buttons["settings-done"]
         let back = app.buttons["BackButton"].firstMatch
-        let closedOnBack = LogsPage.tap(back, until: { done.exists }, in: app, "no Settings' Done")
+        let closedOnBack = LogsPage.tap(back, until: { ScreenRead.isShown(done) }, in: app, "no Settings' Done")
         let settings = app.navigationBars["Settings"]
-        let closedOnDone = LogsPage.tap(done, until: { !settings.exists }, in: app, "Settings stayed")
+        let closedOnDone = LogsPage.tap(done, until: { ScreenRead.isGone(settings) }, in: app, "Settings stayed")
         LogsPage.closeLateOffer(unless: closedOnBack || closedOnDone, in: app)
     }
 
@@ -153,7 +153,7 @@ internal final class LogsTests: XCTestCase {
         FakeApp.expectRow("split", reads: "Connected", in: app)
         let machine = app.descendants(matching: .any)["machine-row-split"].firstMatch
         let row = app.descendants(matching: .any)["session-work"].firstMatch
-        LogsPage.tap(machine, until: { row.exists }, in: app, "no row for the session work")
+        LogsPage.tap(machine, until: { ScreenRead.isShown(row) }, in: app, "no row for the session work")
         row.tap()
         let prompt = app.descendants(matching: .any)["chat-prompt"].firstMatch
         FakeApp.expect(prompt, "the prompt field")

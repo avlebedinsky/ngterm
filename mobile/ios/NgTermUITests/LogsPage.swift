@@ -83,28 +83,41 @@ internal enum LogsPage {
     /// in Passwords after the import (``KeyPassphraseOfferTests`` now fails if it does). The close stays as a guard:
     /// the offer came at no fixed time (on a loaded simulator 11 s after the import, over Settings), and a tap while
     /// it shows or closes reaches only the offer. The tap is then tried again, while `control` is on screen.
-    /// `isDone` reads the app on each poll. An offer that shows when `isDone` holds is closed before the return,
+    /// `isDone` reads the app on each poll, and only a read that completed tells whether it holds: a tap is tried
+    /// again only when one told it does not. An offer that shows when `isDone` holds is closed before the return,
     /// because it takes the next tap. Returns true when it closed an offer.
     @MainActor
     @discardableResult
     internal static func tap(
         _ control: XCUIElement,
-        until isDone: @escaping () -> Bool,
+        until isDone: @escaping () -> ScreenRead.Answer,
         in app: XCUIApplication,
         _ what: String
     ) -> Bool {
         let offer = app.buttons[offerDismiss]
         var closed = false
-        for _ in 0..<tries where !isDone() {
+        for _ in 0..<tries where ScreenRead.now(isDone) == .doesNotHold {
             closed = closeOffer(in: app, within: 0) || closed
             // a control that went off screen did its work: wait for it
-            if !isDone(), control.exists, control.isHittable {
+            if ScreenRead.now(isDone) == .doesNotHold, control.exists, control.isHittable {
                 control.tap()
             }
-            ScreenRead.step(lasting: wait).poll { isDone() ? .holds : ScreenRead.isShown(offer) }
+            ScreenRead.step(lasting: wait).poll {
+                switch isDone() {
+                case .holds:
+                    .holds
+
+                case .failed:
+                    .failed
+
+                case .doesNotHold:
+                    ScreenRead.isShown(offer)
+                }
+            }
         }
         closed = closeOffer(in: app, within: 0) || closed
-        XCTAssertTrue(isDone(), what)
+        let done = ScreenRead.now(isDone)
+        XCTAssertEqual(done, .holds, done == .failed ? "\(what): no read completed" : what)
         return closed
     }
 
