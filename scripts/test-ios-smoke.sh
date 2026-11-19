@@ -59,12 +59,21 @@ check() {
 }
 full="UI -retry-tests-on-failure -test-iterations 2"
 smoke="$full$(run expected)"
+status=0
+out="$(run ui)" || status=$?
+check "smoke ui succeeds" test "$status" -eq 0
 check "smoke ui runs the configured set, then the full UI plan" \
-  test "$(run ui)" = "$smoke"$'\n'"$full"
+  test "$out" = "$smoke"$'\n'"$full"
+status=0
+out="$(run test)" || status=$?
+check "smoke test succeeds" test "$status" -eq 0
 check "smoke test runs the configured set, then the Unit and full UI plans" \
-  test "$(run test)" = "$smoke"$'\nUnit\n'"$full"
+  test "$out" = "$smoke"$'\nUnit\n'"$full"
+status=0
+out="$(run filter)" || status=$?
+check "smoke preserves an existing UI filter and succeeds" test "$status" -eq 0
 check "smoke preserves an existing UI filter" \
-  test "$(run filter)" = "$smoke"$'\n'"$full -only-testing:NgTermUITests/SettingsTests"
+  test "$out" = "$smoke"$'\n'"$full -only-testing:NgTermUITests/SettingsTests"
 for invalid in wrong-class missing-class missing-method; do
   status=0
   run "$invalid" >"$work/out" 2>"$work/err" || status=$?
