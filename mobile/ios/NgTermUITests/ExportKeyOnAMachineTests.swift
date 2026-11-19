@@ -206,7 +206,7 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        ScreenRead.expect("the machine never read Connected", lasting: Self.connectWait) { connected.exists }
+        FakeApp.expect(connected, "Connected on the machine's row", lasting: Self.connectWait)
     }
 
     // the one saved file is an OpenSSH private key under a cipher, never in the clear; only its cipher is reported

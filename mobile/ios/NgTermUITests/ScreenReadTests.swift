@@ -50,6 +50,17 @@ internal final class ScreenReadTests: XCTestCase {
         XCTAssertEqual(calls, 2)
     }
 
+    @MainActor
+    internal func testAReadNowIsTheFirstReadThatCompleted() {
+        var calls = 0
+        let holds = ScreenRead.holdsNow {
+            calls += 1
+            return calls <= 2 ? .failed : .doesNotHold
+        }
+        XCTAssertFalse(holds)
+        XCTAssertEqual(calls, 3)
+    }
+
     internal func testOnlyAReadThatMatchedNothingReadsAbsent() {
         let noMatch = NSError(domain: Self.uiTestingErrors, code: Self.noMatches)
         XCTAssertEqual(ScreenRead.reading(after: noMatch), .absent)
@@ -73,7 +84,18 @@ internal final class ScreenReadTests: XCTestCase {
         XCTAssertEqual(ScreenRead.isGone(missing), .holds)
         XCTAssertEqual(ScreenRead.shows(missing) { _ in true }, .doesNotHold)
         XCTAssertEqual(ScreenRead.reading(app.windows.element(boundBy: 99)), .absent)
+        XCTAssertEqual(ScreenRead.isShown(add), .holds)
+        XCTAssertEqual(ScreenRead.isShown(missing), .doesNotHold)
+        XCTAssertEqual(ScreenRead.isShown(app.windows.element(boundBy: 0)), .holds)
+        XCTAssertEqual(ScreenRead.isShown(app.windows.element(boundBy: 99)), .doesNotHold)
+        // a query that matches more than one element shows, as `exists` tells, though a snapshot of it fails
+        let many = app.descendants(matching: .any).element
+        XCTAssertTrue(many.exists)
+        XCTAssertThrowsError(try many.snapshot())
+        XCTAssertEqual(ScreenRead.isShown(many), .holds)
+        XCTAssertEqual(ScreenRead.isGone(many), .doesNotHold)
         FakeApp.expectGone(missing, "an element that never showed")
+        FakeApp.expect(add, "an element that shows")
     }
 
     // a read that fails says that the element does not exist, as a read that found none does: only the read of the
@@ -84,6 +106,7 @@ internal final class ScreenReadTests: XCTestCase {
         XCTAssertFalse(elsewhere.exists)
         XCTAssertEqual(ScreenRead.reading(elsewhere), .failed)
         XCTAssertEqual(ScreenRead.isGone(elsewhere), .failed)
+        XCTAssertEqual(ScreenRead.isShown(elsewhere), .failed)
         XCTAssertEqual(ScreenRead.shows(elsewhere) { _ in true }, .failed)
         let polled = ScreenRead.Wait(reads: 1, beat: 0, limit: 1).poll { ScreenRead.isGone(elsewhere) }
         XCTAssertEqual(polled.reads, 0)

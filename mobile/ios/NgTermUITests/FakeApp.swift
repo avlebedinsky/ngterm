@@ -102,7 +102,7 @@ internal enum FakeApp {
     /// Waits for `element` as ``expect(_:_:)`` does, and for `lasting` seconds at least.
     @MainActor
     internal static func expect(_ element: XCUIElement, _ what: String, lasting: TimeInterval) {
-        ScreenRead.expect("no \(what)", lasting: lasting) { element.exists }
+        ScreenRead.expect("no \(what)", lasting: lasting) { ScreenRead.isShown(element) }
     }
 
     /// Waits until `element` has gone, as ``expect(_:_:)`` waits for one to come.

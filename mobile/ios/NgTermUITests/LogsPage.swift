@@ -101,7 +101,7 @@ internal enum LogsPage {
             if !isDone(), control.exists, control.isHittable {
                 control.tap()
             }
-            ScreenRead.step(lasting: wait).poll { ScreenRead.Answer(isDone() || offer.exists) }
+            ScreenRead.step(lasting: wait).poll { isDone() ? .holds : ScreenRead.isShown(offer) }
         }
         closed = closeOffer(in: app, within: 0) || closed
         XCTAssertTrue(isDone(), what)

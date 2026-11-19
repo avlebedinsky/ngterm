@@ -218,7 +218,7 @@ internal final class SensitiveClipOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(Self.label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        ScreenRead.expect("the machine never read Connected", lasting: Self.wait) { connected.exists }
+        FakeApp.expect(connected, "Connected on the machine's row", lasting: Self.wait)
     }
 
     // New named session on the machine, landing in its terminal; the first attach asks about notifying: not now

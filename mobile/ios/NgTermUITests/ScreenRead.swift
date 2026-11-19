@@ -118,16 +118,29 @@ internal enum ScreenRead {
     }
 
     /// Waits until `done` holds, as the expect of an answer does, each read taken as complete.
+    ///
+    /// Only for a condition whose read always completes (a file, the clipboard). A read of the screen fails at times,
+    /// and `exists` is false then: read an element with ``isShown(_:)`` or ``isGone(_:)``.
     @MainActor
     internal static func expect(_ failure: String, lasting: TimeInterval, until done: () -> Bool) {
         expect(failure, lasting: lasting) { Answer(done()) }
     }
 
+    /// Whether `done` holds, from the next read that completes: a read that fails is done again, up to the limit.
+    ///
+    /// Before a step is done again (a tap, a press), as the step can take after the last read of its wait.
+    @MainActor
+    internal static func holdsNow(_ done: () -> Answer) -> Bool {
+        Wait(reads: 1).poll(until: done).held
+    }
+
     /// Reads the screen once for `element`, from a whole snapshot of it.
+    ///
+    /// The read is of the first match: a query that matches more than one element shows, as `exists` tells.
     @MainActor
     internal static func reading(_ element: XCUIElement) -> Reading {
         do {
-            _ = try element.snapshot()
+            _ = try element.firstMatch.snapshot()
             return .shown
         } catch {
             return reading(after: error)
@@ -138,6 +151,21 @@ internal enum ScreenRead {
     internal static func reading(after error: any Error) -> Reading {
         let nsError = error as NSError
         return nsError.domain == uiTestingErrors && nsError.code == noMatches ? .absent : .failed
+    }
+
+    /// Whether `element` shows, from one read of the screen.
+    @MainActor
+    internal static func isShown(_ element: XCUIElement) -> Answer {
+        switch reading(element) {
+        case .absent:
+            .doesNotHold
+
+        case .failed:
+            .failed
+
+        case .shown:
+            .holds
+        }
     }
 
     /// Whether `element` has gone, from one read of the screen.

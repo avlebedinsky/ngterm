@@ -106,7 +106,7 @@ internal final class DuplicateSessionTests: XCTestCase {
             } else {
                 front.buttons["session-menu"].tap()
                 let detach = app.buttons["session-detach"]
-                let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.Answer(detach.exists) }
+                let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.isShown(detach) }
                 guard shown.held else {
                     isMoreMissed = true
                     closeMenu(in: app)
@@ -128,7 +128,7 @@ internal final class DuplicateSessionTests: XCTestCase {
         for name in names where any("session-\(name)", in: app).exists {
             any("session-\(name)", in: app).press(forDuration: longPress)
             let detach = app.buttons["Detach"]
-            let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.Answer(detach.exists) }
+            let shown = ScreenRead.step(lasting: windowWait).poll { ScreenRead.isShown(detach) }
             if shown.held {
                 detach.tap()
                 return true

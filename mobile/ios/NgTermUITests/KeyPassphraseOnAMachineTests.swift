@@ -123,7 +123,7 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
         trust.tap()
         let row = NSPredicate(format: "identifier == %@ AND label CONTAINS 'Connected'", "machine-row-\(Self.label)")
         let connected = app.descendants(matching: .any).matching(row).firstMatch
-        ScreenRead.expect("the machine never read Connected", lasting: Self.connectWait) { connected.exists }
+        FakeApp.expect(connected, "Connected on the machine's row", lasting: Self.connectWait)
     }
 
     // Settings' Export private key past the owner check, saved under a passphrase through the system's file screen
