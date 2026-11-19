@@ -1193,7 +1193,12 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   fails boots no simulator and counts no tests. Before a simulator boots, a wallpaper cache over
   `BUILD_IOS_SIM_CACHE_MB` (default 1024) is removed while that simulator is shut down (`scripts/lib/ios-sim-cache.sh`):
   the iOS 27 simulator adds up to about 350 MB of it at each boot and never removes it. The UI
-  tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). A UI
+  tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). The
+  app they launch has its UIKit view animations off (`-ngterm-no-animations`, Debug builds only): before each action
+  XCTest waits until the app's view animations end, and on the iPad simulator a system animation sometimes never
+  reports its end, so each action then waited 2 x 60 s. For the same reason a UI test turns the iPad's app window
+  on its side only when it is upright, and one turn at a time: a second turn while the first still moved left a
+  SpringBoard rotation that never ended, and every later test waited at each action. A UI
   test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
   terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry
   is named after the run with what failed it, red runs included: as a warning when its first attempt failed on those

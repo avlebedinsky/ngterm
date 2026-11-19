@@ -12,6 +12,13 @@ import UserNotifications
 /// (in the grace too).
 @MainActor
 internal final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// The launch argument that turns off UIKit's view animations in a Debug build, for the UI tests.
+    ///
+    /// Before each action, XCTest waits until the app's view animations have stopped. On the iPad simulator a
+    /// system animation sometimes never reports its end (UIKit's in-process animation manager gets no more
+    /// frames), and then each action waits 2 x 60 s. Without view animations, XCTest finds none to wait for.
+    internal static let stillArgument = "-ngterm-no-animations"
+
     /// Which core the app runs on, and the graph over it.
     internal let core: CoreChoice
     private let life: AppLifecycle
@@ -19,6 +26,11 @@ internal final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     private let scenes: SceneWatcher
 
     override internal init() {
+        #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains(Self.stillArgument) {
+                UIView.setAnimationsEnabled(false)
+            }
+        #endif
         let choice = CoreChoice(arguments: ProcessInfo.processInfo.arguments)
         let refresh = BackgroundRefresh()
         let made = AppLifecycle(graph: choice.graph, grace: SystemGrace(), scheduler: refresh)

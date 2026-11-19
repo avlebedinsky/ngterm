@@ -28,9 +28,9 @@ internal enum FakeApp {
     ///
     /// An iPad turns on its side for the test, and upright again after it: the three columns then sit side by side,
     /// where upright the machines' column comes over the others as an overlay, and the audit would measure the dimmed
-    /// columns under it and the overlay while it slides in. It turns again once the app runs: on a simulator just
-    /// booted the app's first window stays upright on the turned device, and an audit then measures a sheet laid out
-    /// upright, its last rows off the screen.
+    /// columns under it and the overlay while it slides in. It turns again once the app runs, when the app's window is
+    /// upright: on a simulator just booted the app's first window stays upright on the turned device, and an audit then
+    /// measures a sheet laid out upright, its last rows off the screen.
     @MainActor
     internal static func launch(withKey: Bool, for test: XCTestCase) -> XCUIApplication {
         launch(withKey: withKey, arguments: [], for: test)
@@ -59,7 +59,9 @@ internal enum FakeApp {
             }
         }
         let app = XCUIApplication()
-        app.launchArguments = arguments
+        // the app's view animations off (AppDelegate.stillArgument): on the iPad simulator a system animation
+        // sometimes never ends, and XCTest then waits 2 x 60 s at each action for it
+        app.launchArguments = arguments + ["-ngterm-no-animations"]
         app.launch()
         if isPad {
             expectLandscape(app)
@@ -67,21 +69,40 @@ internal enum FakeApp {
         return app
     }
 
-    // turns the running app on its side, from upright, and waits until its window is wider than it is tall: a
-    // simulator just booted has the device on its side before the app's first window follows it
+    // when the app's window is upright, turns it upright and on its side again, and waits until the window is wider
+    // than it is tall: a simulator just booted has the device on its side before the app's first window follows it.
+    // A window already on its side is not turned, and the second turn waits until the window is upright: a turn
+    // while the other turn still moves can leave a rotation animation that never ends (SpringBoard's or the app's),
+    // and XCTest then waits 60 s for it before and after each action, for the rest of the run
     @MainActor
     private static func expectLandscape(_ app: XCUIApplication) {
-        XCUIDevice.shared.orientation = .portrait
-        XCUIDevice.shared.orientation = .landscapeLeft
         let window = app.windows.firstMatch
+        let frame = window.frame
+        if frame.width > frame.height {
+            return
+        }
+        let turns: [(UIDeviceOrientation, Bool)] = [(.portrait, false), (.landscapeLeft, true)]
+        for (orientation, landscape) in turns {
+            XCUIDevice.shared.orientation = orientation
+            guard expectShape(of: window, landscape: landscape) else {
+                XCTFail("the app's window did not turn (on its side: \(landscape)): \(window.frame)")
+                return
+            }
+        }
+    }
+
+    // reads `window` a beat apart until it is on its side (`landscape`: wider than it is tall) or upright; false when
+    // it does not come to it
+    @MainActor
+    private static func expectShape(of window: XCUIElement, landscape: Bool) -> Bool {
         for _ in 0..<Int(wait / settleBeat) {
             let frame = window.frame
-            if frame.width > frame.height {
-                return
+            if (frame.width > frame.height) == landscape {
+                return true
             }
             _ = XCTWaiter.wait(for: [XCTestExpectation(description: "a beat")], timeout: settleBeat)
         }
-        XCTFail("the app's window stayed upright: \(window.frame)")
+        return false
     }
 
     /// Waits for `element`, failing the test when it doesn't come.

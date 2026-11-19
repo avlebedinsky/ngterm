@@ -35,7 +35,8 @@ internal final class SessionsTests: XCTestCase {
         app.buttons["create-session"].tap()
         FakeApp.expect(title, "the named session's view")
         FakeApp.expect(FakeApp.element(containing: "api", in: app), "the named session")
-        XCTAssertFalse(name.exists)
+        // the sheet goes with an animation: one read just after the view shows can still find it
+        FakeApp.expectGone(name, "New session sheet")
 
         let row = app.descendants(matching: .any)["session-api"].firstMatch
         if !row.exists {
