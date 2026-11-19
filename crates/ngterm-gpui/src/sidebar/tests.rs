@@ -2313,11 +2313,21 @@ fn a_search_opens_a_folded_workspace_and_its_rows_neither_fold_nor_drag(cx: &mut
     assert_eq!(h.names(cx), ["w:two", "s:var"], "a click folds nothing");
     let searching = h.view.read_with(cx, |sidebar, _| sidebar.searching());
     assert!(searching);
+    // a drag among the kept rows starts nothing, a session's or a workspace's
+    h.search("r", cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:srv*", "w:two", "s:var"]);
+    let (srv, var) = (bounds(cx, "row:srv"), bounds(cx, "row:var").center());
+    drag(cx, var, point(srv.center().x, srv.origin.y + px(2.)));
+    let (first, two) = (bounds(cx, "row:workspace 1"), bounds(cx, "row:two").center());
+    drag(cx, two, point(first.center().x, first.origin.y + px(2.)));
+    h.settle(cx);
+    assert_eq!(h.view.read_with(cx, |sidebar, _| sidebar.drag.highlight), None);
+    assert_eq!(h.store().workspaces()[0].name, "workspace 1");
     h.search("", cx);
     assert_eq!(
         h.names(cx),
         ["w:workspace 1", "s:u", "s:srv*", "w:two"],
-        "the fold is back once the search ends"
+        "the fold is back once the search ends, and no row moved"
     );
 }
 
@@ -2363,4 +2373,41 @@ fn a_search_narrows_the_flat_flagged_list(cx: &mut TestAppContext) {
         "a workspace name alone matches nothing"
     );
     assert!(cx.debug_bounds("sidebar-search-empty").is_some());
+}
+
+/// A list label puts the parent's name before a companion's: the mark falls on the companion's own name, which the
+/// search matched, in both list layouts.
+#[gpui_kit::test]
+fn a_flagged_lists_mark_falls_on_the_companions_own_name(cx: &mut TestAppContext) {
+    for (layout, companion, parent) in [
+        ("flat", "srv › srv-tests : workspace 1", "srv : workspace 1*"),
+        ("plain", "srv › srv-tests", "srv*"),
+    ] {
+        let (mut library, _, _) = library_with_companions(&["srv-tests"]);
+        let window = library.active_window_id().unwrap();
+        let store = library.store_mut(window).unwrap();
+        let ids: Vec<Uuid> = store.sessions().map(ngterm_core::model::Session::id).collect();
+        store.set_flags(true, &ids);
+        store.set_sidebar_mode(SidebarMode::Flagged);
+        let settings = AppSettings {
+            flagged_view_layout: Some(layout.to_owned()),
+            ..AppSettings::default()
+        };
+        let (mut h, cx) = harness(cx, library, settings);
+        h.search("SRV", cx);
+        let names = h.names(cx);
+        assert!(names.contains(&format!("s:{parent}")), "{layout}: {names:?}");
+        assert!(names.contains(&format!("s:{companion}")), "{layout}: {names:?}");
+        let at = "srv › ".len();
+        assert_eq!(
+            h.row_search(companion, cx).matched,
+            Some(at..at + 3),
+            "{layout}: not the parent's name"
+        );
+        assert_eq!(
+            h.row_search(parent.trim_end_matches('*'), cx).matched,
+            Some(0..3),
+            "{layout}"
+        );
+    }
 }

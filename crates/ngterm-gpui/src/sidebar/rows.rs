@@ -265,8 +265,9 @@ impl RowBuilder<'_> {
         self.hits.is_none_or(|hits| hits.contains_key(&session.id()))
     }
 
-    /// What the search made of `session`'s row labelled `label`.
-    fn search(&self, session: &Session, label: &str) -> RowSearch {
+    /// What the search made of `session`'s row, whose label holds the session's name at byte `name_at`: the search
+    /// matches the name, not the parent or workspace a list label adds.
+    fn search(&self, session: &Session, name_at: usize) -> RowSearch {
         let Some(hits) = self.hits else {
             return RowSearch::default();
         };
@@ -275,8 +276,9 @@ impl RowBuilder<'_> {
         RowSearch {
             context,
             matched: (!context)
-                .then(|| ngterm_core::model::match_range(label, needle))
-                .flatten(),
+                .then(|| ngterm_core::model::match_range(&session.display_name(), needle))
+                .flatten()
+                .map(|range| range.start + name_at..range.end + name_at),
             cursor: self.cursor == Some(session.id()),
         }
     }
@@ -366,14 +368,20 @@ impl RowBuilder<'_> {
     fn session_row(&self, session: &Session, nested: bool, group: RowGroup) -> SidebarRow {
         let workspace = self.store.workspace_for_session(session.id());
         // the tree names a row bare; a flagged layout, which drops the tree, names a companion after its parent
-        let label = match shown_flagged_layout(self.store, self.settings.settings) {
-            Some(FlaggedViewLayout::Flat) => format!(
-                "{} : {}",
-                self.store.list_label(session),
-                workspace.map_or("", |workspace| workspace.name.as_str())
-            ),
-            Some(_) => self.store.list_label(session),
-            None => session.display_name(),
+        let name = session.display_name();
+        let (label, name_at) = match shown_flagged_layout(self.store, self.settings.settings) {
+            None => (name, 0),
+            Some(layout) => {
+                // a list label ends its `parent › child` part with the session's own name
+                let list = self.store.list_label(session);
+                let name_at = list.len() - name.len();
+                let label = if layout == FlaggedViewLayout::Flat {
+                    format!("{list} : {}", workspace.map_or("", |workspace| workspace.name.as_str()))
+                } else {
+                    list
+                };
+                (label, name_at)
+            }
         };
         let folded_attention = if group == (RowGroup::Parent { expanded: false }) {
             self.store
@@ -384,7 +392,7 @@ impl RowBuilder<'_> {
         } else {
             Vec::new()
         };
-        let search = self.search(session, &label);
+        let search = self.search(session, name_at);
         SidebarRow {
             id: session.id(),
             kind: RowKind::Session {
