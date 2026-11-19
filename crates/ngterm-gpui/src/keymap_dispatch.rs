@@ -531,8 +531,38 @@ pub(crate) fn press_page_report(keystroke: &gpui_kit::Keystroke, keycode: u32, r
     }
 }
 
-/// Whether a half-typed leader or an open repeat window is live: the next press goes to that sequence first.
+/// Whether a live leader or repeat window takes `stroke`'s chord as its next step. A leader or repeat window that ran
+/// out counts as gone, as the next press lapses it.
 #[must_use]
+pub(crate) fn sequence_takes(stroke: &KeyStroke) -> bool {
+    input::chord(stroke).is_some_and(|chord| {
+        ROUTER.with_borrow(|router| {
+            router.matcher_now().is_some_and(|mut engine| {
+                (engine.is_armed() || engine.is_repeating())
+                    && !matches!(engine.advance(&chord), EngineOutcome::Unmatched)
+            })
+        })
+    })
+}
+
+/// Ends a half-typed leader or an open repeat window, as a press it does not match ends it: the window took that
+/// press for its own key.
+pub(crate) fn end_sequence() {
+    ROUTER.with_borrow_mut(Router::reset_if_live);
+}
+
+/// Runs the live leader or repeat window out, as if its timeout passed with no key (tests).
+#[cfg(test)]
+pub(crate) fn run_sequence_out() {
+    ROUTER.with_borrow_mut(|router| {
+        if router.deadline.is_some() {
+            router.deadline = Some(Instant::now());
+        }
+    });
+}
+
+/// Whether a half-typed leader or an open repeat window is live (tests).
+#[cfg(test)]
 pub(crate) fn sequence_is_live() -> bool {
     ROUTER.with_borrow(|router| {
         router
@@ -811,7 +841,6 @@ impl Router {
     }
 
     /// The matcher as it stands, a lapsed leader or repeat window counting as gone.
-    #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
     fn matcher_now(&self) -> Option<CustomCommandEngine> {
         let mut engine = self.engine.clone()?;
         if self.lapsed() {
@@ -946,7 +975,6 @@ impl Router {
     }
 
     /// Whether the leader or repeat window has run out (the next press lapses it for real).
-    #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
     fn lapsed(&self) -> bool {
         self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
     }

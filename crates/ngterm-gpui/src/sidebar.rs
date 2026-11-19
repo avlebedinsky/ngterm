@@ -158,7 +158,7 @@ pub struct Sidebar {
     drag: DragState,
     scroll: ScrollHandle,
     /// The window's search field, drawn atop the column while the toolbar is hidden.
-    search_field: Option<(Entity<crate::sidebar_search::SearchField>, Subscription)>,
+    search_field: Option<(Entity<crate::sidebar_search::SearchField>, [Subscription; 2])>,
 }
 
 impl Sidebar {
@@ -191,10 +191,22 @@ impl Sidebar {
     }
 
     /// Hands the sidebar the window's search field: it marks the cursor's match while the field holds the keyboard,
-    /// and draws the field while the toolbar is hidden.
-    pub fn set_search_field(&mut self, field: Entity<crate::sidebar_search::SearchField>, cx: &mut Context<Self>) {
+    /// and draws the field while the toolbar is hidden. When the field gets the keyboard (a click or the search
+    /// chord), the list scrolls to the cursor's match.
+    pub fn set_search_field(
+        &mut self,
+        field: Entity<crate::sidebar_search::SearchField>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let observed = cx.observe(&field, |_, _, cx| cx.notify());
-        self.search_field = Some((field, observed));
+        let handle = field.read(cx).focus_handle(cx);
+        let focused = cx.on_focus_in(&handle, window, |sidebar, window, cx| {
+            // the list may have scrolled away from the cursor's match since the field last held the keyboard
+            sidebar.revealed_cursor = None;
+            sidebar.reveal_search_cursor(window, cx);
+        });
+        self.search_field = Some((field, [observed, focused]));
     }
 
     /// Whether the search narrows the rows.

@@ -345,7 +345,7 @@ impl WindowView {
         let search = cx.new(|cx| SearchBar::new(id, poster.clone(), window, cx));
         let search_field = cx.new(|cx| crate::sidebar_search::SearchField::new(id, poster.clone(), window, cx));
         titlebar.update(cx, |bar, _| bar.set_search_field(search_field.clone()));
-        sidebar.update(cx, |sidebar, cx| sidebar.set_search_field(search_field.clone(), cx));
+        sidebar.update(cx, |bar, cx| bar.set_search_field(search_field.clone(), window, cx));
         let keeper = search_field.read(cx).focus_handle(cx);
         deck.update(cx, |deck, _| deck.set_keeper(keeper));
         let switcher = cx.new(|_| SessionSwitcher::new(id, poster.clone()));
@@ -685,6 +685,7 @@ impl WindowView {
             return true;
         }
         if self.takes_search_chord(stroke, cx) {
+            crate::keymap_dispatch::end_sequence();
             self.search_field.update(cx, |field, cx| field.focus(window, cx));
             return true;
         }
@@ -742,11 +743,12 @@ impl WindowView {
     /// Whether `stroke` is Search Sessions…'s chord and the field is on screen with nothing modal up: the window gives
     /// the field the keyboard at once, so the keys typed right after the chord reach it, not the terminal (the keymap's
     /// own run of the action lands on a later turn). A hidden sidebar is the keymap's to show; under a zoom or the
-    /// dashboard the core disables the action. A half-typed leader or an open repeat window takes the chord first: it
-    /// may be the tail of a sequence.
+    /// dashboard the core disables the action. A live leader or repeat window that the chord advances takes it first;
+    /// one that the chord does not advance, or one that ran out, ends, as the router ends it on a press it does not
+    /// match.
     fn takes_search_chord(&self, stroke: &KeyStroke, cx: &App) -> bool {
         crate::keymap_dispatch::menu_action(stroke) == Some(ngterm_core::keymap::BuiltinAction::FocusSidebarSearch)
-            && !crate::keymap_dispatch::sequence_is_live()
+            && !crate::keymap_dispatch::sequence_takes(stroke)
             && self.sidebar.read(cx).is_shown()
             && self.ask.is_none()
             && self.picker.is_none()

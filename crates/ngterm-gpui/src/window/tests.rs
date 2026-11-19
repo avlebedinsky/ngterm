@@ -2363,6 +2363,77 @@ fn the_search_cursor_scrolls_into_view(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_search_cursor_scrolls_into_view_when_the_field_gets_the_keyboard_back(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    for index in 0..30 {
+        s.add_background(&format!("/proj{index:02}"));
+    }
+    s.search_chord();
+    s.cx.simulate_keystrokes("p r o j");
+    s.settle();
+    // the cursor stays on the first match; the list scrolls down and a click on the last match takes the keyboard
+    let first = s.cx.debug_bounds("row:proj00").expect("the first match is drawn");
+    // the list's top: the workspace's header row, above the first match before any scroll
+    let top = s.cx.debug_bounds("row:workspace 1").expect("the header is drawn").top();
+    s.cx.simulate_event(gpui_kit::ScrollWheelEvent {
+        position: first.center(),
+        delta: gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -100.)),
+        ..gpui_kit::ScrollWheelEvent::default()
+    });
+    s.settle();
+    let out_of_view = |s: &mut Shell| {
+        s.cx.debug_bounds("search-cursor")
+            .is_some_and(|cursor| cursor.top() < top)
+    };
+    assert!(out_of_view(&mut s), "the cursor's match scrolled away");
+    s.click("row:proj29");
+    s.settle();
+    assert!(s.terminal_focused());
+    // the window's hook gives the field the keyboard at once, with no model sync
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f");
+    assert!(s.search_field_holds());
+    assert!(!out_of_view(&mut s), "the cursor's match is in view again");
+}
+
+#[gpui_kit::test]
+fn a_leader_that_ran_out_leaves_the_search_chord_to_the_window(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let (keymap, diagnostics) =
+        ngterm_core::keymap::parse_keymap("map ctrl+x>g toggle_sidebar\n", &ngterm_core::keymap::linux_defaults());
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    crate::keymap_dispatch::load_keymap(&keymap);
+    s.cx.simulate_keystrokes("ctrl-x");
+    assert!(crate::keymap_dispatch::sequence_is_live());
+    crate::keymap_dispatch::run_sequence_out();
+    let _ = crate::keymap_dispatch::take_fired();
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f");
+    assert!(s.search_field_holds(), "the field has the keyboard at once");
+    assert!(!crate::keymap_dispatch::sequence_is_live());
+    assert!(crate::keymap_dispatch::take_fired().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_live_leader_that_the_search_chord_does_not_advance_ends_and_the_field_takes_the_keyboard(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let (keymap, diagnostics) =
+        ngterm_core::keymap::parse_keymap("map ctrl+x>g toggle_sidebar\n", &ngterm_core::keymap::linux_defaults());
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    crate::keymap_dispatch::load_keymap(&keymap);
+    s.cx.simulate_keystrokes("ctrl-x");
+    assert!(crate::keymap_dispatch::sequence_is_live());
+    let _ = crate::keymap_dispatch::take_fired();
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f");
+    assert!(s.search_field_holds(), "the field has the keyboard at once");
+    assert!(!crate::keymap_dispatch::sequence_is_live(), "the chord ends the leader");
+    // the leader's tail now types into the field, not the keymap
+    s.cx.simulate_keystrokes("g");
+    assert!(crate::keymap_dispatch::take_fired().is_empty());
+}
+
+#[gpui_kit::test]
 fn a_sync_before_the_typed_text_lands_does_not_rewind_the_field(cx: &mut TestAppContext) {
     let mut s = shell(cx);
     s.with_keys();
