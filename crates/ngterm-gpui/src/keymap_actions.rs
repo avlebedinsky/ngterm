@@ -66,6 +66,24 @@ pub fn perform(poster: &Poster, action: FrontendAction, close_grace: bool, cx: &
         // the deck gives the page's element the keyboard (the core asked for the pane focus); its renderer focuses the
         // field
         FrontendAction::FocusPageSearch { page, .. } => crate::html_overlay::focus_page_search(page),
+        FrontendAction::FocusSidebarSearch(window) => focus_sidebar_search(window, cx),
+    }
+}
+
+/// Search Sessions…: the sidebar's search field of model window `window` takes the keyboard, its text selected.
+fn focus_sidebar_search(window: Uuid, cx: &mut App) {
+    let Some(handle) =
+        keymap_dispatch::window_of(KeyOrigin::Window(window)).and_then(|handle| handle.downcast::<WindowView>())
+    else {
+        return;
+    };
+    let focused = handle.update(cx, |view, root, cx| {
+        view.search_field()
+            .clone()
+            .update(cx, |field, cx| field.focus(root, cx));
+    });
+    if focused.is_err() {
+        tracing::debug!(%window, "the window closed before its search field took the keyboard");
     }
 }
 

@@ -49,6 +49,7 @@ pub mod session_host;
 pub mod session_switcher;
 pub mod settings;
 pub mod sidebar;
+pub mod sidebar_search;
 pub mod signals;
 pub mod split;
 pub mod state;

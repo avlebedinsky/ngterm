@@ -56,6 +56,7 @@ pub const CAPABILITIES: &[&str] = &[
     "kitty-clipboard",
     "agterm-peer",
     "shell-profiles",
+    "sidebar-search",
     "web-worker-faults",
 ];
 /// The capabilities of the Rust target profile this build implements on macOS (see Linux's above).
@@ -71,6 +72,7 @@ pub const CAPABILITIES: &[&str] = &[
     "kitty-clipboard",
     "agterm-peer",
     "shell-profiles",
+    "sidebar-search",
 ];
 /// The capabilities of the Rust target profile this build implements on Windows (see Linux's above).
 #[cfg(windows)]
@@ -85,6 +87,7 @@ pub const CAPABILITIES: &[&str] = &[
     "kitty-clipboard",
     "agterm-peer",
     "shell-profiles",
+    "sidebar-search",
 ];
 
 /// The capabilities this host claims: the profile's, and the `live` ones by host ([`session_host::claims`]).

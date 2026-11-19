@@ -1,5 +1,6 @@
 //! The window's title bar (upstream's custom titlebar row, `WindowContentView+Titlebar.swift`, with its zoom and
-//! dashboard variants; ported from the GTK build's `titlebar.rs`): the sidebar toggle at the sidebar's trailing edge,
+//! dashboard variants; ported from the GTK build's `titlebar.rs`): over the sidebar its session search field (this
+//! build's own, [`crate::sidebar_search`]) and the sidebar toggle at the sidebar's trailing edge,
 //! the title's two lines at the terminal's leading edge ([`ngterm_core::titlebar::compose`]), and the trailing cluster
 //! of recent-sessions and attention buttons, scratch, split and overlay toggles, the dashboard, the quick terminal and
 //! the custom-commands button, each gated by its Settings ▸ Interface toggle, with a divider only between two groups of
@@ -499,6 +500,8 @@ pub struct Titlebar {
     pressed: bool,
     /// The app menu while it is open: it holds the keyboard, which the deck moves none under.
     menu: Rc<MenuTrack>,
+    /// The window's sidebar search field, drawn over the sidebar while it shows.
+    search_field: Option<gpui_kit::Entity<crate::sidebar_search::SearchField>>,
 }
 
 /// Whether the app menu is open, and the popup showing it. The popup's own open-change callback runs only for a toggle,
@@ -546,7 +549,13 @@ impl Titlebar {
             shown: None,
             pressed: false,
             menu: Rc::default(),
+            search_field: None,
         }
+    }
+
+    /// Hands the bar the window's sidebar search field.
+    pub fn set_search_field(&mut self, field: gpui_kit::Entity<crate::sidebar_search::SearchField>) {
+        self.search_field = Some(field);
     }
 
     /// Whether the app menu is open.
@@ -648,8 +657,9 @@ impl Titlebar {
     }
 
     /// The sidebar toggle and the space before the title (upstream: the toggle at the sidebar's trailing edge while it
-    /// shows, else at the leading edge, then a gap).
-    fn leading(bar: &Bar, glyph: Pixels, cx: &mut Context<Self>) -> Div {
+    /// shows, else at the leading edge, then a gap); while the sidebar shows, the search field fills the rest of the
+    /// space over it.
+    fn leading(&self, bar: &Bar, glyph: Pixels, cx: &mut Context<Self>) -> Div {
         let colors = bar.colors;
         let ink = chrome::color(colors.foreground, 1.0);
         let uncovered = bar.cover == Cover::None && bar.model.mode != ToolbarMode::Hidden;
@@ -670,10 +680,17 @@ impl Titlebar {
                 .flex_shrink_0()
                 .justify_end()
                 .items_center()
+                .gap(px(6.))
                 .w(px(width.max(40.)))
+                .pl(px(8.))
                 .pr(px(4.))
+                .children(
+                    self.search_field
+                        .clone()
+                        .map(|field| div().flex_1().min_w(px(0.)).child(field)),
+                )
                 .children(toggle)
-                .child(div().w(px(11.))),
+                .child(div().w(px(5.))),
             _ => div()
                 .flex()
                 .flex_row()
@@ -1172,7 +1189,7 @@ impl Render for Titlebar {
             }))
             .child(leading)
             .when(!hidden, |row| {
-                row.child(Self::leading(&bar, glyph, cx))
+                row.child(self.leading(&bar, glyph, cx))
                     .child(Self::label(&label, colors, glyph))
                     .child(div().w(px(12.)).flex_shrink_0())
                     .when(uncovered, |row| row.child(Self::cluster(&bar, glyph, cx)))

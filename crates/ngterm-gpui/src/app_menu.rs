@@ -95,6 +95,7 @@ const VIEW: &[&[Item]] = &[
     ],
     &[
         Item::Row(PaletteCommand::ToggleSidebar),
+        Item::Row(PaletteCommand::SearchSessions),
         Item::Row(PaletteCommand::ExpandWorkspaces),
         Item::Row(PaletteCommand::CollapseWorkspaces),
         Item::Row(PaletteCommand::ToggleWorkspaceCollapse),

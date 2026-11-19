@@ -4,6 +4,9 @@
 //! context menus ([`menu`]), inline rename, drag-and-drop reorder, spring-loaded folders and the file manager's folder
 //! drops ([`drag`]), the flagged view's three layouts and its empty-state hint, companion rows nested and folded under
 //! their parent (`WorkspaceSidebar+Companions.swift`), the footer, and the divider that resizes it. [`view`] draws it.
+//! While the session search narrows it (this build's own, [`crate::sidebar_search`]), its rows hold only what the
+//! search keeps, nothing drags, a workspace row does not fold, and an empty result shows its hint with a Clear search
+//! link; the field itself sits atop the column while the toolbar is hidden.
 //!
 //! RULE: the handlers never touch the model. They read the snapshot the last sync took ([`context`]) and post a
 //! [`SidebarAction`] for the window to the main loop; what needs a dialog, the clipboard or the rename field happens
@@ -38,7 +41,7 @@ use ngterm_core::sidebar_actions::SidebarAction;
 use uuid::Uuid;
 
 pub use self::look::Look;
-pub use self::rows::{RowGroup, RowKind, SidebarRow};
+pub use self::rows::{RowGroup, RowKind, RowSearch, SidebarRow};
 
 use self::context::SidebarContext;
 use self::drag::{DragPayload, Highlight, Proposal, RowSpan};
@@ -55,6 +58,14 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 pub const EMPTY_FLAGGED: &str = "No flagged sessions.";
 /// The empty flagged view's link to Edit Flagged Sessions….
 pub const EMPTY_FLAGGED_ADD: &str = "Add Sessions…";
+/// The empty search's link, which empties the field.
+pub const EMPTY_SEARCH_CLEAR: &str = "Clear search";
+
+/// The empty search's hint for `query`.
+#[must_use]
+pub fn empty_search_hint(query: &str) -> String {
+    format!("No sessions match “{}”.", query.trim())
+}
 
 /// What the footer's controls ask for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +155,8 @@ pub struct Sidebar {
     hovered: Option<Uuid>,
     drag: DragState,
     scroll: ScrollHandle,
+    /// The window's search field, drawn atop the column while the toolbar is hidden.
+    search_field: Option<(Entity<crate::sidebar_search::SearchField>, Subscription)>,
 }
 
 impl Sidebar {
@@ -170,6 +183,34 @@ impl Sidebar {
             hovered: None,
             drag: DragState::default(),
             scroll: ScrollHandle::new(),
+            search_field: None,
+        }
+    }
+
+    /// Hands the sidebar the window's search field: it marks the cursor's match while the field holds the keyboard,
+    /// and draws the field while the toolbar is hidden.
+    pub fn set_search_field(&mut self, field: Entity<crate::sidebar_search::SearchField>, cx: &mut Context<Self>) {
+        let observed = cx.observe(&field, |_, _, cx| cx.notify());
+        self.search_field = Some((field, observed));
+    }
+
+    /// Whether the search narrows the rows.
+    #[must_use]
+    pub fn searching(&self) -> bool {
+        self.context.search.is_some()
+    }
+
+    /// Whether the search field holds the keyboard, which shows the cursor's match.
+    fn search_focused(&self, window: &Window, cx: &App) -> bool {
+        self.search_field
+            .as_ref()
+            .is_some_and(|(field, _)| field.read(cx).is_focused(window, cx))
+    }
+
+    /// The empty search's Clear search link: the field empties and keeps the keyboard.
+    fn clear_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((field, _)) = &self.search_field {
+            field.update(cx, |field, cx| field.clear(false, window, cx));
         }
     }
 
@@ -400,7 +441,8 @@ impl Sidebar {
     /// A single click on a workspace row: toggles it after the double-click interval, unless a double-click renames
     /// first or the setting turns the whole-row target off (re-read when the interval ends).
     fn schedule_toggle(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        if !self.context.row_click_expands {
+        // a search shows every row it keeps open: a fold would change nothing on screen
+        if !self.context.row_click_expands || self.searching() {
             return;
         }
         self.pending_toggle = Some(cx.spawn(async move |this, cx| {

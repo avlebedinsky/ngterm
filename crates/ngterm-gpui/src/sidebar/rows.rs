@@ -11,10 +11,15 @@
 //! tree only, the parent row folding them away with its own disclosure; a folded parent names the companions that need
 //! attention for its marker. The flagged layouts list a companion unindented, labelled `parent › child`
 //! (`AppStore::list_label`), and the tree keeps the bare name.
+//!
+//! The session search (`AppStore::sidebar_search_hits`, this build's own) keeps only the rows it names, in each shape:
+//! a workspace with none goes, every kept workspace and parent shows open with no disclosure, a parent kept only as
+//! its companion's context is marked so, and each match carries the part of its label the query matched.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
-use ngterm_core::model::{AppStore, Session, SidebarMode, SidebarTint, Workspace};
+use ngterm_core::model::{AppStore, SearchHit, Session, SidebarMode, SidebarTint, Workspace};
 use ngterm_core::persist::AppSettings;
 use ngterm_core::persist::settings::{FlaggedViewLayout, InterfaceElement, SessionInfoDisplay};
 use ngterm_core::session_info::SessionInfoSpan;
@@ -47,6 +52,19 @@ pub struct SidebarRow {
     /// A folded parent's companions that need attention (blocked, completed or unseen), by name: its companion
     /// marker shows while any does. Empty for every other row.
     pub folded_attention: Vec<String>,
+    /// What the session search made of the row; the default while no search narrows the sidebar.
+    pub search: RowSearch,
+}
+
+/// A session row under an active search.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowSearch {
+    /// Kept only as the context of a matching companion: drawn dimmed.
+    pub context: bool,
+    /// The bytes of the label the query matched.
+    pub matched: Option<Range<usize>>,
+    /// The match the search field's Return opens.
+    pub cursor: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,21 +163,29 @@ pub fn shown_flagged_layout(store: &AppStore, settings: &AppSettings) -> Option<
 }
 
 /// The workspace rows and their session rows, in store order: the focus filter's workspaces with all their sessions
-/// in the ordinary tree, every workspace holding a flagged session with only those in the flagged tree.
-fn workspace_projection(store: &AppStore) -> Vec<(&Workspace, Vec<&Session>)> {
-    if store.sidebar().mode == SidebarMode::Tree {
-        return store
-            .visible_workspaces()
-            .into_iter()
-            .map(|workspace| (workspace, workspace.sessions.iter().collect()))
-            .collect();
-    }
-    store
-        .workspaces()
-        .iter()
+/// in the ordinary tree, every workspace holding a flagged session with only those in the flagged tree; under a search
+/// only the sessions it keeps, and only the workspaces holding one.
+fn workspace_projection<'a>(
+    store: &'a AppStore,
+    hits: Option<&HashMap<Uuid, SearchHit>>,
+) -> Vec<(&'a Workspace, Vec<&'a Session>)> {
+    let kept = |session: &&Session| hits.is_none_or(|hits| hits.contains_key(&session.id()));
+    let tree = store.sidebar().mode == SidebarMode::Tree;
+    let workspaces = if tree {
+        store.visible_workspaces()
+    } else {
+        store.workspaces().iter().collect()
+    };
+    workspaces
+        .into_iter()
         .filter_map(|workspace| {
-            let flagged: Vec<&Session> = workspace.sessions.iter().filter(|session| session.flagged).collect();
-            (!flagged.is_empty()).then_some((workspace, flagged))
+            let sessions: Vec<&Session> = workspace
+                .sessions
+                .iter()
+                .filter(|session| tree || session.flagged)
+                .filter(kept)
+                .collect();
+            (!sessions.is_empty() || (tree && hits.is_none())).then_some((workspace, sessions))
         })
         .collect()
 }
@@ -169,17 +195,21 @@ fn workspace_projection(store: &AppStore) -> Vec<(&Workspace, Vec<&Session>)> {
 #[must_use]
 pub fn rows(store: &AppStore, open: &Open, settings: RowSettings<'_>) -> Vec<SidebarRow> {
     let selection = selection_ids(store);
+    let hits = store.sidebar_search_hits();
     let builder = RowBuilder {
         store,
         settings,
         selection: &selection,
         open_parents: &open.parents,
+        hits: hits.as_ref(),
+        cursor: hits.as_ref().and_then(|_| store.sidebar_search_target()),
     };
     if !store.renders_workspace_rows(settings.layout()) {
         // the flat and plain lists show the saved flagged order
         return store
             .ordered_flagged_sessions()
             .into_iter()
+            .filter(|session| builder.kept(session))
             .map(|session| builder.session_row(session, false, RowGroup::of_flagged(session)))
             .collect();
     }
@@ -187,8 +217,8 @@ pub fn rows(store: &AppStore, open: &Open, settings: RowSettings<'_>) -> Vec<Sid
         .then(|| store.sole_focused_workspace_id())
         .flatten();
     let mut rows = Vec::new();
-    for (workspace, sessions) in workspace_projection(store) {
-        let shown = open.workspaces.contains(&workspace.id()) || forced == Some(workspace.id());
+    for (workspace, sessions) in workspace_projection(store, hits.as_ref()) {
+        let shown = open.workspaces.contains(&workspace.id()) || forced == Some(workspace.id()) || hits.is_some();
         rows.push(builder.workspace_row(workspace, &sessions, shown));
         if shown {
             builder.session_rows(&sessions, &mut rows);
@@ -223,9 +253,34 @@ struct RowBuilder<'a> {
     settings: RowSettings<'a>,
     selection: &'a [Uuid],
     open_parents: &'a HashSet<Uuid>,
+    /// The rows an active search keeps.
+    hits: Option<&'a HashMap<Uuid, SearchHit>>,
+    /// The match the search field's Return opens.
+    cursor: Option<Uuid>,
 }
 
 impl RowBuilder<'_> {
+    /// Whether the search, if any, keeps `session`.
+    fn kept(&self, session: &Session) -> bool {
+        self.hits.is_none_or(|hits| hits.contains_key(&session.id()))
+    }
+
+    /// What the search made of `session`'s row labelled `label`.
+    fn search(&self, session: &Session, label: &str) -> RowSearch {
+        let Some(hits) = self.hits else {
+            return RowSearch::default();
+        };
+        let needle = self.store.sidebar_search().needle().unwrap_or_default();
+        let context = hits.get(&session.id()) == Some(&SearchHit::Context);
+        RowSearch {
+            context,
+            matched: (!context)
+                .then(|| ngterm_core::model::match_range(label, needle))
+                .flatten(),
+            cursor: self.cursor == Some(session.id()),
+        }
+    }
+
     fn shows_info(&self) -> bool {
         match self.settings.settings.effective_session_info_display() {
             SessionInfoDisplay::Always => true,
@@ -262,6 +317,7 @@ impl RowBuilder<'_> {
             icon_tooltip: None,
             tint: workspace.tint,
             folded_attention: Vec::new(),
+            search: RowSearch::default(),
         }
     }
 
@@ -277,10 +333,13 @@ impl RowBuilder<'_> {
             );
             return;
         }
+        // under a search a parent shows open with no disclosure, and only for the companions the search keeps
+        let searching = self.hits.is_some();
         let parents: HashMap<Uuid, bool> = sessions
             .iter()
             .filter(|session| session.parent_id().is_none() && self.store.has_companions(session.id()))
-            .map(|session| (session.id(), self.open_parents.contains(&session.id())))
+            .filter(|parent| !searching || sessions.iter().any(|kept| kept.parent_id() == Some(parent.id())))
+            .map(|session| (session.id(), searching || self.open_parents.contains(&session.id())))
             .collect();
         // the top-level row a companion nests under: the last one listed
         let mut last_top: Option<Uuid> = None;
@@ -296,6 +355,7 @@ impl RowBuilder<'_> {
                     last_top = Some(session.id());
                     parents
                         .get(&session.id())
+                        .filter(|_| !searching)
                         .map_or(RowGroup::Plain, |expanded| RowGroup::Parent { expanded: *expanded })
                 }
             };
@@ -324,6 +384,7 @@ impl RowBuilder<'_> {
         } else {
             Vec::new()
         };
+        let search = self.search(session, &label);
         SidebarRow {
             id: session.id(),
             kind: RowKind::Session {
@@ -350,6 +411,7 @@ impl RowBuilder<'_> {
             icon_tooltip: session.presentation_notice(),
             tint: session.tint,
             folded_attention,
+            search,
         }
     }
 }

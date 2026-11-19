@@ -2017,3 +2017,202 @@ fn every_button_hints_and_hovers_as_the_bars_own(cx: &mut TestAppContext) {
         s.cx.run_until_parked();
     }
 }
+
+// MARK: - the sidebar search (this build's own)
+
+impl Shell<'_> {
+    fn sidebar_search(&self) -> String {
+        self.state
+            .core
+            .library()
+            .store(self.window)
+            .map(|store| store.sidebar_search().query().to_owned())
+            .unwrap_or_default()
+    }
+
+    /// Fires Search Sessions…'s chord and lands the frontend half it leaves, as the app's landing does.
+    fn search_chord(&mut self) {
+        self.cx.simulate_keystrokes("ctrl-alt-shift-f");
+        self.settle();
+        let poster = self.state.poster().clone();
+        // from the app, as the landing runs it: the window is not being updated
+        for (action, close_grace) in self.state.take_frontend_work().actions {
+            self.cx
+                .cx
+                .update(|cx| crate::keymap_actions::perform(&poster, action, close_grace, cx));
+        }
+        self.settle();
+    }
+
+    fn search_field_holds(&mut self) -> bool {
+        self.holds(|view, cx| Some(view.search_field().read(cx).focus_handle(cx)))
+    }
+
+    fn sidebar_labels(&mut self) -> Vec<String> {
+        self.view.read_with(self.cx, |view, cx| {
+            view.sidebar()
+                .read(cx)
+                .rows()
+                .iter()
+                .map(|row| row.label.clone())
+                .collect()
+        })
+    }
+
+    /// Adds a session at `cwd` to the first workspace, in the background.
+    fn add_background(&mut self, cwd: &str) -> Uuid {
+        let store = self.state.core.library_mut().store_mut(self.window).unwrap();
+        let workspace = store.workspaces()[0].id();
+        let id = store
+            .add_session(
+                workspace,
+                ngterm_core::model::NewSession {
+                    select: false,
+                    ..ngterm_core::model::NewSession::at_cwd(cwd)
+                },
+            )
+            .unwrap();
+        self.state.settle();
+        self.settle();
+        id
+    }
+}
+
+#[gpui_kit::test]
+fn the_search_chord_types_into_the_field_and_return_opens_the_cursors_match(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let srv = s.add_background("/srv");
+    let var = s.session("var").unwrap();
+    assert!(
+        s.cx.debug_bounds("sidebar-search").is_some(),
+        "the field sits in the title bar"
+    );
+    assert!(s.terminal_focused());
+
+    s.search_chord();
+    assert!(s.search_field_holds(), "the chord gives the field the keyboard");
+    s.cx.simulate_keystrokes("r");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "r");
+    assert_eq!(s.sidebar_labels(), ["workspace 1", "var", "srv"], "u does not match");
+    assert!(
+        s.cx.debug_bounds("search-cursor").is_some(),
+        "the first match is marked"
+    );
+
+    // Down moves the cursor; Return opens it and gives its terminal the keyboard, the search kept
+    s.cx.simulate_keystrokes("down enter");
+    s.settle();
+    assert_eq!(s.active(), Some(srv));
+    assert!(s.terminal_focused(), "the match's terminal has the keyboard");
+    assert!(!s.search_field_holds());
+    assert_eq!(s.sidebar_search(), "r");
+    assert!(
+        s.cx.debug_bounds("search-cursor").is_none(),
+        "no cursor mark once the field lets go"
+    );
+    let _ = var;
+}
+
+#[gpui_kit::test]
+fn escape_empties_the_search_and_gives_the_terminal_the_keyboard_back(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    s.search_chord();
+    s.cx.simulate_keystrokes("z z");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "zz");
+    assert_eq!(s.sidebar_labels(), Vec::<String>::new(), "nothing matches");
+    assert!(
+        s.cx.debug_bounds("sidebar-search-empty").is_some(),
+        "the empty hint shows"
+    );
+    let empty = s
+        .view
+        .read_with(s.cx, |view, cx| view.sidebar().read(cx).rows().is_empty());
+    assert!(empty);
+
+    s.cx.simulate_keystrokes("escape");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "");
+    assert!(s.terminal_focused());
+    assert!(s.cx.debug_bounds("sidebar-search-empty").is_none());
+    assert_eq!(s.sidebar_labels(), ["workspace 1", "u", "var"]);
+}
+
+#[gpui_kit::test]
+fn the_empty_hints_link_and_the_clear_button_empty_the_field_and_keep_its_keyboard(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    s.search_chord();
+    s.cx.simulate_keystrokes("q");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "q");
+    s.click("sidebar-search-empty-clear");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "");
+    assert!(s.search_field_holds());
+    let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
+    assert_eq!(text, "");
+
+    s.cx.simulate_keystrokes("v");
+    s.settle();
+    s.click("sidebar-search-clear");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "");
+    assert!(
+        s.search_field_holds(),
+        "the clear button keeps the keyboard in the field"
+    );
+}
+
+#[gpui_kit::test]
+fn the_field_keeps_its_text_and_keyboard_through_a_selection_made_elsewhere(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let u = s.session("u").unwrap();
+    s.search_chord();
+    s.cx.simulate_keystrokes("v");
+    s.settle();
+    // a script selects another session while the user types
+    let store = s.state.core.library_mut().store_mut(s.window).unwrap();
+    store.select_session(Some(u));
+    s.state.settle();
+    s.settle();
+    assert!(
+        s.search_field_holds(),
+        "the selection change does not take the field's keyboard"
+    );
+    s.cx.simulate_keystrokes("a");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "va");
+
+    // hiding and showing the sidebar keeps the text
+    s.cx.simulate_keystrokes("escape");
+    s.settle();
+    s.search_chord();
+    s.cx.simulate_keystrokes("v");
+    s.settle();
+    s.state
+        .core
+        .library_mut()
+        .store_mut(s.window)
+        .unwrap()
+        .toggle_sidebar_visible();
+    s.state.settle();
+    s.settle();
+    assert!(
+        s.cx.debug_bounds("sidebar-search").is_none(),
+        "no field without the sidebar"
+    );
+    s.search_chord();
+    assert!(
+        s.state.core.library().store(s.window).unwrap().sidebar().visible,
+        "the chord shows the sidebar"
+    );
+    assert!(s.search_field_holds());
+    assert_eq!(s.sidebar_search(), "v");
+    let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
+    assert_eq!(text, "v");
+}

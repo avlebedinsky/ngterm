@@ -449,6 +449,9 @@ pub struct Deck {
     held_move: bool,
     /// What may keep the keyboard a held move waited on: the sidebar's live rename field.
     owner: Option<FocusHandle>,
+    /// A field that keeps the keyboard through a selection change made elsewhere (the sidebar's search field): only an
+    /// explicit refocus takes it away.
+    keeper: Option<FocusHandle>,
     look: Look,
     /// The deck's bounds in the window at the last layout, which a GUI ask is anchored in.
     bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -511,6 +514,7 @@ impl Deck {
             held: false,
             held_move: false,
             owner: None,
+            keeper: None,
             look,
             bounds: Rc::default(),
             grid: None,
@@ -558,6 +562,11 @@ impl Deck {
         self.held_move |= self.held && !held;
         self.held = held;
         self.owner = owner;
+    }
+
+    /// Names the field that keeps the keyboard through a selection change (the deck's `keeper`).
+    pub fn set_keeper(&mut self, keeper: FocusHandle) {
+        self.keeper = Some(keeper);
     }
 
     /// The page of session `session`.
@@ -961,6 +970,10 @@ impl Deck {
         }
         let reporting = !changed && self.focus_moves.reporting.load(Ordering::Relaxed);
         if (desired == self.focused || reporting) && !refocus {
+            return None;
+        }
+        if !refocus && self.keeper.as_ref().is_some_and(|keeper| keeper.is_focused(window)) {
+            // the search field keeps typing where it is; the next move after it lets go lands
             return None;
         }
         if let Some((_, handle)) = target {

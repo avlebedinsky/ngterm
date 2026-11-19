@@ -607,8 +607,14 @@ mod tests {
         assert_eq!(f.store().selected_session_id(), Some(second));
         assert!(f.core.pane_focus_requested(second), "its terminal takes the keyboard");
         assert_eq!(f.store().sidebar_search().query(), "R", "Return keeps the search");
-        f.core.clear_pane_focus_requests();
+    }
 
+    #[test]
+    fn the_search_field_clears_and_opens_nothing_without_a_match() {
+        let mut f = fixture(AppSettings::default());
+        let [_, second, _] = f.sessions;
+        f.store_mut().select_session(Some(second));
+        assert!(f.act(SidebarAction::SetSearch("R".to_owned())));
         assert!(f.act(SidebarAction::ClearSearch { focus_terminal: true }));
         assert_eq!(f.store().sidebar_search().query(), "");
         assert!(f.core.pane_focus_requested(second));

@@ -228,6 +228,8 @@ pub struct WindowView {
     /// keyboard back when what held it went away.
     settings: Option<(Entity<SettingsView>, [Subscription; 2])>,
     search: Entity<SearchBar>,
+    /// The sidebar's session search field, which the title bar or the sidebar draws.
+    search_field: Entity<crate::sidebar_search::SearchField>,
     switcher: Entity<SessionSwitcher>,
     /// Whether an alert was up at the last sync: the GUI ask it covered takes the keyboard back once it goes.
     alert_up: bool,
@@ -341,6 +343,11 @@ impl WindowView {
         let posting = poster.clone();
         let alerts = cx.observe_global::<crate::modal::Alerts>(move |_, _| post(&posting, |_| {}));
         let search = cx.new(|cx| SearchBar::new(id, poster.clone(), window, cx));
+        let search_field = cx.new(|cx| crate::sidebar_search::SearchField::new(id, poster.clone(), window, cx));
+        titlebar.update(cx, |bar, _| bar.set_search_field(search_field.clone()));
+        sidebar.update(cx, |sidebar, cx| sidebar.set_search_field(search_field.clone(), cx));
+        let keeper = search_field.read(cx).focus_handle(cx);
+        deck.update(cx, |deck, _| deck.set_keeper(keeper));
         let switcher = cx.new(|_| SessionSwitcher::new(id, poster.clone()));
         // both draw nothing while hidden, and neither takes a click: attached for good
         let layers = vec![
@@ -363,6 +370,7 @@ impl WindowView {
             palette: None,
             settings: None,
             search,
+            search_field,
             switcher,
             alert_up: false,
             #[cfg(test)]
@@ -653,6 +661,12 @@ impl WindowView {
         &self.search
     }
 
+    /// The sidebar's session search field.
+    #[must_use]
+    pub fn search_field(&self) -> &Entity<crate::sidebar_search::SearchField> {
+        &self.search_field
+    }
+
     /// The window's Ctrl-Tab switcher.
     #[must_use]
     pub fn switcher(&self) -> &Entity<SessionSwitcher> {
@@ -698,6 +712,13 @@ impl WindowView {
                 return false;
             };
             palette.update(cx, |palette, cx| palette.launcher(action, cx));
+            return true;
+        }
+        if focused(self.search_field.read(cx).focus_handle(cx), window) {
+            let Some(key) = crate::sidebar_search::field_key(stroke) else {
+                return false;
+            };
+            self.search_field.update(cx, |field, cx| field.key(key, window, cx));
             return true;
         }
         if focused(self.search.read(cx).focus_handle(cx), window) {
@@ -933,6 +954,7 @@ impl WindowView {
         let inset = terminal_area_inset(core, id);
         self.switcher.update(cx, |switcher, cx| switcher.sync(core, inset, cx));
         self.sidebar.update(cx, |sidebar, cx| sidebar.sync(core, cx));
+        self.search_field.update(cx, |field, cx| field.sync(core, window, cx));
         self.sync_title(core, dialog || alert, window, cx);
         cx.notify();
         focused

@@ -403,6 +403,7 @@ mod tests {
             icon_tooltip: None,
             tint: None,
             folded_attention: Vec::new(),
+            search: crate::sidebar::RowSearch::default(),
         }
     }
 
@@ -431,6 +432,7 @@ mod tests {
             icon_tooltip: None,
             tint: None,
             folded_attention: Vec::new(),
+            search: crate::sidebar::RowSearch::default(),
         }
     }
 

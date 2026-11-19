@@ -200,6 +200,7 @@ fn session_row(id: Uuid, selected: bool) -> SidebarRow {
         icon_tooltip: None,
         tint: None,
         folded_attention: Vec::new(),
+        search: RowSearch::default(),
     }
 }
 
@@ -2246,4 +2247,120 @@ fn a_profile_is_marked_fresh_only_where_sessions_are_restored_live() {
     assert!(SidebarContext::take(store, &settings, ngterm_core::model::TintParts::ICON).live_restore);
     settings.restore_mode = Some(ngterm_core::persist::RestoreMode::None);
     assert!(!SidebarContext::take(store, &settings, ngterm_core::model::TintParts::ICON).live_restore);
+}
+
+// MARK: - the session search (this build's own)
+
+impl Harness {
+    fn search(&mut self, query: &str, cx: &mut VisualTestContext) {
+        self.store_mut().set_sidebar_search(query);
+        self.settle(cx);
+    }
+
+    fn row_search(&self, label: &str, cx: &mut VisualTestContext) -> RowSearch {
+        self.view.read_with(cx, |sidebar, _| {
+            sidebar
+                .rows()
+                .iter()
+                .find(|row| row.label == label)
+                .map(|row| row.search.clone())
+                .unwrap()
+        })
+    }
+}
+
+#[gpui_kit::test]
+fn a_search_keeps_its_matches_under_their_workspaces_and_hides_the_rest(cx: &mut TestAppContext) {
+    let (library, _) = library();
+    let (mut h, cx) = harness(cx, library, AppSettings::default());
+    h.search("V", cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:srv*", "w:two", "s:var"]);
+    assert_eq!(
+        h.row_search("srv", cx),
+        RowSearch {
+            context: false,
+            matched: Some(2..3),
+            cursor: true,
+        },
+        "the first match is the cursor's"
+    );
+    assert_eq!(h.row_search("var", cx).matched, Some(0..1));
+    assert!(!h.row_search("var", cx).cursor);
+
+    h.search("var", cx);
+    assert_eq!(h.names(cx), ["w:two", "s:var"], "a workspace with no match goes");
+    h.search("", cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:u", "s:srv*", "w:two", "s:var"]);
+    assert_eq!(h.row_search("srv", cx), RowSearch::default());
+}
+
+#[gpui_kit::test]
+fn a_search_opens_a_folded_workspace_and_its_rows_neither_fold_nor_drag(cx: &mut TestAppContext) {
+    let (library, _) = library();
+    let (mut h, cx) = harness(cx, library, AppSettings::default());
+    let two = h.id_of("two", cx);
+    h.view.update(cx, |sidebar, _| sidebar.toggle(two));
+    h.settle(cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:u", "s:srv*", "w:two"]);
+    h.search("ar", cx);
+    assert_eq!(h.names(cx), ["w:two", "s:var"], "the folded workspace shows its match");
+    let disclosure: &'static str = Box::leak(format!("disclosure:{two}").into_boxed_str());
+    assert!(cx.debug_bounds(disclosure).is_none(), "nothing to fold");
+    let row = bounds(cx, "row:two").center();
+    cx.simulate_click(row, Modifiers::default());
+    cx.executor().advance_clock(DOUBLE_CLICK * 2);
+    h.settle(cx);
+    assert_eq!(h.names(cx), ["w:two", "s:var"], "a click folds nothing");
+    let searching = h.view.read_with(cx, |sidebar, _| sidebar.searching());
+    assert!(searching);
+    h.search("", cx);
+    assert_eq!(
+        h.names(cx),
+        ["w:workspace 1", "s:u", "s:srv*", "w:two"],
+        "the fold is back once the search ends"
+    );
+}
+
+#[gpui_kit::test]
+fn a_matching_companion_shows_under_its_dimmed_parent(cx: &mut TestAppContext) {
+    let (library, srv, _) = library_with_companions(&["log", "tail"]);
+    let (mut h, cx) = harness(cx, library, AppSettings::default());
+    assert!(h.store_mut().set_session_expanded(srv, false));
+    h.settle(cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:u", "s:srv*", "w:two", "s:var"]);
+    h.search("LOG", cx);
+    assert_eq!(h.names(cx), ["w:workspace 1", "s:srv*", "s:log"]);
+    assert!(h.row_search("srv", cx).context);
+    assert_eq!(h.row_search("srv", cx).matched, None);
+    let groups = h.view.read_with(cx, |sidebar, _| {
+        sidebar.rows().iter().map(SidebarRow::group).collect::<Vec<_>>()
+    });
+    assert_eq!(
+        groups,
+        [RowGroup::Plain, RowGroup::Plain, RowGroup::Companion { nested: true }],
+        "the parent shows no disclosure, its match nested under it"
+    );
+}
+
+#[gpui_kit::test]
+fn a_search_narrows_the_flat_flagged_list(cx: &mut TestAppContext) {
+    let (mut library, window) = library();
+    let store = library.store_mut(window).unwrap();
+    let ids: Vec<Uuid> = store.sessions().map(ngterm_core::model::Session::id).collect();
+    store.set_flags(true, &ids);
+    store.set_sidebar_mode(SidebarMode::Flagged);
+    let settings = AppSettings {
+        flagged_view_layout: Some("flat".to_owned()),
+        ..AppSettings::default()
+    };
+    let (mut h, cx) = harness(cx, library, settings);
+    h.search("r", cx);
+    assert_eq!(h.names(cx), ["s:srv : workspace 1*", "s:var : two"]);
+    h.search("two", cx);
+    assert_eq!(
+        h.names(cx),
+        Vec::<String>::new(),
+        "a workspace name alone matches nothing"
+    );
+    assert!(cx.debug_bounds("sidebar-search-empty").is_some());
 }

@@ -60,6 +60,12 @@ pub struct SidebarContext {
     pub row_add_session: bool,
     /// The flagged view shows and nothing is flagged: the empty-state hint.
     pub empty_flagged: bool,
+    /// The session search's text while it narrows the sidebar.
+    pub search: Option<String>,
+    /// The search keeps no session: its empty-state hint.
+    pub empty_search: bool,
+    /// The toolbar is hidden, so the search field sits atop the sidebar's column instead of in the title bar.
+    pub search_in_column: bool,
 }
 
 impl SidebarContext {
@@ -93,6 +99,12 @@ impl SidebarContext {
             row_click_expands: settings.workspace_row_click_expands.unwrap_or(true),
             row_add_session: shows(InterfaceElement::WorkspaceAddSession),
             empty_flagged: flagged_mode && !has_flagged,
+            search: store
+                .sidebar_search()
+                .is_active()
+                .then(|| store.sidebar_search().query().to_owned()),
+            empty_search: store.sidebar_search_hits().is_some_and(|hits| hits.is_empty()),
+            search_in_column: settings.effective_toolbar_mode() == ngterm_core::persist::settings::ToolbarMode::Hidden,
         }
     }
 

@@ -12,7 +12,11 @@
 //! The element ids are upstream's accessibility ids: `workspace-row`/`session-row` on the name (a companion's labelled
 //! `companion`, its name the value), `workspace-icon`/`session-icon`, `edit-field`, `workspace-add-session`,
 //! `companion-marker`, `notify-badge`, `agent-status`, and the footer's `add-session`, `focus-filter-toggle`,
-//! `flagged-view-toggle`, and the empty flagged view's `flagged-empty-add`.
+//! `flagged-view-toggle`, and the empty flagged view's `flagged-empty-add`; this build's own `sidebar-search-empty` and
+//! `sidebar-search-empty-clear` for the empty search.
+//!
+//! Under a session search a match's matched part is semibold, a parent kept as its companion's context is dimmed, and
+//! while the search field holds the keyboard a ring marks the match its Return opens.
 
 use std::rc::Rc;
 
@@ -22,9 +26,9 @@ use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, CursorStyle, DismissEvent, DragMoveEvent, ElementId,
-    EmptyView, EntityId, ExternalPaths, FontWeight, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
-    deferred, div, prelude::FluentBuilder as _, px, rgb,
+    EmptyView, EntityId, ExternalPaths, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, StyledText,
+    WeakEntity, Window, deferred, div, prelude::FluentBuilder as _, px, rgb,
 };
 use uuid::Uuid;
 
@@ -35,8 +39,8 @@ use super::look::{
 };
 use super::rows::badge_text;
 use super::{
-    DividerDrag, EMPTY_FLAGGED, EMPTY_FLAGGED_ADD, FooterAction, RowDrag, RowGroup, RowKind, Sidebar, SidebarRow,
-    context,
+    DividerDrag, EMPTY_FLAGGED, EMPTY_FLAGGED_ADD, EMPTY_SEARCH_CLEAR, FooterAction, RowDrag, RowGroup, RowKind,
+    Sidebar, SidebarRow, context, empty_search_hint,
 };
 use super::{info, menu};
 use crate::interface_glyph;
@@ -52,6 +56,13 @@ const COMPANION_ACCENT: u32 = 0x0000_7AFF;
 /// The empty flagged view's hint: its distance from the top and the sides, and its text's opacity.
 const HINT_INSETS: (f32, f32) = (40.0, 16.0);
 const HINT_ALPHA: f64 = 0.55;
+/// A parent row kept only as its companion's context: its name's and icons' opacity.
+const CONTEXT_ALPHA: f32 = 0.5;
+/// The ring around the match the search field's Return opens: its fill and its line, in the foreground.
+const CURSOR_FILL: f64 = 0.06;
+const CURSOR_LINE: f64 = 0.45;
+/// The search field's padding atop the column while the toolbar is hidden.
+const COLUMN_FIELD_PADDING: f32 = 8.;
 
 impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -83,9 +94,22 @@ impl Sidebar {
     fn column(&self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = self.look;
         let key = window.is_window_active();
+        let cursor_shown = self.search_focused(window, cx);
         let rows: Vec<AnyElement> = (0..self.rows.len())
-            .map(|index| self.row_element(index, key, window, cx))
+            .map(|index| self.row_element(index, key, cursor_shown, window, cx))
             .collect();
+        let field = self
+            .search_field
+            .as_ref()
+            .filter(|_| self.context.search_in_column)
+            .map(|(field, _)| {
+                div()
+                    .flex_none()
+                    .px(px(COLUMN_FIELD_PADDING))
+                    .pt(px(COLUMN_FIELD_PADDING))
+                    .pb(px(COLUMN_FIELD_PADDING / 2.))
+                    .child(field.clone())
+            });
         let list = div()
             .id("sidebar-list")
             .size_full()
@@ -134,19 +158,30 @@ impl Sidebar {
             ))
             .text_color(look.text(false))
             .text_size(px(look.font_size))
+            .children(field)
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .min_h(px(0.))
                     .child(list)
-                    .when(self.context.empty_flagged, |area| area.child(self.empty_hint(cx))),
+                    .when(self.context.empty_flagged, |area| area.child(self.empty_hint(cx)))
+                    .when(!self.context.empty_flagged && self.context.empty_search, |area| {
+                        area.child(self.empty_search(cx))
+                    }),
             )
             .child(self.footer(cx))
     }
 
     /// Row `index`.
-    fn row_element(&self, index: usize, key: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn row_element(
+        &self,
+        index: usize,
+        key: bool,
+        cursor_shown: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let row = &self.rows[index];
         let id = row.id;
         let look = self.look;
@@ -169,6 +204,10 @@ impl Sidebar {
             .px(px(CONTENT_INSET))
             .text_color(look.text(selected))
             .when(selected, |element| element.child(pill(look.pill(key), &look)))
+            .when(cursor_shown && row.search.cursor, |element| {
+                element.child(cursor_ring(&look))
+            })
+            .when(row.search.context, |element| element.opacity(CONTEXT_ALPHA))
             .child(self.row_content(row, selected, window, cx))
             .when(!row.info.is_empty(), |element| {
                 element.child(
@@ -195,9 +234,25 @@ impl Sidebar {
                 this.set_hovered(id, *hovered, cx);
             }));
         }
+        element = self.with_drag(element, row);
+        let sidebar = cx.entity().downgrade();
+        element
+            .context_menu(move |popup, window, cx| row_menu(&sidebar, id, popup, window, cx))
+            .into_any_element()
+    }
+
+    /// `element` made draggable where row `row` drags: a session row in every layout, a workspace row only in the
+    /// ordinary tree, nothing during a rename or a search.
+    fn with_drag(
+        &self,
+        mut element: gpui_kit::Stateful<gpui_kit::Div>,
+        row: &SidebarRow,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let (id, look, workspace) = (row.id, self.look, row.is_workspace());
         // session rows drag in every flagged layout too; a workspace row only in the ordinary tree, as the flagged tree
         // omits workspaces with nothing flagged and so has no slot to aim a workspace at
-        let draggable = !workspace || self.context.drop.view == DropView::Tree;
+        // a search's rows are not the tree's, so a drop among them has no place to land
+        let draggable = (!workspace || self.context.drop.view == DropView::Tree) && !self.searching();
         if draggable && self.editing.is_none() {
             let payload = if workspace {
                 DragPayload {
@@ -223,10 +278,7 @@ impl Sidebar {
                 cx.new(|_| preview)
             });
         }
-        let sidebar = cx.entity().downgrade();
         element
-            .context_menu(move |popup, window, cx| row_menu(&sidebar, id, popup, window, cx))
-            .into_any_element()
     }
 
     /// A row's content, leading to trailing.
@@ -251,6 +303,8 @@ impl Sidebar {
         let content = match (row.kind, row.group()) {
             // hidden chevrons take the disclosure and its strip with them (#909)
             (RowKind::Workspace { .. }, _) if !look.chevrons => content,
+            // a search shows every workspace it keeps open, with nothing to fold
+            (RowKind::Workspace { .. }, _) if self.searching() => content.pl(px(look.metrics().nested_indent)),
             (RowKind::Workspace { expanded }, _) => content
                 .child(Self::disclosure(row.id, expanded, &look, selected, cx))
                 .child(div().flex_none().w(px(look.metrics().nested_indent - DISCLOSURE))),
@@ -344,7 +398,18 @@ impl Sidebar {
             .text_ellipsis()
             .font_weight(weight)
             .text_color(ink)
-            .child(label.clone())
+            .child(match row.search.matched.clone() {
+                Some(range) => StyledText::new(label.clone())
+                    .with_highlights([(
+                        range,
+                        HighlightStyle {
+                            font_weight: Some(FontWeight::SEMIBOLD),
+                            ..HighlightStyle::default()
+                        },
+                    )])
+                    .into_any_element(),
+                None => label.clone().into_any_element(),
+            })
             .when_some(tooltip, |name, text| {
                 name.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
             })
@@ -796,6 +861,61 @@ impl Sidebar {
             .child(div().text_center().truncate().child(EMPTY_FLAGGED))
             .child(link)
     }
+}
+
+impl Sidebar {
+    /// The empty search's hint (`sidebar-search-empty`) and its Clear search link (`sidebar-search-empty-clear`).
+    fn empty_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let hint = SharedString::from(empty_search_hint(self.context.search.as_deref().unwrap_or_default()));
+        let link = div()
+            .id("sidebar-search-empty-clear")
+            .accessibility_id("sidebar-search-empty-clear")
+            .role(gpui_kit::Role::Link)
+            .aria_label(EMPTY_SEARCH_CLEAR)
+            .debug_selector(|| "sidebar-search-empty-clear".to_owned())
+            .cursor_pointer()
+            .underline()
+            .child(EMPTY_SEARCH_CLEAR)
+            .on_click(cx.listener(|sidebar, _: &ClickEvent, window, cx| sidebar.clear_search(window, cx)));
+        div()
+            .absolute()
+            .top(px(HINT_INSETS.0))
+            .left(px(HINT_INSETS.1))
+            .right(px(HINT_INSETS.1))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(6.))
+            .text_color(color(self.look.colors.foreground, HINT_ALPHA))
+            .child(
+                div()
+                    .id("sidebar-search-empty")
+                    .accessibility_id("sidebar-search-empty")
+                    .role(gpui_kit::Role::Status)
+                    .aria_label(hint.clone())
+                    .debug_selector(|| "sidebar-search-empty".to_owned())
+                    .w_full()
+                    .text_center()
+                    .child(hint),
+            )
+            .child(link)
+    }
+}
+
+/// The ring around the match the search field's Return opens, over the selection pill where the two meet.
+fn cursor_ring(look: &Look) -> impl IntoElement {
+    let inset_y = look.metrics().pill_inset_y;
+    div()
+        .debug_selector(|| "search-cursor".to_owned())
+        .absolute()
+        .left(px(PILL_INSET_X))
+        .right(px(PILL_INSET_X))
+        .top(px(inset_y))
+        .bottom(px(inset_y))
+        .rounded(px(PILL_RADIUS))
+        .bg(color(look.colors.foreground, CURSOR_FILL))
+        .border_1()
+        .border_color(color(look.colors.foreground, CURSOR_LINE))
 }
 
 /// What a row drag shows under the pointer: the row's label on a pill in the sidebar's colors.
