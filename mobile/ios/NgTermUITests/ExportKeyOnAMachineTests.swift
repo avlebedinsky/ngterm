@@ -77,13 +77,19 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         // clipboard as a concealed item, and leaving the page clears it
         let unprotected = app.switches["export-unprotected"]
         let isOn = NSPredicate(format: "value == '1'")
-        var turnedOn = false
-        for _ in 0..<Self.tries where !turnedOn {
+        for attempt in 0..<Self.tries {
+            // the switch can turn on after the last read of the step: a read that completed tells it is off before a
+            // press again, as a second press turns it off
+            if attempt > 0, ScreenRead.holdsNow({ ScreenRead.shows(unprotected, matching: isOn) }) {
+                break
+            }
             unprotected.switches.firstMatch.press(forDuration: Self.switchPress)
             let read = ScreenRead.step(lasting: Self.offerWait).poll {
                 ScreenRead.shows(unprotected, matching: isOn)
             }
-            turnedOn = read.held
+            if read.held {
+                break
+            }
         }
         XCTAssertEqual(unprotected.value as? String, "1", "Export without a passphrase never turned on")
         FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")
@@ -184,7 +190,9 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
         let page = app.descendants(matching: .any)["public-key-page"].firstMatch
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")
-        for _ in 0..<Self.tries where page.exists {
+        // a read that completed tells whether the page stayed: a failed read is no reason to stop, or to tap a Done
+        // that went with the page
+        for _ in 0..<Self.tries where !ScreenRead.holdsNow({ ScreenRead.isGone(page) }) {
             done.tap()
             ScreenRead.step(lasting: Self.offerWait).poll { ScreenRead.isGone(page) }
         }

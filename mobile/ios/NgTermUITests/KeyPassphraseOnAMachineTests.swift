@@ -101,7 +101,9 @@ internal final class KeyPassphraseOnAMachineTests: XCTestCase {
     private func closePublicKey(_ page: XCUIElement, in app: XCUIApplication) {
         let done = app.buttons["key-done"]
         FakeApp.expect(done, "the public key page's Done")
-        for _ in 0..<Self.tries where page.exists {
+        // a read that completed tells whether the page stayed: a failed read is no reason to stop, or to tap a Done
+        // that went with the page
+        for _ in 0..<Self.tries where !ScreenRead.holdsNow({ ScreenRead.isGone(page) }) {
             done.tap()
             ScreenRead.step(lasting: Self.pageWait).poll { ScreenRead.isGone(page) }
         }

@@ -146,13 +146,19 @@ internal final class ExportKeyTests: XCTestCase {
         let unprotected = app.switches["export-unprotected"]
         FakeApp.expect(unprotected, "Export without a passphrase")
         let isOn = NSPredicate(format: "value == '1'")
-        var turnedOn = false
-        for _ in 0..<3 where !turnedOn {
+        for attempt in 0..<3 {
+            // the switch can turn on after the last read of the step: a read that completed tells it is off before a
+            // press again, as a second press turns it off
+            if attempt > 0, ScreenRead.holdsNow({ ScreenRead.shows(unprotected, matching: isOn) }) {
+                break
+            }
             unprotected.switches.firstMatch.press(forDuration: 0.6)
             let read = ScreenRead.step(lasting: 3).poll {
                 ScreenRead.shows(unprotected, matching: isOn)
             }
-            turnedOn = read.held
+            if read.held {
+                break
+            }
         }
         XCTAssertEqual(unprotected.value as? String, "1")
         FakeApp.expect(app.staticTexts["The exported key won't be encrypted"], "the warning")
