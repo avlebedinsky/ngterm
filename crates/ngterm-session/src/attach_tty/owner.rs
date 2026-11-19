@@ -450,6 +450,7 @@ impl Relay {
     /// A snapshot starts: a role that comes now waits for its end.
     pub fn snapshot_begin(&mut self) {
         self.role.snapshot_due = true;
+        self.unqueued();
     }
 
     /// The snapshot ended: the outer terminal has the session's state, and the role that waited is written.

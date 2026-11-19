@@ -398,6 +398,29 @@ fn a_role_waits_for_the_snapshot_due_and_follows_it() {
 }
 
 #[test]
+fn a_snapshot_stops_the_deadline_of_the_role_that_waited_for_ground() {
+    let mut relay = Relay::new(Some("n1".to_owned()), GRID, None);
+    let now = Instant::now();
+    let mut fx = Effects::default();
+    relay.start(false, now, &mut fx);
+    relay.snapshot_end(now, &mut fx);
+    relay.output(b"\x1bPlarge", &mut fx);
+    relay.role(LeadRole::Leader, 2, now, &mut fx);
+    assert_eq!(relay.next_deadline(), Some(now + INJECT_WAIT));
+    relay.snapshot_begin();
+    assert_eq!(relay.next_deadline(), None);
+    relay.output(b" sixel", &mut fx);
+    relay.tick(now + INJECT_WAIT, &mut fx);
+    assert_eq!(fx.stdout, b"\x1bPlarge sixel");
+    relay.output(b"\x1b\\replayed", &mut fx);
+    relay.snapshot_end(now + INJECT_WAIT, &mut fx);
+    assert_eq!(
+        String::from_utf8_lossy(&fx.stdout),
+        "\x1bPlarge sixel\x1b\\replayed\x1b]2;ngterm-live-role;n1:leader:2\x1b\\"
+    );
+}
+
+#[test]
 fn an_appearance_change_asks_the_colours_again() {
     let (mut relay, _) = probed(
         None,
