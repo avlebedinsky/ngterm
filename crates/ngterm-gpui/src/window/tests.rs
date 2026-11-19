@@ -2267,3 +2267,115 @@ fn with_the_toolbar_hidden_the_search_field_sits_atop_the_sidebar(cx: &mut TestA
     assert_eq!(s.sidebar_search(), "v");
     assert_eq!(s.sidebar_labels(), ["workspace 1", "var"]);
 }
+
+#[gpui_kit::test]
+fn the_search_chord_leaves_the_keyboard_alone_while_a_zoom_covers_the_sidebar(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let (window, session) = (s.window, s.active().unwrap());
+    let target = ngterm_core::zoom::SurfaceId {
+        session,
+        surface: ngterm_core::zoom::ZoomSurface::Primary,
+    };
+    s.state.core.set_zoom_target(window, Some(target));
+    s.state.settle();
+    s.settle();
+    assert!(s.state.core.zoom_target(window).is_some());
+    assert!(!s.view.read_with(s.cx, |view, cx| view.sidebar().read(cx).is_shown()));
+    // the window leaves a covered sidebar's chord to the keymap, and the core disables the action under a cover, as
+    // its menu item: the field out of sight never takes the keyboard
+    s.cx.simulate_keystrokes("ctrl-alt-shift-f");
+    s.settle();
+    let actions = s.state.take_frontend_work().actions;
+    assert!(actions.is_empty(), "{actions:?}");
+    assert!(!s.search_field_holds());
+    assert!(s.terminal_focused());
+}
+
+#[gpui_kit::test]
+fn a_click_on_a_match_gives_its_terminal_the_keyboard_and_keeps_the_search(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let srv = s.add_background("/srv");
+    s.search_chord();
+    s.cx.simulate_keystrokes("r");
+    s.settle();
+    assert_eq!(s.sidebar_labels(), ["workspace 1", "var", "srv"]);
+    assert!(s.search_field_holds());
+    // the sidebar's selection asks for the pane focus, which takes the keyboard from the field
+    s.click("row:srv");
+    s.settle();
+    assert_eq!(s.active(), Some(srv));
+    assert!(!s.search_field_holds(), "the click takes the keyboard from the field");
+    assert!(s.terminal_focused(), "the clicked session's terminal has the keyboard");
+    assert_eq!(s.sidebar_search(), "r", "the search stays");
+}
+
+#[gpui_kit::test]
+fn a_sequence_that_ends_in_the_search_chord_fires_its_own_action(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let (keymap, diagnostics) = ngterm_core::keymap::parse_keymap(
+        "map ctrl+x>ctrl+alt+shift+f toggle_sidebar\n",
+        &ngterm_core::keymap::linux_defaults(),
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    crate::keymap_dispatch::load_keymap(&keymap);
+    let _ = crate::keymap_dispatch::take_fired();
+    s.cx.simulate_keystrokes("ctrl-x ctrl-alt-shift-f");
+    assert!(
+        !s.search_field_holds(),
+        "the window leaves the sequence's tail to the keymap"
+    );
+    let fired = crate::keymap_dispatch::take_fired();
+    assert!(
+        fired.iter().any(|fired| matches!(
+            fired,
+            crate::keymap_dispatch::Fired::Builtin(ngterm_core::keymap::BuiltinAction::ToggleSidebar)
+        )),
+        "{fired:?}"
+    );
+    assert!(!crate::keymap_dispatch::sequence_is_live());
+}
+
+#[gpui_kit::test]
+fn the_search_cursor_scrolls_into_view(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    for index in 0..30 {
+        s.add_background(&format!("/proj{index:02}"));
+    }
+    s.search_chord();
+    s.cx.simulate_keystrokes("p r o j");
+    s.settle();
+    for _ in 0..29 {
+        s.cx.simulate_keystrokes("down");
+        s.settle();
+    }
+    let cursor =
+        s.cx.debug_bounds("search-cursor")
+            .expect("the cursor's match is marked");
+    let viewport = s.cx.update(|window, _| window.viewport_size());
+    assert!(
+        cursor.bottom() <= viewport.height,
+        "the last match is in view: {cursor:?} in {viewport:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_sync_before_the_typed_text_lands_does_not_rewind_the_field(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    s.search_chord();
+    s.cx.simulate_keystrokes("v");
+    assert!(!s.posted.0.lock().unwrap().is_empty(), "the text is still on its way");
+    // the window syncs (a selection made elsewhere) before the posted text runs
+    let (view, core) = (s.view.clone(), &mut s.state.core);
+    view.update_in(s.cx, |view, window, cx| view.sync(core, window, cx));
+    let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
+    assert_eq!(text, "v", "the model's older empty text is not pushed back");
+    s.settle();
+    assert_eq!(s.sidebar_search(), "v");
+    let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
+    assert_eq!(text, "v");
+}

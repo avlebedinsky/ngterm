@@ -531,9 +531,8 @@ pub(crate) fn press_page_report(keystroke: &gpui_kit::Keystroke, keycode: u32, r
     }
 }
 
-/// Whether a half-typed leader or an open repeat window is live (tests).
-#[cfg(test)]
-#[cfg(all(feature = "html", windows))]
+/// Whether a half-typed leader or an open repeat window is live: the next press goes to that sequence first.
+#[must_use]
 pub(crate) fn sequence_is_live() -> bool {
     ROUTER.with_borrow(|router| {
         router

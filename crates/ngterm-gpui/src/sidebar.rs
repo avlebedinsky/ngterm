@@ -143,6 +143,8 @@ pub struct Sidebar {
     look: Look,
     /// The selected session the list last scrolled to.
     revealed: Option<Uuid>,
+    /// The search cursor's match the list last scrolled to while the field held the keyboard.
+    revealed_cursor: Option<Uuid>,
     /// Where a Shift-click extends the selection from: the session row clicked last without Shift, or the model's
     /// selected session once a selection made elsewhere leaves that row out.
     anchor: Option<Uuid>,
@@ -176,6 +178,7 @@ impl Sidebar {
             expansion: Expansion::default(),
             look: Look::default(),
             revealed: None,
+            revealed_cursor: None,
             anchor: None,
             menu: None,
             editing: None,
@@ -326,6 +329,22 @@ impl Sidebar {
         if selected != self.revealed {
             self.revealed = selected;
             if let Some(index) = selected.and_then(|id| self.index_of(id)) {
+                self.scroll.scroll_to_item(index);
+            }
+        }
+    }
+
+    /// Scrolls the list to the search cursor's match when it moved while the field holds the keyboard, so Return never
+    /// opens a row out of sight; the selected session's reveal ([`Self::show`]) does not follow the cursor.
+    pub fn reveal_search_cursor(&mut self, window: &Window, cx: &App) {
+        let index = self
+            .search_focused(window, cx)
+            .then(|| self.rows.iter().position(|row| row.search.cursor))
+            .flatten();
+        let cursor = index.map(|index| self.rows[index].id);
+        if cursor != self.revealed_cursor {
+            self.revealed_cursor = cursor;
+            if let Some(index) = index {
                 self.scroll.scroll_to_item(index);
             }
         }

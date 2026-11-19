@@ -741,9 +741,12 @@ impl WindowView {
 
     /// Whether `stroke` is Search Sessions…'s chord and the field is on screen with nothing modal up: the window gives
     /// the field the keyboard at once, so the keys typed right after the chord reach it, not the terminal (the keymap's
-    /// own run of the action lands on a later turn). A hidden or covered sidebar is the keymap's to show.
+    /// own run of the action lands on a later turn). A hidden sidebar is the keymap's to show; under a zoom or the
+    /// dashboard the core disables the action. A half-typed leader or an open repeat window takes the chord first: it
+    /// may be the tail of a sequence.
     fn takes_search_chord(&self, stroke: &KeyStroke, cx: &App) -> bool {
         crate::keymap_dispatch::menu_action(stroke) == Some(ngterm_core::keymap::BuiltinAction::FocusSidebarSearch)
+            && !crate::keymap_dispatch::sequence_is_live()
             && self.sidebar.read(cx).is_shown()
             && self.ask.is_none()
             && self.picker.is_none()
@@ -979,6 +982,8 @@ impl WindowView {
             // sight would keep every key, the keymap's too
             self.focus_terminal(window, cx);
         }
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.reveal_search_cursor(window, cx));
         self.sync_title(core, dialog || alert, window, cx);
         cx.notify();
         focused
