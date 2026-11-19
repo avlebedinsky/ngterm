@@ -199,9 +199,10 @@ pub struct GotoRow {
     pub detail: String,
     /// The second: a session's or a pane's cwd, or a workspace's branch.
     pub meta: String,
-    /// A pane row's columns, and under the top-level filter a split session's (its pane that holds the status, current
-    /// with either pane); `None` on a workspace or another session row.
+    /// A pane row's columns, and under the top-level filter a split session's (its pane that holds the status), current
+    /// there with any pane of the session or of its child sessions; `None` on a workspace or another session row.
     pub pane: Option<PaneColumns>,
+    pub terminals: usize,
 }
 
 impl GotoRow {
@@ -266,6 +267,10 @@ impl<'a> Node<'a> {
 
     fn holds(&self, session: Uuid) -> bool {
         self.main.session == session || self.children.iter().any(|child| child.holds(session))
+    }
+
+    fn current(&self) -> bool {
+        self.panes.iter().any(|pane| pane.current) || self.children.iter().any(Self::current)
     }
 }
 
@@ -333,21 +338,27 @@ fn session_rows(
 }
 
 fn top_level_row(workspace: &GotoWorkspace, session: &Node<'_>, tree: Vec<&'static str>) -> GotoRow {
-    if !session.main.split {
-        return pane_row(workspace, session.main, tree);
-    }
-    let holder = session
-        .panes
-        .iter()
-        .copied()
-        .find(|pane| pane.indicator.is_some())
-        .unwrap_or(session.main);
+    let (row, holder) = if session.main.split {
+        let holder = session
+            .panes
+            .iter()
+            .copied()
+            .find(|pane| pane.indicator.is_some())
+            .unwrap_or(session.main);
+        let row = GotoRow {
+            terminals: session.panes.len(),
+            ..session_row(workspace, session.main, tree)
+        };
+        (row, holder)
+    } else {
+        (pane_row(workspace, session.main, tree), session.main)
+    };
     GotoRow {
         pane: Some(PaneColumns {
-            current: session.panes.iter().any(|pane| pane.current),
+            current: session.current(),
             ..columns(holder)
         }),
-        ..session_row(workspace, session.main, tree)
+        ..row
     }
 }
 
@@ -378,6 +389,7 @@ fn workspace_row(workspace: &GotoWorkspace) -> GotoRow {
         detail: workspace.name.clone(),
         meta: workspace.branch.clone().unwrap_or_default(),
         pane: None,
+        terminals: 0,
     }
 }
 
@@ -389,6 +401,7 @@ fn session_row(workspace: &GotoWorkspace, main: &GotoPane, tree: Vec<&'static st
         detail: format!("{} / {}", workspace.name, main.session_name),
         meta: main.cwd.clone(),
         pane: None,
+        terminals: 0,
     }
 }
 
@@ -408,6 +421,7 @@ fn pane_row(workspace: &GotoWorkspace, pane: &GotoPane, tree: Vec<&'static str>)
         },
         meta: pane.cwd.clone(),
         pane: Some(columns(pane)),
+        terminals: 1,
     }
 }
 
@@ -420,8 +434,9 @@ fn columns(pane: &GotoPane) -> PaneColumns {
     }
 }
 
-/// The selected row of `rows`: the row of `selected`, a session's main pane once the session has no session row, the
-/// first row when it is gone, the first pane row with nothing selected; `None` with no rows.
+/// The selected row of `rows`: the row of `selected`, a session's main pane once the session has no session row, a
+/// pane's session row once the pane has no row, the first row when it is gone, the first pane row with nothing
+/// selected; `None` with no rows.
 #[must_use]
 pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<usize> {
     if rows.is_empty() {
@@ -436,6 +451,9 @@ pub fn selected_index(rows: &[GotoRow], selected: Option<GotoTarget>) -> Option<
                     pane: StatusPane::Left,
                 })
             })
+            .unwrap_or(0),
+        Some(target @ GotoTarget::Pane { session, .. }) => position(target)
+            .or_else(|| position(GotoTarget::Session(session)))
             .unwrap_or(0),
         Some(target) => position(target).unwrap_or(0),
         None => rows.iter().position(|row| row.pane.is_some()).unwrap_or(0),
@@ -469,10 +487,10 @@ impl GotoView {
         !self.searching && self.filter.is_none() && self.query.is_empty()
     }
 
-    /// `N terminal(s)`: the rows shown with pane columns.
+    /// `N terminal(s)`: the terminals the rows shown count for.
     #[must_use]
     pub fn count_label(&self) -> String {
-        let count = self.rows.iter().filter(|row| row.pane.is_some()).count();
+        let count: usize = self.rows.iter().map(|row| row.terminals).sum();
         let noun = if count == 1 { "terminal" } else { "terminals" };
         format!("{count} {noun}")
     }

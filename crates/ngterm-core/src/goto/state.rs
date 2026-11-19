@@ -55,7 +55,7 @@ impl GotoState {
     pub(crate) fn view(&self, workspaces: &[GotoWorkspace]) -> GotoView {
         let rows = self.rows(workspaces);
         GotoView {
-            selected: selected_index(&rows, self.selection(workspaces)),
+            selected: selected_index(&rows, self.selected),
             rows,
             query: self.query.clone(),
             searching: self.searching,
@@ -78,18 +78,9 @@ impl GotoState {
         rows(workspaces, &self.query, self.filter)
     }
 
-    fn selection(&self, workspaces: &[GotoWorkspace]) -> Option<GotoTarget> {
-        let selected = self.selected?;
-        Some(if self.filter == Some(GotoFilter::TopLevel) {
-            top_level_target(workspaces, selected)
-        } else {
-            selected
-        })
-    }
-
     fn open(&self, workspaces: &[GotoWorkspace]) -> GotoOutcome {
         let rows = self.rows(workspaces);
-        selected_index(&rows, self.selection(workspaces))
+        selected_index(&rows, self.selected)
             .and_then(|index| rows.get(index))
             .map_or(GotoOutcome::Stay, |row| GotoOutcome::Open(row.target))
     }
@@ -122,8 +113,8 @@ impl GotoState {
             GotoKey::Home => self.selected = None,
             GotoKey::End => self.select_last(workspaces),
             GotoKey::Backspace => {
-                if self.filter.take().is_some() {
-                    self.selected = None;
+                if self.filter.is_some() {
+                    self.drop_filter();
                 }
             }
             GotoKey::Text { key, .. } => self.letter(&key, workspaces),
@@ -142,18 +133,25 @@ impl GotoState {
             }
             "a" => {
                 self.query.clear();
-                self.filter = None;
-                self.selected = None;
+                self.drop_filter();
             }
             _ => {
                 if let Some(filter) = GotoFilter::of_key(key) {
                     self.query.clear();
                     self.filter = Some(filter);
-                    if filter != GotoFilter::TopLevel {
-                        self.selected = None;
-                    }
+                    self.selected = if filter == GotoFilter::TopLevel {
+                        self.selected.map(|target| top_level_target(workspaces, target))
+                    } else {
+                        None
+                    };
                 }
             }
+        }
+    }
+
+    fn drop_filter(&mut self) {
+        if self.filter.take() != Some(GotoFilter::TopLevel) {
+            self.selected = None;
         }
     }
 
@@ -164,7 +162,7 @@ impl GotoState {
 
     fn step(&mut self, delta: isize, workspaces: &[GotoWorkspace]) {
         let rows = self.rows(workspaces);
-        let Some(index) = selected_index(&rows, self.selection(workspaces)) else {
+        let Some(index) = selected_index(&rows, self.selected) else {
             self.selected = None;
             return;
         };
@@ -178,7 +176,7 @@ impl GotoState {
 
     fn jump_workspace(&mut self, forward: bool, workspaces: &[GotoWorkspace]) {
         let rows = self.rows(workspaces);
-        let Some(selected) = selected_index(&rows, self.selection(workspaces)) else {
+        let Some(selected) = selected_index(&rows, self.selected) else {
             return;
         };
         let section = rows[..=selected]

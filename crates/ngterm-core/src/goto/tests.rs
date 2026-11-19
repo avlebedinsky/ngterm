@@ -228,7 +228,7 @@ fn child(pane: GotoPane, parent: Uuid) -> GotoPane {
 }
 
 #[test]
-fn child_sessions_nest_under_their_parent_to_any_depth_in_sidebar_order() {
+fn child_sessions_nest_under_their_parent_at_any_depth_in_their_workspaces_session_order() {
     let [home, lav, one, deep, deeper, two, zsh] = [(); 7].map(|()| Uuid::new_v4());
     let panes = vec![
         pane(lav, StatusPane::Left, "lav"),
@@ -506,7 +506,7 @@ fn the_top_level_filter_keeps_every_workspace_with_its_top_level_sessions_alone(
     assert!(columns.indicator.is_some());
     assert_eq!(
         (view.search_line().as_str(), view.count_label().as_str()),
-        ("/ top level", "4 terminals")
+        ("/ top level", "6 terminals")
     );
     assert!(!view.shows_placeholder());
     assert_eq!(view.selected_row().map(|row| row.target), Some(left(family.lav)));
@@ -561,6 +561,62 @@ fn the_top_level_filter_moves_a_selection_it_hides_to_its_top_level_session() {
     assert_eq!(
         press(&mut state, &family.tree, &[GotoKey::Enter]),
         GotoOutcome::Open(GotoTarget::Session(family.zsh))
+    );
+}
+
+#[test]
+fn leaving_the_top_level_filter_keeps_its_selection() {
+    let family = family();
+    for (opened, leave, kept) in [
+        (left(family.test), GotoKey::Backspace, GotoTarget::Session(family.build)),
+        (left(family.zsh), text("a"), left(family.zsh)),
+    ] {
+        let mut state = GotoState::opened(Some(opened));
+        press(&mut state, &family.tree, &[text("t"), leave.clone()]);
+        let view = state.view(&family.tree.workspaces);
+        assert_eq!(view.filter, None, "{leave:?}");
+        assert_eq!(view.selected_row().map(|row| row.target), Some(kept), "{leave:?}");
+    }
+}
+
+#[test]
+fn under_the_top_level_filter_a_row_is_current_while_a_pane_under_it_is_focused() {
+    let mut family = family();
+    let mut state = GotoState::opened(None);
+    press(&mut state, &family.tree, &[text("t")]);
+    for (focused, row) in [
+        (family.deep, left(family.lav)),
+        (family.test, GotoTarget::Session(family.build)),
+        (family.zsh, left(family.zsh)),
+    ] {
+        for pane in &mut family.tree.workspaces[0].panes {
+            pane.current = pane.session == focused;
+        }
+        let view = state.view(&family.tree.workspaces);
+        let marked: Vec<GotoTarget> = view
+            .rows
+            .iter()
+            .filter(|row| row.pane.as_ref().is_some_and(|pane| pane.current))
+            .map(|row| row.target)
+            .collect();
+        assert_eq!(marked, [row]);
+    }
+}
+
+#[test]
+fn a_selected_pane_a_sync_filters_out_keeps_the_selection_on_its_session_kept_over_a_child() {
+    let mut family = family();
+    let lav = &mut family.tree.workspaces[0].panes[0];
+    *lav = with_agent(lav.clone(), AgentKind::Claude, PaneStatus::Blocked);
+    let mut state = GotoState::opened(None);
+    press(&mut state, &family.tree, &[text("b"), text("j"), text("k")]);
+    assert_eq!(selected(&state, &family.tree), Some(left(family.lav)));
+    family.tree.workspaces[0].panes[0].status = PaneStatus::Idle;
+    let view = state.view(&family.tree.workspaces);
+    assert_eq!(labels(&view.rows), ["home", "lav", "111", "deep"]);
+    assert_eq!(
+        view.selected_row().map(|row| row.target),
+        Some(GotoTarget::Session(family.lav))
     );
 }
 
@@ -1503,6 +1559,32 @@ fn the_window_nests_a_companion_under_its_parent_and_the_top_level_filter_lifts_
     );
     let view = core.goto_view(window).unwrap();
     assert_eq!(view.selected_row().map(|row| row.target), Some(left(first)));
+    assert_eq!(
+        marked(&core, window),
+        [left(first)],
+        "the parent's row marks its focused companion"
+    );
     core.goto_key(window, GotoKey::Enter);
     assert_eq!(selected_session(&core, window), Some(first));
+}
+
+#[test]
+fn the_top_level_filter_keeps_the_selection_it_lifted_when_the_companion_closes() {
+    let (mut core, window) = core("/tmp");
+    let first = selected_session(&core, window).unwrap();
+    let store = core.library_mut().store_mut(window).unwrap();
+    let notes = store.add_companion(first, CompanionOptions::default(), "/tmp").unwrap();
+    store.select_session(Some(notes));
+    let _ = core.commit();
+
+    core.toggle_goto(window);
+    let view = core.goto_view(window).unwrap();
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(notes)));
+    core.goto_key(window, text("t"));
+    core.library_mut().store_mut(window).unwrap().close_session(notes);
+    let _ = core.commit();
+    assert!(core.goto_holds(window));
+    assert_eq!(targets(&core, window).len(), 2);
+    let view = core.goto_view(window).unwrap();
+    assert_eq!(view.selected_row().map(|row| row.target), Some(left(first)));
 }
