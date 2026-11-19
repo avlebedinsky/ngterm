@@ -1200,7 +1200,11 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). The
   app they launch has its UIKit view animations off (`-ngterm-no-animations`, Debug builds only): before each action
   XCTest waits until the app's view animations end, and on the iPad simulator a system animation sometimes never
-  reports its end, so each action then waited 2 x 60 s. `FakeApp` keeps the iPad on its side between tests.
+  reports its end, so each action then waited 2 x 60 s. The app also lays its windows out in the notification of a
+  text size change (`-ngterm-text-size-at-once`, Debug builds only). A Dynamic Type audit reads each text size when
+  the main thread is idle, about 0.1 s after the change. Without it, a late frame on a loaded host left the page at
+  the last size, and the audit called each text "partially unsupported". `FakeApp` keeps the iPad on its side between
+  tests.
   If the app starts with an upright window, `FakeApp` makes one turn to landscape after the app starts.
   It waits until the window is wider than it is tall. A second turn while the first still moved left a
   SpringBoard rotation that never ended, and every later test waited at each action. A UI

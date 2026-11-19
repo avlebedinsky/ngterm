@@ -3,6 +3,7 @@ import XCTest
 /// The app on the fake core (or on its real one, for a test on a real machine), as the UI tests launch and drive it.
 internal enum FakeApp {
     internal static let stillArgument = "-ngterm-no-animations"
+    internal static let textSizeArgument = "-ngterm-text-size-at-once"
 
     // how long a screen may take to come
     private static let wait: TimeInterval = 30
@@ -55,8 +56,9 @@ internal enum FakeApp {
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
         let app = XCUIApplication()
         // the app's view animations off (AppDelegate.stillArgument): on the iPad simulator a system animation
-        // sometimes never ends, and XCTest then waits 2 x 60 s at each action for it
-        app.launchArguments = arguments + [stillArgument]
+        // sometimes never ends, and XCTest then waits 2 x 60 s at each action for it. And a text size change laid out
+        // at once (AppDelegate.textSizeArgument): a Dynamic Type audit reads each size about 0.1 s after it sets it.
+        app.launchArguments = arguments + [stillArgument, textSizeArgument]
         app.launch()
         if isPad {
             expectLandscape(app)

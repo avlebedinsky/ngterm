@@ -19,11 +19,26 @@ internal final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     /// frames), and then each action waits 2 x 60 s. Without view animations, XCTest finds none to wait for.
     internal static let stillArgument = "-ngterm-no-animations"
 
+    /// The launch argument that makes a Debug build lay its windows out as soon as the text size changes, for the UI
+    /// tests' Dynamic Type audits.
+    ///
+    /// The audit sets each text size in turn, and it reads the fonts when the app's main thread is idle, about 0.1 s
+    /// after each change. Without help, the app takes a new size at a later frame (35-230 ms after the change on the
+    /// simulator). On a loaded host, a late frame left a page at its last size when the audit read it, and the audit
+    /// then reported each text as "partially unsupported". With this argument, every window has the new size before
+    /// the main thread is idle again.
+    internal static let textSizeArgument = "-ngterm-text-size-at-once"
+
     /// Which core the app runs on, and the graph over it.
     internal let core: CoreChoice
     private let life: AppLifecycle
     // follows the scenes for as long as the app runs
     private let scenes: SceneWatcher
+
+    #if DEBUG
+        // lays the windows out at each text size change (textSizeArgument)
+        private var textSizeWatch: NSObjectProtocol?
+    #endif
 
     override internal init() {
         #if DEBUG
@@ -42,7 +57,32 @@ internal final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
             await made.refresh()
         }
         UNUserNotificationCenter.current().delegate = self
+        #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains(Self.textSizeArgument) {
+                textSizeWatch = Self.layOutAtTextSizeChanges()
+            }
+        #endif
     }
+
+    #if DEBUG
+        // lays every window out in the notification of a text size change. With no queue, the observer runs in the
+        // notification's own turn of the main thread, where the windows' traits already have the new size.
+        private static func layOutAtTextSizeChanges() -> NSObjectProtocol {
+            NotificationCenter.default.addObserver(
+                forName: UIContentSizeCategory.didChangeNotification,
+                object: nil,
+                queue: nil
+            ) { _ in
+                MainActor.assumeIsolated {
+                    for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                        for window in scene.windows {
+                            window.layoutIfNeeded()
+                        }
+                    }
+                }
+            }
+        }
+    #endif
 
     nonisolated internal func userNotificationCenter(
         _: UNUserNotificationCenter,
