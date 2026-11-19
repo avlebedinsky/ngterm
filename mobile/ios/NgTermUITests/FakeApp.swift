@@ -2,6 +2,8 @@ import XCTest
 
 /// The app on the fake core (or on its real one, for a test on a real machine), as the UI tests launch and drive it.
 internal enum FakeApp {
+    internal static let stillArgument = "-ngterm-no-animations"
+
     // how long a screen may take to come
     private static let wait: TimeInterval = 30
     // how often a wait for an element reads the screen, and the fewest reads it gives up after
@@ -26,11 +28,8 @@ internal enum FakeApp {
 
     /// Launches the app on the fake core for `test`: on the first run, or past it with a key when `withKey`.
     ///
-    /// An iPad turns on its side for the test, and upright again after it: the three columns then sit side by side,
-    /// where upright the machines' column comes over the others as an overlay, and the audit would measure the dimmed
-    /// columns under it and the overlay while it slides in. It turns again once the app runs, when the app's window is
-    /// upright: on a simulator just booted the app's first window stays upright on the turned device, and an audit then
-    /// measures a sheet laid out upright, its last rows off the screen.
+    /// An iPad stays on its side between tests, so its three columns stay beside each other.
+    /// After the app starts, an upright window turns on its side before an audit measures its sheets.
     @MainActor
     internal static func launch(withKey: Bool, for test: XCTestCase) -> XCUIApplication {
         launch(withKey: withKey, arguments: [], for: test)
@@ -38,30 +37,24 @@ internal enum FakeApp {
 
     /// Launches the app as ``launch(withKey:for:)`` does, with the launch arguments `arguments` besides.
     @MainActor
-    internal static func launch(withKey: Bool, arguments: [String], for test: XCTestCase) -> XCUIApplication {
-        start(["-ngterm-fake-core"] + (withKey ? ["-ngterm-fake-key"] : []) + arguments, for: test)
+    internal static func launch(withKey: Bool, arguments: [String], for _: XCTestCase) -> XCUIApplication {
+        start(["-ngterm-fake-core"] + (withKey ? ["-ngterm-fake-key"] : []) + arguments)
     }
 
     /// Launches the app on its real core for `test`, as ``launch(withKey:for:)`` turns an iPad: what it finds is what
     /// the simulator's install holds (``LogsOnAMachineTests``, after `scripts/test-ios-e2e.sh` installs it anew).
     @MainActor
-    internal static func launchOnTheRealCore(for test: XCTestCase) -> XCUIApplication {
-        start([], for: test)
+    internal static func launchOnTheRealCore(for _: XCTestCase) -> XCUIApplication {
+        start([])
     }
 
     @MainActor
-    private static func start(_ arguments: [String], for test: XCTestCase) -> XCUIApplication {
+    private static func start(_ arguments: [String]) -> XCUIApplication {
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
-        if isPad {
-            XCUIDevice.shared.orientation = .landscapeLeft
-            test.addTeardownBlock { @MainActor in
-                XCUIDevice.shared.orientation = .portrait
-            }
-        }
         let app = XCUIApplication()
         // the app's view animations off (AppDelegate.stillArgument): on the iPad simulator a system animation
         // sometimes never ends, and XCTest then waits 2 x 60 s at each action for it
-        app.launchArguments = arguments + ["-ngterm-no-animations"]
+        app.launchArguments = arguments + [stillArgument]
         app.launch()
         if isPad {
             expectLandscape(app)
@@ -69,11 +62,7 @@ internal enum FakeApp {
         return app
     }
 
-    // when the app's window is upright, turns it upright and on its side again, and waits until the window is wider
-    // than it is tall: a simulator just booted has the device on its side before the app's first window follows it.
-    // A window already on its side is not turned, and the second turn waits until the window is upright: a turn
-    // while the other turn still moves can leave a rotation animation that never ends (SpringBoard's or the app's),
-    // and XCTest then waits 60 s for it before and after each action, for the rest of the run
+    // A turn before the app starts can leave its window upright. The other side forces a new turn after it starts.
     @MainActor
     private static func expectLandscape(_ app: XCUIApplication) {
         let window = app.windows.firstMatch
@@ -81,13 +70,10 @@ internal enum FakeApp {
         if frame.width > frame.height {
             return
         }
-        let turns: [(UIDeviceOrientation, Bool)] = [(.portrait, false), (.landscapeLeft, true)]
-        for (orientation, landscape) in turns {
-            XCUIDevice.shared.orientation = orientation
-            guard expectShape(of: window, landscape: landscape) else {
-                XCTFail("the app's window did not turn (on its side: \(landscape)): \(window.frame)")
-                return
-            }
+        XCUIDevice.shared.orientation =
+            XCUIDevice.shared.orientation == .landscapeLeft ? .landscapeRight : .landscapeLeft
+        if !expectShape(of: window, landscape: true) {
+            XCTFail("the app's window did not turn on its side: \(window.frame)")
         }
     }
 

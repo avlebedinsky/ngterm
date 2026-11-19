@@ -1196,8 +1196,9 @@ scripts/test-ios-e2e.sh [--device phone|tablet] [TEST...]   # the UI tests that 
   tests drive the app on a fake core (Debug builds only; `archive` checks the Release build doesn't hold it). The
   app they launch has its UIKit view animations off (`-ngterm-no-animations`, Debug builds only): before each action
   XCTest waits until the app's view animations end, and on the iPad simulator a system animation sometimes never
-  reports its end, so each action then waited 2 x 60 s. For the same reason a UI test turns the iPad's app window
-  on its side only when it is upright, and one turn at a time: a second turn while the first still moved left a
+  reports its end, so each action then waited 2 x 60 s. `FakeApp` keeps the iPad on its side between tests.
+  If the app starts with an upright window, `FakeApp` makes one turn to landscape after the app starts.
+  It waits until the window is wider than it is tall. A second turn while the first still moved left a
   SpringBoard rotation that never ended, and every later test waited at each action. A UI
   test that fails runs once more, for XCTest gives up on the app now and then on CI's virtual Macs ("Failed to
   terminate", "does not have a process ID", "Timed out while evaluating UI query"). A test that passed on its retry

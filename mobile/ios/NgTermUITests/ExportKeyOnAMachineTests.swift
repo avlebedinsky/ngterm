@@ -153,17 +153,7 @@ internal final class ExportKeyOnAMachineTests: XCTestCase {
     // the app on its real core; an iPad on its side, as the other UI tests hold it
     @MainActor
     private func launch() -> XCUIApplication {
-        let isPad = UIDevice.current.userInterfaceIdiom == .pad
-        if isPad {
-            XCUIDevice.shared.orientation = .landscapeLeft
-            addTeardownBlock { @MainActor in
-                XCUIDevice.shared.orientation = .portrait
-            }
-        }
-        let app = XCUIApplication()
-        app.launchArguments = []
-        app.launch()
-        return app
+        FakeApp.launchOnTheRealCore(for: self)
     }
 
     // the welcome's Import a key, with the machine's key and its passphrase, to its public half, then Done

@@ -57,7 +57,7 @@ internal final class KeyboardTests: XCTestCase {
     @MainActor
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-ngterm-fake-core", "-ngterm-fake-terminal"]
+        app.launchArguments = ["-ngterm-fake-core", "-ngterm-fake-terminal", FakeApp.stillArgument]
         app.launch()
         // a tap on the terminal gives it the focus and opens the soft keyboard
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()

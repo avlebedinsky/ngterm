@@ -9,7 +9,7 @@ internal final class LaunchTests: XCTestCase {
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
         // with a key, so the first run is over (FirstRunTests walk through it)
-        app.launchArguments = ["-ngterm-fake-core", "-ngterm-fake-key"]
+        app.launchArguments = ["-ngterm-fake-core", "-ngterm-fake-key", FakeApp.stillArgument]
         app.launch()
         let firstScreen = app.buttons
             .matching(NSPredicate(format: "identifier == 'settings' OR label == 'Show machines'"))
