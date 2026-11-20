@@ -181,7 +181,8 @@ impl Mailbox {
     }
 
     /// Nobody answers clipboard requests any more (the child exited, or the embedder detached the pane): the read or
-    /// write that waits now, and each later one, is denied.
+    /// write that waits now gets the answer already posted for it, if any, and is denied otherwise; each later one is
+    /// denied at once.
     pub(crate) fn child_exited(&self) {
         self.post(|state| state.child_exited = true);
     }

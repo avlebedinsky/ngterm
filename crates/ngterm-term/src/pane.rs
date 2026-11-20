@@ -883,7 +883,8 @@ impl Pane {
     }
 
     /// No frontend answers this pane's clipboard requests any more (its embedder detached it): the request that
-    /// waits now is denied, and so is each later one, at once.
+    /// waits now gets the answer already given for it, if any, and is denied otherwise; each later one is denied at
+    /// once.
     pub fn deny_clipboard_requests(&self) {
         self.shared.mailbox.child_exited();
     }
@@ -1418,7 +1419,8 @@ pub(crate) struct Worker {
     reads: Reads,
     scanner: Scanner,
     pub(crate) next_read: u64,
-    /// A read was denied for the child's exit: every later one is denied without asking.
+    /// Nobody answers any more (the child exited, or the embedder detached the pane): every later read or write is
+    /// denied without asking.
     child_exited: bool,
 }
 
@@ -1595,7 +1597,8 @@ impl Worker {
 
     /// Ask the frontend about a clipboard read and wait for its answer without the VT lock, ending expired holds
     /// meanwhile; `None` on shutdown. Once nobody answers any more (the child exited, or the embedder detached the
-    /// pane), the read is denied, and every later read or write without asking.
+    /// pane), the read gets the answer already given for it, if any, and is denied otherwise; every later read or
+    /// write is denied without asking.
     fn park(&mut self, read: ReadCandidate) -> Option<ClipboardAnswer> {
         if self.child_exited {
             return Some(ClipboardAnswer::Denied);
