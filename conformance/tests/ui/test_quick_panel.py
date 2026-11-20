@@ -204,7 +204,8 @@ def _set_fullscreen(ctl, on):
 def _full_screen_settled(ui):
     """The app is frontmost and its focused AX window is the main window in full screen, spanning its screen: the Space
     animation is over and the keys go to it. A screen with a camera housing keeps the strip of the menu bar above a
-    full screen window. An activation sent during the Space animation can be lost, so it is sent again."""
+    full screen window. An activation sent during the Space animation can be lost, so it is sent again. Returns the
+    main window's frame, as `_frame` gives it."""
     import AppKit
 
     def settled():
@@ -220,10 +221,10 @@ def _full_screen_settled(ui):
         assert any(
             (x, width, y + height) == (left, extent, top + tall) and y >= top for left, top, extent, tall in screens
         ), f"the focused window's frame {(x, y, width, height)} does not span a screen of {screens}"
-        return True
+        return x, y, width, height
 
     settled.__qualname__ = "the main window settled in full screen"
-    wait_until(settled)
+    return wait_until(settled)
 
 
 @pytest.mark.covers("ui:quick-terminal", "quick.text", "window.fullscreen")
@@ -232,7 +233,7 @@ def test_the_quick_panel_shows_over_a_full_screen_window(app, ctl, ui):
     ui.activate()
     try:
         _set_fullscreen(ctl, True)
-        _full_screen_settled(ui)
+        main = _full_screen_settled(ui)
         # the first key after the move to the full screen Space can be lost, upstream's and ngterm's alike
         for attempt in range(3):
             ui.press("ctrl+`")
@@ -243,6 +244,14 @@ def test_the_quick_panel_shows_over_a_full_screen_window(app, ctl, ui):
                 if attempt == 2:
                     raise
         _borderless(ui, pid, "shown over the full screen window", _framed(zoomed=False))
+
+        def main_on_screen():
+            layers = _layers(ui, pid, main)
+            assert 0 in layers, f"the full screen main window {main} is not on screen under the panel: {layers}"
+            return True
+
+        main_on_screen.__qualname__ = "the full screen main window on screen under the panel"
+        wait_until(main_on_screen)
         _types_into_it(ctl, ui, "quick-over-full-screen")
     finally:
         ctl.request("quick", mode="hide")
