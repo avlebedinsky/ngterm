@@ -449,6 +449,7 @@ impl AppState {
     /// Reports a key press or committed text in the pane with `token` as user activity.
     /// The Badge reset setting controls the unseen badge reset for main and split panes, but not scratch panes.
     /// The separate Status reset setting controls the status glyph reset when this pane owns the status.
+    /// Upstream: `onUserInput` in `wirePane`, and `wireStatusClear`.
     pub fn pane_keystroke(&mut self, session: Uuid, token: &str, keystroke: StatusKeystroke) {
         self.core.note_user_activity(session);
         self.arm_auto_follow();
