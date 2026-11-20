@@ -560,8 +560,13 @@ test("the zoom is read from the page's own entry in the tree", () => {
 
 // The script with a stand-in ngtermctl that serves `tree` and answers `overlay open` with OPEN_STATUS/OPEN_OUT,
 // logging every call.
-function runScript(args, { treeJson, openStatus = 0, openOut = "", env: extra = {} } = {}) {
+function runScript(args, { treeJson, openStatus = 0, openOut = "", settings, env: extra = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "go-to-test-"));
+  const home = path.join(dir, "home");
+  const state = path.join(dir, "state");
+  fs.mkdirSync(home);
+  fs.mkdirSync(state);
+  if (settings !== undefined) fs.writeFileSync(path.join(state, "settings.json"), settings);
   const fake = path.join(dir, "ngtermctl");
   fs.writeFileSync(fake, `#!/usr/bin/env bash
 echo "$*" >>"${dir}/calls"
@@ -571,15 +576,61 @@ case "$1 $2 $3" in
 esac
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(dir, "tree.json"), JSON.stringify({ ok: true, result: { tree: treeJson || tree } }));
-  const env = { ...process.env, NGTERMCTL: fake, OPEN_STATUS: String(openStatus), OPEN_OUT: openOut, TMPDIR: dir };
-  for (const k of ["AGT_SOCKET", "AGT_WINDOW_ID", "AGT_SESSION_ID", "NGTERM_SOCKET"]) delete env[k];
-  Object.assign(env, extra);
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([k]) => !/^(NGTERM|AGT)_|^XDG_DATA_HOME$/.test(k)));
+  Object.assign(env, { NGTERMCTL: fake, OPEN_STATUS: String(openStatus), OPEN_OUT: openOut, TMPDIR: dir, HOME: home,
+                       NGTERM_STATE_DIR: state }, extra);
   const run = spawnSync("bash", [path.join(__dirname, "go-to-navigator.sh"), ...args], { env, encoding: "utf8" });
   const read = f => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), "utf8") : "");
-  const result = { status: run.status, stdout: run.stdout, stderr: run.stderr, calls: read("calls").trim().split("\n"), page: read("page.html") };
+  const calls = read("calls").trim().split("\n");
+  const open = calls.find(c => c.startsWith("session overlay open")) || "";
+  const height = Number((/ --height (\S+)/.exec(open) || [])[1]);
+  const result = { status: run.status, stdout: run.stdout, stderr: run.stderr, calls, open, height,
+                   page: read("page.html") };
   fs.rmSync(dir, { recursive: true, force: true });
   return result;
 }
+
+const pageCss = (() => {
+  const html = fs.readFileSync(path.join(__dirname, "assets", "go-to.html"), "utf8");
+  const rules = {};
+  for (const [, selectors, body] of /<style>([\s\S]*?)<\/style>/.exec(html)[1].matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const decls = body.split(";").filter(d => d.includes(":"))
+      .map(d => [d.slice(0, d.indexOf(":")).trim(), d.slice(d.indexOf(":") + 1).trim()]);
+    for (const s of selectors.split(",")) rules[s.trim()] = { ...rules[s.trim()], ...Object.fromEntries(decls) };
+  }
+  return rules;
+})();
+
+const pagePx = (() => {
+  const px = value => {
+    assert.match(value, /^\d+(px)?$/, "a height in go-to.html is a whole number of pixels");
+    return parseInt(value, 10);
+  };
+  const vertical = padding => {
+    const sides = padding.split(/\s+/);
+    return px(sides[0]) + px(sides[2] ?? sides[0]);
+  };
+  const line = px(/\/(\S+)/.exec(pageCss.body.font)[1]);
+  return {
+    top: line + vertical(pageCss["#top"].padding),
+    info: 2 * line + vertical(pageCss["#info"].padding),
+    hints: px(pageCss["#hints"]["line-height"]) + vertical(pageCss["#hints"].padding),
+    gaps: 3 * px(pageCss["#app"].gap),
+    padding: vertical(pageCss["#app"].padding),
+    row: line + vertical(pageCss[".row"].padding),
+    workspace_margin: px(pageCss[".row.ws"]["margin-top"]),
+    empty: line + vertical(pageCss[".empty"].padding),
+  };
+})();
+
+const opensAt = (t, zoom = 1) => {
+  const p = pagePx;
+  const workspaces = t.workspaces.length;
+  const list = workspaces ? p.row * new Navigator(t, {}).view().all.length + p.workspace_margin * (workspaces - 1)
+                          : p.empty;
+  return new Fit().next(list + p.top + p.info + p.hints + p.gaps + p.padding, zoom);
+};
 
 test("outside text cannot open a comment or a tag in the page's data", () => {
   const hostile = structuredClone(tree);
@@ -631,4 +682,78 @@ test("a chosen pane is selected and focused; a session only selected", () => {
   assert.ok(!session.calls.some(c => c.startsWith("session focus")));
   const ws = runScript([], { openOut: JSON.stringify({ outcome: "submitted", value: "w:W2" }) });
   assert.ok(ws.calls.includes("workspace select --target W2"));
+});
+
+test("the panel opens at the height the page fits it to: the full list's rows, in points", () => {
+  const t = structuredClone(tree);
+  t.workspaces.push({ id: "W3", name: "empty", sessions: [] });
+  assert.equal(new Navigator(t, {}).view().all.length, 9, "split panes, a child and an empty workspace; no page");
+  const run = runScript([], { treeJson: t, openStatus: 2 });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.height, opensAt(t));
+  assert.match(run.open, / --size-percent 80 --height \d+ /, "the width stays 80% of the pane");
+});
+
+test("the panel opens at the page zoom in settings.json, clamped as the app clamps it, else at actual size", () => {
+  const cases = [
+    ['{"htmlOverlayZoom": 1.25}', 1.25],
+    ['{"htmlOverlayZoom": 7}', 3],
+    ['{"htmlOverlayZoom": 0.1}', 0.5],
+    ['{"htmlOverlayZoom": "large"}', 1],
+    ['{"htmlOverlayZoom": null}', 1],
+    ['{"htmlOverlayZoom": ', 1],
+    [undefined, 1],
+  ];
+  for (const [settings, zoom] of cases) {
+    const run = runScript([], { openStatus: 2, settings });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.height, opensAt(tree, zoom), String(settings));
+  }
+});
+
+test("with no workspace the panel opens at the empty list's one line", () => {
+  const run = runScript([], { treeJson: { workspaces: [] }, openStatus: 2 });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.height, opensAt({ workspaces: [] }));
+});
+
+test("the script adds up the heights go-to.html lays out, and rounds as the page does", () => {
+  const script = fs.readFileSync(path.join(__dirname, "go-to-navigator.sh"), "utf8");
+  const page = fs.readFileSync(path.join(__dirname, "assets", "go-to.js"), "utf8");
+  const scriptPx = Object.fromEntries([.../\{([^}]*)\} as \$px/.exec(script)[1].matchAll(/(\w+): (\d+)/g)]
+    .map(([, name, value]) => [name, Number(value)]));
+  assert.deepEqual(scriptPx, pagePx);
+  assert.equal(/\* \$zoom - (\S+) \| ceil/.exec(script)[1], /: 1\) - (\S+)\);/.exec(page)[1]);
+});
+
+test("WebKit's float noise in a measure keeps its point, a hundredth of a pixel more takes the next", () => {
+  assert.equal(new Fit().next(315.0000067, 1), 315);
+  assert.equal(new Fit().next(180.0000038, 1.75), 315);
+  assert.equal(new Fit().next(315.01, 1), 316);
+});
+
+test("settings.json beside the app's socket wins over the state directory the environment names", () => {
+  const app = fs.mkdtempSync(path.join(os.tmpdir(), "go-to-app-"));
+  fs.writeFileSync(path.join(app, "settings.json"), JSON.stringify({ htmlOverlayZoom: 2 }));
+  const at = env => runScript([], { openStatus: 2, settings: '{"htmlOverlayZoom": 1.5}', env }).height;
+  assert.equal(at({ NGTERM_SOCKET: path.join(app, "ngterm.sock") }), opensAt(tree, 2), "a shell's socket");
+  assert.equal(at({ AGT_SOCKET: path.join(app, "ngterm.sock") }), opensAt(tree, 2), "a chord's socket");
+  assert.equal(at({ AGT_SOCKET: path.join(app, "other", "ngterm.sock") }), opensAt(tree, 1.5), "no settings.json there");
+  assert.equal(at({ AGT_SOCKET: path.join(app, "control.sock") }), opensAt(tree, 1.5), "a socket not in a state dir");
+  fs.rmSync(app, { recursive: true, force: true });
+});
+
+test("settings.json is read from the state directory the app uses", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "go-to-home-"));
+  for (const [dir, zoom] of [[".local/share", 2], ["data", 1.5]]) {
+    fs.mkdirSync(path.join(home, dir, "ngterm"), { recursive: true });
+    fs.writeFileSync(path.join(home, dir, "ngterm", "settings.json"), JSON.stringify({ htmlOverlayZoom: zoom }));
+  }
+  const at = env => runScript([], { openStatus: 2, settings: '{"htmlOverlayZoom": 3}', env: { HOME: home, ...env } });
+  const unset = { NGTERM_STATE_DIR: "" };
+  assert.equal(at({}).height, opensAt(tree, 3), "NGTERM_STATE_DIR first");
+  assert.equal(at(unset).height, opensAt(tree, 2), "an empty one is unset: ~/.local/share/ngterm");
+  assert.equal(at({ ...unset, XDG_DATA_HOME: path.join(home, "data") }).height, opensAt(tree, 1.5));
+  assert.equal(at({ ...unset, XDG_DATA_HOME: "data" }).height, opensAt(tree, 2), "a relative XDG_DATA_HOME is ignored");
+  fs.rmSync(home, { recursive: true, force: true });
 });

@@ -425,7 +425,7 @@ const GoTo = (() => {
 
     next(cssHeight, zoom) {
       if (!(cssHeight > 0)) return null;
-      const height = Math.ceil(cssHeight * (zoom > 0 ? zoom : 1) - 1e-6);
+      const height = Math.ceil(cssHeight * (zoom > 0 ? zoom : 1) - 1e-3);
       if (height === this.height) return null;
       this.height = height;
       return height;
