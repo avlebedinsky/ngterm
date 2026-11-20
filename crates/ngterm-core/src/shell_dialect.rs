@@ -157,24 +157,7 @@ impl ShellDialect {
     /// ([`env_program`]: `/usr/bin/env zsh`, `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
     #[must_use]
     pub fn of_shell(shell: &str) -> Self {
-        let shell = shell.trim_start();
-        let mut end = 0;
-        loop {
-            let rest = &shell[end..];
-            let word = rest.trim_start();
-            if word.is_empty() {
-                return Self::Unknown;
-            }
-            end += rest.len() - word.len() + word.find(char::is_whitespace).unwrap_or(word.len());
-            let program = &shell[..end];
-            if is_env(program) {
-                return env_program(shell[end..].split_whitespace()).map_or(Self::Unknown, Self::of_program);
-            }
-            let dialect = Self::of_program(program);
-            if dialect != Self::Unknown {
-                return dialect;
-            }
-        }
+        shell_program(shell).map_or(Self::Unknown, Self::of_program)
     }
 
     /// What submits a typed line: upstream's line feed for POSIX shells and fish, else a carriage return, the Enter
@@ -209,6 +192,27 @@ impl ShellDialect {
     #[must_use]
     pub fn typed<S: AsRef<str>>(self, argv: &[S]) -> Option<String> {
         self.line(argv).map(|line| line + self.enter())
+    }
+}
+
+/// The shell program after the same path and `env` rules as [`ShellDialect::of_shell`].
+pub(crate) fn shell_program(shell: &str) -> Option<&str> {
+    let shell = shell.trim_start();
+    let mut end = 0;
+    loop {
+        let rest = &shell[end..];
+        let word = rest.trim_start();
+        if word.is_empty() {
+            return None;
+        }
+        end += rest.len() - word.len() + word.find(char::is_whitespace).unwrap_or(word.len());
+        let program = &shell[..end];
+        if is_env(program) {
+            return env_program(shell[end..].split_whitespace());
+        }
+        if ShellDialect::of_program(program) != ShellDialect::Unknown {
+            return Some(program);
+        }
     }
 }
 

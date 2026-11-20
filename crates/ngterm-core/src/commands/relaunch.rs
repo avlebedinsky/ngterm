@@ -101,7 +101,6 @@ impl RestoreRuntime {
             restore_enabled: self.decision.replays(),
             live_fell_back: self.decision.live_fell_back(),
             denylist: self.denylist.clone(),
-            receiving_shell: self.decision.receiving_shell.clone(),
             ..LaunchSeedPolicy::default()
         }
     }

@@ -43,23 +43,25 @@ fn stat(pid: i32, parent: i32, pgrp: i32, session: i32) -> ProcessStat {
 }
 
 #[test]
-fn the_launch_receiver_reaches_the_pane_seed() {
-    for (shell, replay) in [("/bin/tcsh", false), ("/bin/zsh", true)] {
-        let mut fixture = Fixture::new(0);
-        let id = fixture.sessions[0];
-        let session = fixture.store_mut().unwrap().session_mut(id).unwrap();
-        session.was_restored = true;
-        session.launch.command = Some("stale-command".into());
-        session.restore.pending_foreground = Some(vec!["echo".into(), "!".into()]);
-        let token = install(&mut fixture.core, id, None);
-        let mut decision = RestoreLaunchDecision::new(RestoreMode::Rerun, None);
-        decision.receiving_shell = Some(shell.into());
-        fixture.core.set_restore_launch(decision);
-        fixture.core.wake_session(id);
-        let seed = fixture.core.request_pane_spawn(id, &token).unwrap();
-        assert_eq!(seed.command, None);
-        assert_eq!(seed.initial_input.is_some(), replay, "{shell}");
-    }
+fn a_capture_reaches_the_pane_before_the_host_checks_its_shell() {
+    let mut fixture = Fixture::new(0);
+    let id = fixture.sessions[0];
+    let session = fixture.store_mut().unwrap().session_mut(id).unwrap();
+    session.was_restored = true;
+    session.launch.command = Some("stale-command".into());
+    let capture = vec!["echo".into(), "!".into()];
+    session.restore.pending_foreground = Some(capture.clone());
+    let token = install(&mut fixture.core, id, None);
+    fixture
+        .core
+        .set_restore_launch(RestoreLaunchDecision::new(RestoreMode::Rerun, None));
+    fixture.core.wake_session(id);
+    let seed = fixture.core.request_pane_spawn(id, &token).unwrap();
+    assert_eq!(seed.command, None);
+    assert_eq!(
+        seed.initial_input,
+        Some(crate::command_restore::PaneInput::Replay(capture))
+    );
 }
 
 #[test]

@@ -23,8 +23,6 @@ pub struct RestoreLaunchDecision {
     pub active: RestoreMode,
     /// Why `live` cannot run on this host, probed whatever the requested mode.
     pub live_unavailable_reason: Option<String>,
-    /// The shell that receives an ordinary pane's captured command.
-    pub receiving_shell: Option<String>,
 }
 
 impl RestoreLaunchDecision {
@@ -41,7 +39,6 @@ impl RestoreLaunchDecision {
             requested,
             active,
             live_unavailable_reason,
-            receiving_shell: None,
         }
     }
 

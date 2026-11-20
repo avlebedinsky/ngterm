@@ -100,13 +100,12 @@ pub struct LaunchSeedPolicy {
     /// Daemons whose reset could not be confirmed at this launch: their panes attach with neither the captured replay
     /// nor the durable command, so a process that may still run is not started twice.
     pub suppressed_daemons: BTreeSet<String>,
-    /// The shell that receives an ordinary pane's captured command.
-    pub receiving_shell: Option<String>,
 }
 
 impl LaunchSeedPolicy {
     /// The `initial_input` for a captured argv: its replay, or `None` outside rerun mode or when the argv may not be
-    /// replayed (denylisted, a control character, an undecodable byte).
+    /// replayed (denylisted, a control character, an undecodable byte, or `!` for csh/tcsh).
+    /// `shell` is the pane profile's executable. Without a profile, the terminal checks its current shell before replay.
     fn restore_initial_input(&self, argv: Option<&[String]>, shell: Option<&str>) -> Option<PaneInput> {
         let argv = argv.filter(|_| self.restore_enabled)?;
         let denylist: Vec<&str> = self.denylist.iter().map(String::as_str).collect();
@@ -164,8 +163,7 @@ fn resolve_seed_in(
         let capture = session.take_pending_foreground(pane);
         let shell = session
             .shell_profile_for(pane)
-            .map(|profile| profile.executable.as_str())
-            .or(policy.receiving_shell.as_deref());
+            .map(|profile| profile.executable.as_str());
         let mut foreground_input = policy.restore_initial_input(capture.as_deref(), shell);
         // a replay is typed quoted for the shell; one that would expand `!NAME!` in it starts the plain shell
         if foreground_input.is_some()
@@ -347,36 +345,8 @@ mod tests {
     }
 
     #[test]
-    fn a_csh_receiver_starts_a_plain_shell_instead_of_a_capture_with_a_bang() {
-        for pane in [StatusPane::Left, StatusPane::Right] {
-            for shell in ["/bin/csh", "/bin/tcsh", "/bin/zsh", "/usr/bin/fish"] {
-                let mut restored = session(Some("stale-command"), false, true);
-                restored.split.shown = true;
-                restored.split.exists = true;
-                restored.split_launch.command = Some("stale-command".into());
-                let capture = argv(&["grep", "!needle", "log"]);
-                let restore = if pane == StatusPane::Left {
-                    &mut restored.restore
-                } else {
-                    &mut restored.split_restore
-                };
-                restore.pending_foreground = Some(capture.clone());
-                let rerun = LaunchSeedPolicy {
-                    receiving_shell: Some(shell.to_owned()),
-                    ..policy(true, &[])
-                };
-                let seed = resolve_seed(&mut restored, pane, &rerun);
-                assert_eq!(seed.command, None, "{pane:?} {shell}");
-                let expected = (!shell.ends_with("csh")).then_some(PaneInput::Replay(capture));
-                assert_eq!(seed.initial_input, expected, "{pane:?} {shell}");
-                assert!(restored.pane_restore(pane).unwrap().pending_foreground.is_none());
-            }
-        }
-    }
-
-    #[test]
     fn the_pane_profile_selects_the_receiver_and_a_pin_stays_explicit() {
-        for (profile, receiver, replay) in [("/bin/tcsh", "/bin/zsh", false), ("/bin/zsh", "/bin/tcsh", true)] {
+        for (profile, replay) in [("/bin/tcsh", false), ("/bin/zsh", true)] {
             let mut restored = session(Some("stale-command"), false, true);
             restored.shell_profile = Some(crate::shell_profiles::ShellProfile::new(
                 "test",
@@ -385,10 +355,7 @@ mod tests {
                 &[],
             ));
             let captured = argv(&["echo", "!"]);
-            let rerun = LaunchSeedPolicy {
-                receiving_shell: Some(receiver.into()),
-                ..policy(true, &[])
-            };
+            let rerun = policy(true, &[]);
             restored.restore.pending_foreground = Some(captured.clone());
             let seed = resolve_seed(&mut restored, StatusPane::Left, &rerun);
             assert_eq!(seed.command, None);

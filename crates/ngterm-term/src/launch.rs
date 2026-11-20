@@ -46,7 +46,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ngterm_core::command_restore::PaneInput;
+use ngterm_core::command_restore::{PaneInput, should_restore_in_shell};
 use ngterm_core::ghostty_config::{
     GhosttyConfig, InputSource, ShellIntegration, ShellIntegrationFeatures, WorkingDirectory,
 };
@@ -201,7 +201,7 @@ impl Host {
         let typed = launch
             .initial_input
             .as_ref()
-            .and_then(|input| typed_input(input, ShellDialect::of_shell(&line)));
+            .and_then(|input| typed_input(input, &line));
         let integration = self.integrate(launch, profile, &mut line, env, &mut vars);
         for (key, value) in &self.env {
             vars.set(key, value.clone());
@@ -393,10 +393,14 @@ fn program(line: &str, _shell: bool, _cwd: Option<&Path>, _env: &dyn Env) -> (Pa
     pane_command(&ShellCommand::posix(line))
 }
 
-/// `input` as typed into a program of `dialect` (the login shell's, or a command line's first program); `None`, logged,
-/// for a captured argv that shell cannot be handed safely (`ngterm_core::shell_dialect`), which leaves a plain shell.
-fn typed_input(input: &PaneInput, dialect: ShellDialect) -> Option<String> {
-    let text = input.text(dialect);
+/// `input` as typed into `shell`, with a pane profile before the host shell. Refuse a capture with `!` for csh/tcsh.
+/// The current host decides at pane start, so a config reload cannot leave a stale shell check.
+fn typed_input(input: &PaneInput, shell: &str) -> Option<String> {
+    let dialect = ShellDialect::of_shell(shell);
+    let text = match input {
+        PaneInput::Replay(argv) if !should_restore_in_shell(argv, &[] as &[&str], Some(shell)) => None,
+        _ => input.text(dialect),
+    };
     if text.is_none()
         && let PaneInput::Replay(argv) = input
     {
@@ -989,6 +993,110 @@ mod tests {
             host(None).prepare(&command, &MapEnv::new()).initial_input.as_deref(),
             Some(&b"'tool' 'a b'\n"[..])
         );
+    }
+
+    #[test]
+    fn a_restored_capture_uses_the_current_host_after_a_config_reload() {
+        use ngterm_core::model::{Session, SessionSeed, StatusPane};
+        use ngterm_core::restore::spawn_plan::{LaunchSeedPolicy, resolve_seed};
+
+        for pane in [StatusPane::Left, StatusPane::Right] {
+            for (previous, current, replay) in [
+                ("/bin/bash", "/bin/tcsh", false),
+                ("/bin/tcsh", "/bin/bash", true),
+                ("/bin/bash", "/usr/bin/env tcsh", false),
+                ("/bin/tcsh", "/usr/bin/env bash", true),
+            ] {
+                let mut receiver = Host {
+                    shell: previous.into(),
+                    ..host(None)
+                };
+                let mut session = Session::new(SessionSeed::default());
+                session.was_restored = true;
+                session.launch.command = Some("stale-command".into());
+                session.split.shown = true;
+                session.split.exists = true;
+                session.split_launch.command = Some("stale-command".into());
+                let restore = if pane == StatusPane::Left {
+                    &mut session.restore
+                } else {
+                    &mut session.split_restore
+                };
+                let capture = vec!["echo".into(), "!needle".into()];
+                restore.pending_foreground = Some(capture.clone());
+                let seed = resolve_seed(
+                    &mut session,
+                    pane,
+                    &LaunchSeedPolicy {
+                        restore_enabled: true,
+                        ..LaunchSeedPolicy::default()
+                    },
+                );
+                assert_eq!(seed.command, None);
+                assert_eq!(seed.initial_input, Some(PaneInput::Replay(capture)));
+                assert!(session.pane_restore(pane).unwrap().pending_foreground.is_none());
+                receiver.shell = current.into();
+                let prepared = receiver.prepare(&Launch::from_seed(&seed, None, &[]), &MapEnv::new());
+                assert_eq!(
+                    prepared.initial_input,
+                    replay.then(|| b"'echo' '!needle'\n".to_vec()),
+                    "{pane:?} {previous} -> {current}"
+                );
+                assert!(!prepared.command.args.iter().any(|arg| arg == "stale-command"));
+            }
+        }
+    }
+
+    #[test]
+    fn the_current_receiver_refuses_bangs_only_in_captured_commands_for_csh() {
+        for shell in ["/bin/csh", "/bin/tcsh -l", "/usr/bin/env tcsh", "env -S 'tcsh -l'"] {
+            let receiver = Host {
+                shell: shell.into(),
+                ..host(None)
+            };
+            for (input, expected) in [
+                (PaneInput::Replay(vec!["echo".into(), "!".into()]), None),
+                (
+                    PaneInput::Replay(vec!["echo".into(), "safe".into()]),
+                    Some("'echo' 'safe'\n"),
+                ),
+                (PaneInput::Line("echo !".into()), Some("echo !\n")),
+            ] {
+                let launch = Launch {
+                    initial_input: Some(input),
+                    ..Launch::default()
+                };
+                let prepared = receiver.prepare(&launch, &MapEnv::new());
+                assert_eq!(
+                    prepared.initial_input.as_deref(),
+                    expected.map(str::as_bytes),
+                    "{shell}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_profile_selects_the_actual_receiver_before_the_current_host() {
+        use ngterm_core::shell_profiles::ShellProfile;
+
+        for (profile, shell, replay) in [("/bin/tcsh", "/bin/bash", false), ("/bin/bash", "/bin/tcsh", true)] {
+            let receiver = Host {
+                shell: shell.into(),
+                ..host(None)
+            };
+            let launch = Launch {
+                shell_profile: Some(ShellProfile::new("test", "test", profile.into(), &[])),
+                initial_input: Some(PaneInput::Replay(vec!["echo".into(), "!".into()])),
+                ..Launch::default()
+            };
+            let prepared = receiver.prepare(&launch, &MapEnv::new());
+            assert_eq!(
+                prepared.initial_input,
+                replay.then(|| b"'echo' '!'\n".to_vec()),
+                "{profile} {shell}"
+            );
+        }
     }
 
     /// Without `HOME` (as on Windows, mostly), or with it empty, `home` is the user's own home: the password

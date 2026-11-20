@@ -14,17 +14,7 @@ use ngterm_session::launch::Runtime;
 /// capture `runtime`'s reason. Capture it after libghostty's resources dir is exported.
 pub fn launch_decision(settings: &AppSettings, runtime: &Runtime, env: &dyn Env) -> RestoreLaunchDecision {
     let probe = runtime.live_probe(env);
-    let mut decision = RestoreLaunchDecision::new(settings.effective_restore_mode(), probe.unavailable_reason());
-    decision.receiving_shell = runtime
-        .command_shell
-        .clone()
-        .or_else(|| {
-            ngterm_core::ghostty_config::configured_command(env)
-                .as_deref()
-                .and_then(command_program)
-                .map(str::to_owned)
-        })
-        .or_else(|| runtime.login_shell.clone());
+    let decision = RestoreLaunchDecision::new(settings.effective_restore_mode(), probe.unavailable_reason());
     tracing::info!(
         requested = decision.requested.wire_name(),
         active = decision.active.wire_name(),
@@ -33,20 +23,6 @@ pub fn launch_decision(settings: &AppSettings, runtime: &Runtime, env: &dyn Env)
         "restore mode for this launch"
     );
     decision
-}
-
-fn command_program(command: &str) -> Option<&str> {
-    let command = command.trim();
-    let command = command
-        .strip_prefix("direct:")
-        .or_else(|| command.strip_prefix("shell:"))
-        .unwrap_or(command)
-        .trim_start();
-    if let Some(quote @ ('\'' | '"')) = command.chars().next() {
-        command[1..].split_once(quote).map(|(program, _)| program)
-    } else {
-        command.split_whitespace().next()
-    }
 }
 
 /// The basename of the user's `$SHELL`, which widens shell recognition in the foreground reads.
@@ -111,7 +87,6 @@ mod tests {
             ..AppSettings::default()
         };
         let decision = launch_decision(&settings, &capture, &env);
-        assert_eq!(decision.receiving_shell.as_deref(), Some("/opt/homebrew/bin/fish"));
         assert_eq!(
             (decision.active, decision.live_unavailable_reason),
             (RestoreMode::Live, None)
@@ -123,48 +98,6 @@ mod tests {
                 .as_deref(),
             Some(ngterm_core::restore::mode::UNSUPPORTED_LOGIN_SHELL)
         );
-    }
-
-    #[test]
-    fn the_launch_uses_the_configured_program_or_the_account_shell_for_replay() {
-        let root = tempfile::tempdir().unwrap();
-        let state = root.path().join("state");
-        let config = state.join("config/ghostty.conf");
-        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-        let env = MapEnv::new()
-            .with("NGTERM_STATE_DIR", &state)
-            .with("HOME", root.path().join("home"));
-        let runtime = Runtime {
-            login_shell: Some("/bin/tcsh".into()),
-            ..Runtime::default()
-        };
-        let settings = AppSettings {
-            restore_mode: Some(RestoreMode::Rerun),
-            ..AppSettings::default()
-        };
-        for (command, expected) in [
-            ("", "/bin/tcsh"),
-            ("/bin/zsh -l", "/bin/zsh"),
-            ("shell:/bin/csh -l", "/bin/csh"),
-            ("direct:'/opt/my shells/tcsh' -l", "/opt/my shells/tcsh"),
-            ("\"/opt/my shells/tcsh\" -l", "/opt/my shells/tcsh"),
-        ] {
-            std::fs::write(&config, format!("command = {command}\n")).unwrap();
-            let decision = launch_decision(&settings, &runtime, &env);
-            assert_eq!(decision.receiving_shell.as_deref(), Some(expected));
-        }
-        std::fs::remove_file(config).unwrap();
-        let runtime = Runtime {
-            command_shell: Some("/bin/bash".into()),
-            ..runtime
-        };
-        assert_eq!(
-            launch_decision(&settings, &runtime, &env).receiving_shell.as_deref(),
-            Some("/bin/bash")
-        );
-        for command in ["", "shell:", "'unterminated", "\"unterminated"] {
-            assert_eq!(command_program(command), None);
-        }
     }
 
     #[test]

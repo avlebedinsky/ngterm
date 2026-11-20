@@ -548,10 +548,13 @@ pub fn should_restore<S: AsRef<str>>(argv: &[String], denylist: &[S]) -> bool {
 #[must_use]
 pub fn should_restore_in_shell<S: AsRef<str>>(argv: &[String], denylist: &[S], shell: Option<&str>) -> bool {
     should_restore(argv, denylist)
-        && !(shell.is_some_and(|shell| {
-            let name = shell_name(basename(shell));
-            name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
-        }) && argv.iter().any(|word| word.contains('!')))
+        && !(shell
+            .and_then(crate::shell_dialect::shell_program)
+            .is_some_and(|shell| {
+                let name = shell_name(basename(shell.strip_prefix('-').unwrap_or(shell)));
+                name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
+            })
+            && argv.iter().any(|word| word.contains('!')))
 }
 
 /// Whether `value` carries a character a line editor reads as an editing command (C0 or DEL), tab included.
@@ -1588,7 +1591,21 @@ mod tests {
     #[test]
     fn a_bang_is_refused_only_for_a_csh_receiver() {
         let none: [&str; 0] = [];
-        for shell in ["/bin/csh", "/bin/tcsh", "tcsh", "csh.exe", "/bin/CSH", "TcSh.ExE"] {
+        for shell in [
+            "/bin/csh",
+            "/bin/tcsh",
+            "tcsh",
+            "csh.exe",
+            "/bin/CSH",
+            "TcSh.ExE",
+            "-tcsh",
+            "/bin/tcsh -l",
+            "/usr/bin/env tcsh",
+            "env -S 'tcsh -l'",
+            "env -i FOO=bar env /bin/csh",
+            "env -u SHELL --chdir /tmp -- tcsh",
+            "env --split-string=tcsh -l",
+        ] {
             for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
                 assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
             }

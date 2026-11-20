@@ -505,7 +505,10 @@ async fn a_remote_command_keeps_apostrophes_with_marks_as_literal_bytes() {
         .args(["-c", &commands(&transport)[0]])
         .env_clear()
         .env("HOME", home.path())
-        .env("PATH", "/usr/bin:/bin")
+        .env(
+            "PATH",
+            std::env::join_paths([bin, "/usr/bin".into(), "/bin".into()]).unwrap(),
+        )
         .output()
         .unwrap();
     let mut expected = arguments.to_vec();
