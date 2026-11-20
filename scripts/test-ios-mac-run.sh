@@ -54,7 +54,8 @@ export HOME="$FAKE_MAC_HOME"
 unset XDG_CACHE_HOME
 # FAKE_MAC_FAIL_OP=<op>: that operation fails (1) and does nothing. FAKE_MAC_LOSE_OP=<op>: the first call of it runs,
 # then the connection is lost (255). FAKE_MAC_END_OP=<op>: the run ends during the process check.
-if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}${FAKE_MAC_END_OP:-}" ]]; then
+# FAKE_MAC_PEEK_OP=<op>: at each echo of that operation, a reader looks at the exit file and records an empty one.
+if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}${FAKE_MAC_END_OP:-}${FAKE_MAC_PEEK_OP:-}" ]]; then
   script="$(cat)"
   op="${script##*$'\n'op_}"
   [[ "$op" != "${FAKE_MAC_FAIL_OP:-}" ]] || exit 1
@@ -73,6 +74,14 @@ recorded_alive() {
   return "${FAKE_MAC_END_ALIVE:-1}"
 }
 kill() { echo "$*" >>"$RUN/signalled"; return 1; }
+'"op_$op"
+  fi
+  if [[ "$op" == "${FAKE_MAC_PEEK_OP:-}" ]]; then
+    script="${script%$'\n'op_*}"$'\n''
+echo() {
+  if [[ -f "$RUN/exit" && ! -s "$RUN/exit" ]]; then printf "empty\n" >>"$RUN/peeked"; fi
+  builtin echo "$@"
+}
 '"op_$op"
   fi
   exec bash -c "$script"
@@ -347,6 +356,11 @@ end_during_check
 run env FAKE_MAC_END_OP=cancel FAKE_MAC_END_PID=cmdpid FAKE_MAC_END_ALIVE=0 "$runner" cancel
 check "cancel sends no signal when the run ends during the command process check" \
   '((status == 0)) && [[ "$(cat "$scratch/run/exit")" == 7 && ! -e "$scratch/run/signalled" && ! -e "$scratch/claim" ]]'
+end_during_check
+run env FAKE_MAC_PEEK_OP=cancel "$runner" cancel
+check "cancel writes the exit status of a lost run in one step, never as an empty exit file" \
+  '((status == 0)) && [[ "$(cat "$scratch/run/exit")" == 143 && ! -e "$scratch/run/peeked" ]] &&
+    [[ -z "$(find "$scratch/run" -name "exit.*")" ]]'
 run "$runner" clean
 
 # --- the iOS build lock under an outer lockf (lib/native.sh) --------------------------------------------------------

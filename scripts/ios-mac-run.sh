@@ -454,7 +454,9 @@ op_cancel() {
     kill -KILL -- "-$pid" 2>/dev/null || true
   fi
   if [[ -d "$RUN" && ! -f "$RUN/exit" ]]; then
-    echo 143 >"$RUN/exit"
+    # write and rename, as job.sh does: a poll in another call must never read an empty exit file
+    echo 143 >"$RUN/exit.cancel"
+    mv "$RUN/exit.cancel" "$RUN/exit"
     echo "$SELF: the run was cancelled" >>"$RUN/command.log"
   fi
   rm -f "$CLAIM"
