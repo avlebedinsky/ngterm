@@ -5,13 +5,22 @@ v0.39.1). The pane runs `cat` instead of a login shell (`session.new --command`)
 before the typed text: the terminal echoes it from column 0, and the cursor's column (the protocol reports no row)
 counts what was typed without wrapping. The pane mounts before its program starts, and the reference's `login` prints
 its `Last login` line before running the command, into the middle of anything typed that early: the test first has
-`cat` print a line back, the same probe `test_terminal_bindings` uses."""
+`cat` print a line back, the same probe `test_terminal_bindings` uses.
 
+On the Mac, Option is a text key by default (Ghostty's `macos-option-as-alt`): it types the layout's character. With
+the option on, Option is Alt: the key goes with ESC before it, which `cat -v` shows as `^[`. The Option cases press the
+US layout's keys (macOS CI's and the test Macs'), and no dead key while Option types text."""
+
+import contextlib
 import re
+import sys
 
 import pytest
+from agterm_conformance.ghostty_config import configured
 from agterm_conformance.match import assert_ok
 from agterm_conformance.wait import wait_cursor
+
+MAC = pytest.mark.skipif(sys.platform != "darwin", reason="the Mac's Option key")
 
 # Case, digits and shifted symbols; no Return follows them, so `cat` never prints them back and the echo is their only
 # copy in the pane.
@@ -54,3 +63,32 @@ def test_text_typed_as_unicode_key_events_reaches_the_pane_as_typed(ctl, ui):
         ctl.wait_text(sid, re.escape(UNICODE_TEXT))
     finally:
         ctl.request("session.close", sid)
+
+
+@contextlib.contextmanager
+def _reading(ctl, command):
+    """A new session that runs `command`, once it has printed a typed line back."""
+    sid = assert_ok(ctl.request("session.new", command=command))["id"]
+    ctl.wait_mounted(sid, "left")
+    try:
+        assert_ok(ctl.request("session.type", sid, text="cat-reads\n"))
+        ctl.wait_text(sid, r"cat-reads[\s\S]*cat-reads", all=True)
+        yield sid
+    finally:
+        ctl.request("session.close", sid)
+
+
+@MAC
+@pytest.mark.covers("session.text", "behavior:pane.typing")
+def test_option_types_the_layouts_character(ctl, ui):
+    with _reading(ctl, "cat") as sid:
+        ui.press("alt+s", "alt+g", "alt+p", "alt+shift+a", "return")
+        ctl.wait_text(sid, r"ß©πÅ\s+ß©πÅ", all=True)
+
+
+@MAC
+@pytest.mark.covers("session.text", "config.reload", "behavior:pane.typing")
+def test_option_as_alt_sends_escape_before_the_key(ctl, ui):
+    with configured(ctl, "macos-option-as-alt = true\n"), _reading(ctl, "cat -v") as sid:
+        ui.press("alt+u", "a", "alt+e", "e", "return")
+        ctl.wait_text(sid, r"\^\[ua\^\[ee\s+\^\[ua\^\[ee", all=True)

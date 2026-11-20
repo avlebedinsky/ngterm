@@ -144,7 +144,10 @@ def _types_into_it(ctl, ui, marker):
     for char in f"echo {marker}":
         ui.press("space" if char == " " else char)
     ui.press("return")
+    _ran(ctl, marker)
 
+
+def _ran(ctl, marker):
     def ran():
         text = assert_ok(ctl.request("quick.text", all=True))["text"]
         assert re.search(rf"^{marker}\s*$", text, re.MULTILINE), text[-400:]
@@ -256,3 +259,22 @@ def test_the_quick_panel_shows_over_a_full_screen_window(app, ctl, ui):
     finally:
         ctl.request("quick", mode="hide")
         _set_fullscreen(ctl, False)
+
+
+# Text expanders and password managers type text as key events that carry it as a Unicode string (key code 0, the A
+# key): letters of other scripts, CJK and an emoji.
+UNICODE_TEXT = "über-жук-你好-🙂"
+
+
+@pytest.mark.covers("ui:quick-terminal", "quick.text")
+def test_the_quick_panel_takes_text_typed_as_unicode_key_events(app, ctl, ui):
+    ui.activate()
+    try:
+        ui.press("ctrl+`")
+        ctl.wait_tree(lambda tree: tree["tree"]["quickVisible"] is True)
+        _borderless(ui, ctl.instance.pid, "shown", _framed(zoomed=False))
+        ui.type_text(f"echo {UNICODE_TEXT}")
+        ui.press("return")
+        _ran(ctl, re.escape(UNICODE_TEXT))
+    finally:
+        ctl.request("quick", mode="hide")
