@@ -528,12 +528,19 @@ impl WindowLibrary {
             .is_some_and(|session| session.update_html_overlay(id, change))
     }
 
-    /// Records what the web view reported for page `id` (upstream's `setHtmlLoadState`); a no-op once it left its slot.
+    /// Records what the web view reported for page `id` (upstream's `setHtmlLoadState`), wherever its slot now is, a
+    /// session an undoable close holds included. Whether it changed: false for a repeat of the recorded state and once
+    /// the page left its slot.
     pub fn set_html_load_state(&mut self, id: Uuid, state: HtmlLoadState, error: Option<String>) -> bool {
+        let mut changed = false;
         self.update_html_overlay(id, |page| {
-            page.load_state = state;
-            page.load_error = error;
-        })
+            if page.load_state != state || page.load_error != error {
+                page.load_state = state;
+                page.load_error = error;
+                changed = true;
+            }
+        });
+        changed
     }
 
     /// Records what the web view shows now (upstream's `setHtmlPage`).

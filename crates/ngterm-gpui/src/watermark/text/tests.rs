@@ -44,6 +44,11 @@ fn text(state: &std::path::Path) -> Applied {
     desired(&session, StatusPane::Left, Rgb::WHITE, state, 1.0)
 }
 
+fn request(cx: &mut TestAppContext, applied: &Applied) -> Rc<TextImage> {
+    let path = applied.text_file.as_ref().expect("a text watermark");
+    cx.update(|cx| TextImage::request(applied, path, detached_poster(), cx))
+}
+
 #[gpui_kit::test]
 fn panes_share_a_render_and_keep_the_old_file_until_the_new_image_is_ready(cx: &mut TestAppContext) {
     let worker = PausedWorker::new();
@@ -52,12 +57,8 @@ fn panes_share_a_render_and_keep_the_old_file_until_the_new_image_is_ready(cx: &
     let path = applied.text_file.as_ref().unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, b"old image").unwrap();
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
-    let second = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
+    let second = request(cx, &applied);
     assert!(Rc::ptr_eq(&image, &second));
     assert!(image.resolve().is_pending());
     worker.complete_next();
@@ -75,16 +76,12 @@ fn a_closed_pane_cancels_queued_work_and_drops_an_unpublished_image(cx: &mut Tes
     let state = tempfile::tempdir().unwrap();
     let applied = text(state.path());
     let path = applied.text_file.as_ref().unwrap();
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
     drop(image);
     worker.complete_next();
     assert!(!path.parent().unwrap().exists());
 
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
     worker.complete_next();
     cx.run_until_parked();
     assert!(!path.exists(), "a completed render does not publish itself");
@@ -97,14 +94,10 @@ fn a_replacement_cannot_publish_the_previous_text(cx: &mut TestAppContext) {
     let worker = PausedWorker::new();
     let state = tempfile::tempdir().unwrap();
     let applied = text(state.path());
-    let old = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let old = request(cx, &applied);
     let mut next = applied.clone();
     next.watermark.as_mut().unwrap().text = Some("NEXT".into());
-    let image = cx
-        .update(|cx| TextImage::request(&next, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &next);
     assert!(!Rc::ptr_eq(&old, &image));
     worker.complete_next();
     cx.run_until_parked();
@@ -122,9 +115,7 @@ fn a_failed_render_or_install_reports_no_image(cx: &mut TestAppContext) {
     let state = tempfile::tempdir().unwrap();
     let mut applied = text(state.path());
     applied.watermark.as_mut().unwrap().text = Some(String::new());
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
     worker.complete_next();
     cx.run_until_parked();
     assert_eq!(image.resolve(), Poll::Ready(None));
@@ -133,9 +124,7 @@ fn a_failed_render_or_install_reports_no_image(cx: &mut TestAppContext) {
     applied.watermark.as_mut().unwrap().text = Some("VALID".into());
     let path = applied.text_file.as_ref().unwrap();
     std::fs::create_dir_all(path).unwrap();
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
     worker.complete_next();
     cx.run_until_parked();
     assert_eq!(image.resolve(), Poll::Ready(None));
@@ -150,8 +139,6 @@ fn a_stopped_worker_reports_no_image(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::channel();
     drop(receiver);
     TEST_WORKER.with_borrow_mut(|worker| *worker = Some(sender));
-    let image = cx
-        .update(|cx| TextImage::request(&applied, detached_poster(), cx))
-        .unwrap();
+    let image = request(cx, &applied);
     assert_eq!(image.resolve(), Poll::Ready(None));
 }

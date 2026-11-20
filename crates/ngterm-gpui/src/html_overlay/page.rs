@@ -605,21 +605,6 @@ impl Page {
     fn report_load(&self, load: HtmlLoadState, error: Option<String>) {
         let id = self.id;
         post(&self.poster, move |state: &mut AppState| {
-            let unchanged = state
-                .core
-                .html_overlay_slot(id)
-                .and_then(|slot| {
-                    state
-                        .core
-                        .library()
-                        .store(slot.window)?
-                        .html_overlay(slot.session, slot.pane)
-                        .ok()
-                })
-                .is_some_and(|page| page.load_state == load && page.load_error == error);
-            if unchanged {
-                return;
-            }
             if state.core.set_html_load_state(id, load, error) {
                 state.settle();
             }

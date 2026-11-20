@@ -674,7 +674,8 @@ impl Core {
         zoom::resolve(self.settings().html_overlay_zoom)
     }
 
-    /// The web view of page `id` reported its load state; whether the page still sits in a slot. Commit afterwards.
+    /// The web view of page `id` reported its load state; whether the recorded state changed (false for a repeat and
+    /// once the page left its slot). Commit afterwards.
     pub fn set_html_load_state(&mut self, id: Uuid, state: HtmlLoadState, error: Option<String>) -> bool {
         self.library_mut().set_html_load_state(id, state, error)
     }

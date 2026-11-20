@@ -1633,10 +1633,8 @@ fn sync_watermarks(env: &DeckEnv, page: &Page, session: &Session, opacity: f64, 
             }
             continue;
         };
-        let resolved = if desired.text_file.is_some() {
-            let Some(image) = watermark::TextImage::request(&desired, env.poster.clone(), cx) else {
-                continue;
-            };
+        let resolved = if let Some(file) = &desired.text_file {
+            let image = watermark::TextImage::request(&desired, file, env.poster.clone(), cx);
             let resolved = image.resolve();
             *pane.text_image.borrow_mut() = Some(image);
             let std::task::Poll::Ready(resolved) = resolved else {

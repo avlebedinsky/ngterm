@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::{OnceLock, mpsc};
 use std::task::Poll;
@@ -43,12 +43,12 @@ impl TextImage {
         self.applied == *applied
     }
 
-    pub(crate) fn request(applied: &Applied, poster: Poster, cx: &App) -> Option<Rc<Self>> {
-        let path = applied.text_file.clone()?;
-        Some(IMAGES.with_borrow_mut(|images| {
+    /// The shared render of `applied`, whose text image goes to `path` (its `text_file`).
+    pub(crate) fn request(applied: &Applied, path: &Path, poster: Poster, cx: &App) -> Rc<Self> {
+        IMAGES.with_borrow_mut(|images| {
             images.retain(|_, image| image.strong_count() > 0);
             if let Some(image) = images
-                .get(&path)
+                .get(path)
                 .and_then(Weak::upgrade)
                 .filter(|image| image.matches(applied))
             {
@@ -57,7 +57,7 @@ impl TextImage {
             let (sender, receiver) = async_channel::bounded(1);
             let image = Rc::new(Self {
                 applied: applied.clone(),
-                path: path.clone(),
+                path: path.to_path_buf(),
                 state: RefCell::new(ImageState::Pending),
                 task: RefCell::new(None),
                 receiver: receiver.clone(),
@@ -71,9 +71,9 @@ impl TextImage {
             } else {
                 *image.state.borrow_mut() = ImageState::Rendered(None);
             }
-            images.insert(path, Rc::downgrade(&image));
+            images.insert(path.to_path_buf(), Rc::downgrade(&image));
             image
-        }))
+        })
     }
 
     fn listen(self: &Rc<Self>, receiver: async_channel::Receiver<Option<NamedTempFile>>, poster: Poster, cx: &App) {

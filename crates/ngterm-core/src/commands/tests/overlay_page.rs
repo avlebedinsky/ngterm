@@ -240,6 +240,17 @@ fn reload_moves_the_revision_and_navigate_reaches_the_web_view() {
         can_go_forward: false,
     };
     assert!(fixture.core.set_html_load_state(page, HtmlLoadState::Loaded, None));
+    assert!(
+        !fixture.core.set_html_load_state(page, HtmlLoadState::Loaded, None),
+        "a repeat changes nothing"
+    );
+    assert!(
+        fixture
+            .core
+            .set_html_load_state(page, HtmlLoadState::Loaded, Some("late".into())),
+        "an other error is a change"
+    );
+    assert!(fixture.core.set_html_load_state(page, HtmlLoadState::Loaded, None));
     assert!(fixture.core.set_html_page(page, Some(info.clone())));
     let read = |fixture: &Fixture| fixture.store().session(id).unwrap().overlay.html.clone().unwrap();
     assert!(overlay(&mut fixture, SessionCmd::OverlayReload, id, |a| a.current = Some(true)).ok);
@@ -467,6 +478,10 @@ fn a_page_in_an_undoable_close_stays_pending_until_the_close_is_final() {
     assert!(
         fixture.core.set_html_load_state(page, HtmlLoadState::Loaded, None),
         "reports still land"
+    );
+    assert!(
+        !fixture.core.set_html_load_state(page, HtmlLoadState::Loaded, None),
+        "a repeat changes nothing"
     );
     assert!(
         fixture.core.html_overlay_slot(page).is_none(),
