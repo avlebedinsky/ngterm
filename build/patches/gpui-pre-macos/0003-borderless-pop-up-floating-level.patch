@@ -1,0 +1,23 @@
+A borderless pop-up (0002) is at the floating level. GPUI put every `WindowKind::PopUp` at `NSPopUpWindowLevel` (101),
+so the quick terminal's panel was above the floating panels of other apps. Upstream agterm's `QuickTerminalPanel` sets
+`level = .floating` (3). Now a pop-up without a title bar gets `NSFloatingWindowLevel`. Its collection behavior does
+not change (all spaces, full-screen auxiliary), so it still shows on each space and over a full-screen app. A pop-up
+with a title bar stays at `NSPopUpWindowLevel`. scripts/vendor-gpui.sh applies this to the verified crates.io archive.
+
+diff -ruN a/src/window.rs b/src/window.rs
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1236,7 +1236,12 @@
+                 WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
+                     add_mouse_tracking_area(tracking_view);
+ 
+-                    native_window.setLevel_(NSPopUpWindowLevel);
++                    // A borderless panel floats over normal windows, not over other apps' floating panels.
++                    native_window.setLevel_(if borderless {
++                        NSFloatingWindowLevel
++                    } else {
++                        NSPopUpWindowLevel
++                    });
+                     if borderless {
+                         // A borderless window has no shadow until it asks for one.
+                         let _: () = msg_send![native_window, setHasShadow: YES];

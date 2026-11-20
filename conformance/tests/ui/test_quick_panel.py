@@ -1,7 +1,8 @@
 """The quick terminal's panel on macOS, as the user meets it. The in-app chord (ctrl+`, through the OS's keyboard
 input) shows it without a title bar: its AX window has none of the title bar's buttons, also when it is zoomed. It
-floats over normal windows, and it takes the keyboard: the keys typed next go to its terminal. Upstream's
-`QuickTerminalPanel` is `[.borderless, .nonactivatingPanel]` at the floating level and can become key. Its frame is
+floats over normal windows at the floating level, not over the floating panels of other apps, and it takes the
+keyboard: the keys typed next go to its terminal. Upstream's `QuickTerminalPanel` is
+`[.borderless, .nonactivatingPanel]` at the floating level and can become key. Its frame is
 upstream's `targetFrame`: the panel size of its screen's visible frame (the menu bar and Dock left out), centered in
 it, and the whole visible frame while zoomed."""
 
@@ -101,8 +102,8 @@ def _quick_windows(ui):
     ]
 
 
-def _layers(ui, pid, size):
-    """The window server layers of the on-screen windows of `pid` that have `size`."""
+def _layers(ui, pid, frame):
+    """The window server layers of the on-screen windows of `pid` whose bounds are `frame`, as `_frame` gives it."""
     q = ui.quartz
     windows = q.CGWindowListCopyWindowInfo(
         q.kCGWindowListOptionOnScreenOnly | q.kCGWindowListExcludeDesktopElements, q.kCGNullWindowID
@@ -111,13 +112,13 @@ def _layers(ui, pid, size):
         int(window[q.kCGWindowLayer])
         for window in windows or ()
         if int(window[q.kCGWindowOwnerPID]) == pid
-        and (float(window[q.kCGWindowBounds]["Width"]), float(window[q.kCGWindowBounds]["Height"])) == size
+        and tuple(float(window[q.kCGWindowBounds][key]) for key in ("X", "Y", "Width", "Height")) == frame
     ]
 
 
 def _borderless(ui, pid, what, check):
-    """The shown panel: one AX window with no title bar buttons, over normal windows (a layer above 0), whose frame
-    passes `check`."""
+    """The shown panel: one AX window with no title bar buttons, whose frame passes `check`, and over normal windows
+    one window at its frame, at the floating level. A main window at the zoomed panel's frame stays at layer 0."""
 
     def panel():
         windows = _quick_windows(ui)
@@ -125,8 +126,12 @@ def _borderless(ui, pid, what, check):
         ((frame, buttons),) = windows
         assert buttons == [], f"{what}: the panel has the title bar buttons {buttons}"
         assert check(frame), f"{what}: the panel's frame is {frame} in the visible frame {_visible_frame(frame)}"
-        layers = _layers(ui, pid, frame[2:])
-        assert layers and all(layer > 0 for layer in layers), f"{what}: the panel's window layers are {layers}"
+        layers = _layers(ui, pid, frame)
+        floating = int(ui.quartz.CGWindowLevelForKey(ui.quartz.kCGFloatingWindowLevelKey))
+        assert [layer for layer in layers if layer > 0] == [floating], (
+            f"{what}: the layers of the windows at the panel's frame are {layers}, not one at the floating level "
+            f"{floating}"
+        )
         return frame
 
     panel.__qualname__ = f"the borderless panel {what}"

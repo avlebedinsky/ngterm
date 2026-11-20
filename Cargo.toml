@@ -281,8 +281,8 @@ gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
 # build/patches/gpui-pre-windows.
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 # A menu item whose tag names no action no longer deadlocks the main thread, as ngterm's own AppKit menu bar's Edit items
-# did; a pop-up window without a title bar is a borderless panel, the quick terminal's: vendor/gpui-pre-macos is the
-# verified crates.io source plus build/patches/gpui-pre-macos.
+# did; a pop-up window without a title bar is a borderless panel at the floating level, the quick terminal's:
+# vendor/gpui-pre-macos is the verified crates.io source plus build/patches/gpui-pre-macos.
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 # ngterm-pty's PTY and child: vendor/portable-pty is the verified crates.io source plus build/patches/portable-pty
 # (scripts/vendor-portable-pty.sh): ConPTY from kernel32 only, herdr's Windows environment and PATH fixes, a child
