@@ -231,14 +231,21 @@ fn the_login_shell_codex_home_applies_to_both_installers() {
         crate::test_shell::CHILD_DEADLINE,
     )
     .expect("the login shell ran");
-    assert_eq!(probe.codex_home, Some(custom.clone()));
+    assert_eq!(
+        probe.codex_home.as_ref().unwrap().canonicalize().unwrap(),
+        custom.canonicalize().unwrap()
+    );
     assert_eq!(
         home.install_hooks(&no_opencode(&home), Some(&probe)).codex,
         CodexResult::Merged
     );
     assert!(custom.join("config.toml").exists());
     let report = skill::apply(&skill::plan(&home.env, Some(&probe)).unwrap());
-    assert!(report.installed.contains(&("Codex", custom.join("skills/ngterm"))));
+    let (_, installed) = report.installed.iter().find(|(agent, _)| *agent == "Codex").unwrap();
+    assert_eq!(
+        installed.canonicalize().unwrap(),
+        custom.join("skills/ngterm").canonicalize().unwrap()
+    );
     default_is_untouched(&home);
     home.env.vars.insert("CODEX_HOME".into(), String::new());
     assert_eq!(
@@ -300,6 +307,7 @@ fn the_process_installer_uses_private_home_and_bundle_paths() {
         return;
     }
     let home = Home::new();
+    home.mkdir("custom codex");
     let exe = std::env::current_exe().unwrap();
     for case in ["dev", "staged"] {
         let stage = home.path(case);
@@ -346,7 +354,10 @@ fn assert_process_environment(case: &str) {
     let bin = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     assert_eq!(env.home, home);
     assert_eq!(env.home_str(), home.to_string_lossy());
-    assert_eq!(env.codex_home(None), Some(home.join("custom codex")));
+    assert_eq!(
+        env.codex_home(None).unwrap().canonicalize().unwrap(),
+        home.join("custom codex").canonicalize().unwrap()
+    );
     assert!(!env.vars.keys().any(|key| key.starts_with("NGTERM_")));
     let staged = case == "staged";
     assert_eq!(Environment::process_is_staged(), staged);

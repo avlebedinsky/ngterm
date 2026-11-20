@@ -572,7 +572,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let env = fake_environment(dir.path(), "#!/bin/sh\nexit 1\n");
         let home = dir.path().join("home");
-        fs::create_dir_all(&home).unwrap();
+        let custom = home.join("custom codex");
+        fs::create_dir_all(&custom).unwrap();
         write_executable(
             &dir.path().join("shell"),
             "#!/bin/sh\nexport CODEX_HOME='./old/../custom codex'\ncd \"$HOME\"\nexec /bin/sh -c \"$2\"\n",
@@ -580,7 +581,10 @@ mod tests {
         .unwrap();
         let probe = detect_fixture(&env, "/fallback").unwrap();
         assert_eq!(probe.version, None);
-        assert_eq!(probe.codex_home, Some(home.join("custom codex")));
+        assert_eq!(
+            probe.codex_home.unwrap().canonicalize().unwrap(),
+            custom.canonicalize().unwrap()
+        );
 
         write_executable(
             &dir.path().join("shell"),
