@@ -33,6 +33,8 @@ BACKSLASHES = ("a\\\\b", "trail\\", "\\\\", "\\'", "c:\\path\\")
 OTHER = ("it's", "a b", "$HOME", "semi;colon", '"dq"', "")
 # Never typed into csh or tcsh: their history expansion reads `!` inside single quotes.
 BANGS = ("!needle", "fix!x", "!")
+# macOS has bash only at /bin/bash, usrmerged Linux at both paths.
+BASH = shutil.which("bash", path="/usr/bin:/bin")
 _markers = itertools.count(1)
 
 
@@ -58,9 +60,15 @@ def _args(pane):
     return {"pane": pane}
 
 
-def _waited(ctl, sid, argv, pane):
+def _waited(ctl, sid, argv, pane, start=0):
+    """Waits until the pane runs `argv` from word `start` on, and gives the whole argv the pane runs."""
+
+    def runs():
+        foreground = _foreground(ctl, sid, pane)
+        return foreground if isinstance(foreground, list) and foreground[start:] == argv[start:] else None
+
     try:
-        wait_until(lambda: _foreground(ctl, sid, pane) == argv, timeout=SHELL_START)
+        return wait_until(runs, timeout=SHELL_START)
     except AssertionError as error:
         text = ctl.request("session.text", sid, all=True, **_args(pane)).raw
         raise AssertionError(f"{error}; runs {_foreground(ctl, sid, pane)!r}; pane text {text}") from None
@@ -94,14 +102,16 @@ def _new(ctl, **args):
 
 
 def _run(ctl, sid, argv, shell="bash", pane="left"):
-    """Starts `argv` from the pane's shell and waits until the pane runs it. The typed line is a short one that execs
-    `argv` read from a file: what is under test is the replay ngterm types, not a long line typed through the editor."""
+    """Starts `argv` from the pane's shell, waits until the pane runs it and gives the argv the pane reports, which a
+    later replay must run again. The typed line is a short one that execs `argv` read from a file: what is under test
+    is the replay ngterm types, not a long line typed through the editor."""
     _ready(ctl, sid, shell, **_args(pane))
     spec = ctl.instance.root / f"argv-{next(_markers)}.json"
     spec.write_text(json.dumps(argv))
     exec_line = [_python(), "-c", "import json,os,sys; a=json.load(open(sys.argv[1])); os.execv(a[0], a)", str(spec)]
     assert_ok(ctl.request("session.type", sid, text=_line(exec_line, shell), **_args(pane)))
-    _waited(ctl, sid, argv, pane)
+    # a macOS framework Python runs again as its Python.app, under that name
+    return _waited(ctl, sid, argv, pane, start=1)
 
 
 def _relaunch(launch, ctl, *sids):
@@ -115,9 +125,9 @@ def _show(ctl, sid, *panes):
     ctl.wait_mounted(sid, *(panes or ("left",)), timeout=SHELL_START)
 
 
-def _replays(ctl, sid, argv, pane="left"):
+def _replays(ctl, sid, argv, pane="left", start=0):
     _show(ctl, sid, pane)
-    _waited(ctl, sid, argv, pane)
+    _waited(ctl, sid, argv, pane, start)
 
 
 def _plain(ctl, sid, argv, pane="left"):
@@ -134,7 +144,7 @@ def _fake_csh(directory, name="tcsh"):
     """A program named `name` in `directory` that runs bash: the receiver check knows a shell only by its name."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
-    path.write_text('#!/bin/sh\nexec /usr/bin/bash "$@"\n')
+    path.write_text(f'#!/bin/sh\nexec {shlex.quote(BASH)} "$@"\n')
     path.chmod(0o755)
     return str(path)
 
@@ -157,15 +167,20 @@ def test_rerun_replays_the_same_bytes_into_each_shell(launch, shell):
         pytest.skip(f"no {shell} on this machine")
     ctl = launch(settings={"restoreMode": "rerun"}, pane_shell=path)
     _shell_home(ctl)
-    argv = _program(*BANGS, *MARKED, *BACKSLASHES, *OTHER)
     sid = _new(ctl)
-    _run(ctl, sid, argv, shell)
+    argv = _run(ctl, sid, _program(*BANGS, *MARKED, *BACKSLASHES, *OTHER), shell)
     ctl = _relaunch(launch, ctl, sid)
     _replays(ctl, sid, argv)
     text = assert_ok(ctl.request("session.text", sid, all=True))["text"]
     assert "INJECTED\n" not in text.replace("\r", "")
 
 
+FIRST_WORD_RECEIVER = pytest.mark.upstream_bug(
+    "csh-receiver-is-the-first-word",
+    reason="upstream takes the receiving shell from the first whitespace word of ghostty's command "
+    "(ZmxSupport.commandProgram(fromCommand:), agtermApp.swift launchSeedPolicy), so behind env or a quoted path "
+    "with a space CommandRestore.shouldRestore types a `!` capture into tcsh",
+)
 CSH_RECEIVERS = {
     "path": "{tcsh}",
     "csh": "{csh}",
@@ -179,12 +194,18 @@ CSH_RECEIVERS = {
     "space-and-x64-path": "'{spaced}'",
     "separator": "/usr/bin/env bash -c :;{tcsh}",
 }
+FIRST_WORD_MISSES = {
+    "env", "env-quoted-assignment", "env-split-string", "env-argv0", "env-nbsp", "space-and-x64-path", "separator",
+}
 # A value whose receiver ngterm cannot tell (another command may follow) gets no replay at all.
 UNCERTAIN = {"separator"}
 
 
 @pytest.mark.covers("behavior:restore.rerun-replays-captured-command", "behavior:restore.rerun-types-pinned-command")
-@pytest.mark.parametrize("receiver", list(CSH_RECEIVERS))
+@pytest.mark.parametrize(
+    "receiver",
+    [pytest.param(name, marks=FIRST_WORD_RECEIVER) if name in FIRST_WORD_MISSES else name for name in CSH_RECEIVERS],
+)
 def test_rerun_starts_a_plain_csh_for_a_capture_with_a_bang(launch, tmp_path, receiver):
     shells = tmp_path / "shells"
     command = CSH_RECEIVERS[receiver].format(
@@ -193,11 +214,10 @@ def test_rerun_starts_a_plain_csh_for_a_capture_with_a_bang(launch, tmp_path, re
         spaced=_fake_csh(tmp_path / "my shells (x64)"),
     )
     ctl = launch(settings={"restoreMode": "rerun"}, pane_shell=command)
-    banged, safe = _program("!needle", "it's"), _program("plain", "it'\u0301s")
     refused, replayed, pinned = _new(ctl), _new(ctl), _new(ctl)
-    _run(ctl, refused, banged)
-    _run(ctl, replayed, safe)
-    _run(ctl, pinned, banged)
+    banged = _run(ctl, refused, _program("!needle", "it's"))
+    safe = _run(ctl, replayed, _program("plain", "it'\u0301s"))
+    _run(ctl, pinned, _program("!needle", "it's"))
     marker = f"PIN{next(_markers):04d}"
     pin = f"printf '%s%s|%s|\\n' {marker[:3]} {marker[3:]} '!'"
     assert_ok(ctl.request("session.restore", pinned, mode="set", command=pin))
@@ -214,9 +234,8 @@ def test_rerun_starts_a_plain_csh_for_a_capture_with_a_bang(launch, tmp_path, re
 @pytest.mark.covers("behavior:restore.rerun-replays-captured-command")
 def test_a_refused_capture_still_drops_the_older_creation_command(launch, tmp_path):
     ctl = launch(settings={"restoreMode": "rerun"}, pane_shell=_fake_csh(tmp_path / "shells"))
-    sid = _new(ctl, command="/usr/bin/env QA_CREATED=yes /usr/bin/bash")
-    banged = _program("!needle")
-    _run(ctl, sid, banged)
+    sid = _new(ctl, command=f"/usr/bin/env QA_CREATED=yes {shlex.quote(BASH)}")
+    banged = _run(ctl, sid, _program("!needle"))
     ctl = _relaunch(launch, ctl, sid)
     _plain(ctl, sid, banged)
     marker = f"CR{next(_markers):04d}X"
@@ -231,9 +250,8 @@ def test_a_split_pane_gets_the_same_check(launch, tmp_path):
     sid = _new(ctl)
     assert_ok(ctl.request("session.split", sid, mode="on"))
     ctl.wait_mounted(sid, "right")
-    banged, safe = _program("!needle"), _program("y'\U0001f3fb")
-    _run(ctl, sid, safe)
-    _run(ctl, sid, banged, pane="right")
+    safe = _run(ctl, sid, _program("y'\U0001f3fb"))
+    banged = _run(ctl, sid, _program("!needle"), pane="right")
     ctl = _relaunch(launch, ctl, sid)
     _replays(ctl, sid, safe)
     _plain(ctl, sid, banged, "right")
@@ -247,13 +265,12 @@ def test_the_pane_profile_names_the_receiver_before_the_launch_shell(launch, tmp
     a tcsh `command`."""
     tcsh = _fake_csh(tmp_path / "my shells (x64)")
     bash = _fake_csh(tmp_path / "tcsh tools", "bash")
-    executable, command = (tcsh, "/usr/bin/bash") if profiled == "tcsh" else (bash, tcsh)
+    executable, command = (tcsh, BASH) if profiled == "tcsh" else (bash, tcsh)
     profile = {"id": "qa-receiver", "name": "QA Receiver", "executable": executable, "args": [], "env": {}}
     settings = {"restoreMode": "rerun", "shellProfiles": [profile], "defaultShellProfile": profile}
     ctl = launch(settings=settings, pane_shell=command)
-    banged = _program("!needle", "x'\ufe0f")
     sid = _new(ctl)
-    _run(ctl, sid, banged)
+    banged = _run(ctl, sid, _program("!needle", "x'\ufe0f"))
     ctl = _relaunch(launch, ctl, sid)
     if profiled == "tcsh":
         _plain(ctl, sid, banged)
@@ -272,7 +289,7 @@ def test_a_live_creation_command_keeps_apostrophes_beside_marks(launch, shell):
     _shell_home(ctl)
     argv = _program(*MARKED, *OTHER)
     sid = _new(ctl, command=_line(argv, "sh").rstrip("\n"))
-    _replays(ctl, sid, argv)
+    _replays(ctl, sid, argv, start=1)
     assert find_session(ctl.tree(), sid).get("backedByLive") is True
 
 
@@ -299,7 +316,7 @@ def test_a_remote_companion_line_keeps_apostrophes_beside_marks(remote_origin, r
         row = companion(made)
         assert row["name"] == name
         origin.wait_mounted(row["id"], "left", timeout=SHELL_START)
-        _waited(origin, row["id"], argv, "left")
+        _waited(origin, row["id"], argv, "left", start=1)
     finally:
         if local is not None:
             remote_viewer.request("session.close", local)
