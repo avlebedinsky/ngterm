@@ -4,8 +4,10 @@
 //! - **Threads.** Once the channel opens, a feeder thread reads it into the pane's `StreamFeed` (which blocks while
 //!   the terminal is behind, holding the channel back) and a writer thread sends what the pane's `StreamOut` gives
 //!   (input, the terminal's replies, resizes) down the channel. Both report back to the actor as `Note`s, as the
-//!   pane's wake does; a note of an attach since replaced is dropped. A stopped writer sends what is still queued (a
-//!   denied clipboard read's reply) and closes the channel once the queue has been quiet for [`WRITER_POLL`].
+//!   pane's wake does; a note of an attach since replaced is dropped. A stopped writer sends what is still queued,
+//!   waits until the terminal queued its reply to each clipboard request still open (a read denied as the attach
+//!   ends: [`ngterm_term::Pane::clipboard_open`]), and closes the channel once the queue has been quiet for
+//!   [`WRITER_POLL`].
 //! - **Leadership.** The attach tail carries a `LeadAttachment`: the first attach and every automatic one claim
 //!   nothing (they lead only a session nobody leads), [`crate::MobileCore::take_lead`] claims, as does a chat action
 //!   on a pane that does not lead ([`crate::chat::input`], which weighs `Panes::standing`). The attach client's
@@ -64,7 +66,7 @@ use crate::presentation::Respawns;
 use crate::transport::{Channel, ChannelEnd, ChannelOutput, ChannelReader, ChannelWriter, Connection, TransportError};
 
 /// How long a pane's writer waits for something to send before it looks whether it was stopped; stopped, it closes
-/// the channel once a wait passes with nothing sent.
+/// the channel once a wait passes with nothing sent and no clipboard reply still to come.
 pub const WRITER_POLL: Duration = Duration::from_millis(100);
 
 /// The most waits a stopped writer makes before it closes the channel whatever is still queued.
@@ -992,11 +994,14 @@ fn feed_pane(mut reader: ChannelReader, feed: &StreamFeed, notes: &Notes, key: u
     }
 }
 
-/// The writer: what the terminal sends, down the channel, until the channel is gone or the attach stopped and the
-/// queue went quiet; then the channel is closed. It holds the terminal so a reply queued as it stops still goes out.
+/// The writer: what the terminal sends, down the channel, until the channel is gone or the attach stopped, the
+/// terminal has no clipboard reply still to come ([`ngterm_term::Pane::clipboard_open`]) and the queue went quiet;
+/// then the channel is closed. It holds the terminal so a reply queued as it stops still goes out.
 fn write_pane(out: &StreamOut, writer: &ChannelWriter, stop: &AtomicBool, terminal: Arc<ngterm_term::Pane>) {
     let mut stopped_polls = 0;
     loop {
+        // taken before the wait, so a reply queued during it is still taken by it
+        let settled = stop.load(Ordering::Acquire) && !terminal.clipboard_open();
         // the machine isn't reading (ssh's window is shut): what the terminal queues stays in its accounting
         let sent = if writer.backlog() >= WRITE_BACKLOG {
             thread::sleep(WRITER_POLL / 4);
@@ -1005,7 +1010,8 @@ fn write_pane(out: &StreamOut, writer: &ChannelWriter, stop: &AtomicBool, termin
             match out.next(Some(WRITER_POLL)) {
                 Ok(Some(Outgoing::Bytes(bytes))) => writer.write(&bytes),
                 Ok(Some(Outgoing::Resize(size))) => writer.resize(size),
-                Ok(None) if stop.load(Ordering::Acquire) => break,
+                Ok(None) if settled => break,
+                Ok(None) if stop.load(Ordering::Acquire) => continue,
                 Ok(None) => true,
                 Err(_) => break,
             }

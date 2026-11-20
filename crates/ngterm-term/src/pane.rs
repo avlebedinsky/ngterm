@@ -22,7 +22,7 @@
 //! mark pauses the actor's reads ([`crate::mailbox`]); the actor keeps writing the program's input.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread::JoinHandle;
@@ -273,6 +273,8 @@ pub(crate) struct Shared {
     scheme: SchemeSlot,
     wake: Option<Wake>,
     wake_pending: AtomicBool,
+    /// Clipboard requests the frontend is asked about whose reply to the program is not queued yet.
+    clipboard_open: AtomicUsize,
     counters: Counters,
     /// The most input bytes the PTY's actor queues for the child.
     write_limit: usize,
@@ -880,6 +882,15 @@ impl Pane {
         }
     }
 
+    /// Whether a clipboard read or write the frontend was asked about has no reply queued for the program yet. An
+    /// embedder that closes a stream pane's channel waits until this is `false`, so that the answer it gave as it
+    /// stopped (a denied read) still reaches the program. The terminal answers each request in the end: a denied
+    /// read or write when the frontend does not answer it in time.
+    #[must_use]
+    pub fn clipboard_open(&self) -> bool {
+        self.shared.clipboard_open.load(Ordering::Acquire) > 0
+    }
+
     /// Bytes queued for the child and not written yet.
     #[must_use]
     pub fn queued_input(&self) -> usize {
@@ -1013,6 +1024,7 @@ fn shared(config: &PaneConfig, events: Sender<PaneEvent>, mailbox: Arc<Mailbox>)
         scheme,
         wake: config.wake.clone(),
         wake_pending: AtomicBool::new(false),
+        clipboard_open: AtomicUsize::new(0),
         counters: Counters::default(),
         write_limit: config.write_limit,
         exit: config.exit.clone(),
@@ -1375,6 +1387,23 @@ impl Reads {
     }
 }
 
+/// A clipboard request the frontend is asked about, counted in [`Pane::clipboard_open`] until it drops, after its
+/// reply to the program is queued.
+pub(crate) struct OpenRequest(Arc<Shared>);
+
+impl OpenRequest {
+    pub(crate) fn new(shared: &Arc<Shared>) -> Self {
+        shared.clipboard_open.fetch_add(1, Ordering::AcqRel);
+        Self(Arc::clone(shared))
+    }
+}
+
+impl Drop for OpenRequest {
+    fn drop(&mut self) {
+        self.0.clipboard_open.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// The IO worker: the program's output from the mailbox into the VT.
 pub(crate) struct Worker {
     bridge_decoder: ngterm_core::attach_bridge::Decoder,
@@ -1470,10 +1499,12 @@ impl Worker {
                     return false;
                 }
             } else {
+                let open = OpenRequest::new(&self.shared);
                 let Some(answer) = self.park(read) else {
                     return false;
                 };
                 self.dispatch(bytes[dispatch], read, answer);
+                drop(open);
             }
             start = dispatch + 1;
         }
@@ -1511,6 +1542,7 @@ impl Worker {
             let recovery = false;
             self.next_read += 1;
             let id = self.next_read;
+            let _open = OpenRequest::new(&self.shared);
             self.shared.send(PaneEvent::ClipboardWrite(crate::ClipboardWrite {
                 id: if recovery { 0 } else { id },
                 location: ClipboardLocation::from_engine(write.location),
