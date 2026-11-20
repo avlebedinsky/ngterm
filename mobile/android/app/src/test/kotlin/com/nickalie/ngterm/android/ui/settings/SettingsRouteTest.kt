@@ -1,8 +1,12 @@
 package com.nickalie.ngterm.android.ui.settings
 
 import android.app.NotificationManager
+import android.os.Looper
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -12,13 +16,16 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.viewModelScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nickalie.ngterm.android.FAKE_PUBLIC_KEY
 import com.nickalie.ngterm.android.PLAIN_FAKE_KEY
 import com.nickalie.ngterm.android.TestGraph
+import com.nickalie.ngterm.android.awaitStore
 import com.nickalie.ngterm.android.awaitText
 import com.nickalie.ngterm.android.testMachine
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -73,6 +80,43 @@ class SettingsRouteTest {
         tap("Show public key")
         back()
         compose.awaitText("core settings-test")
+    }
+
+    @Test
+    fun aKeyMadeWhileSettingsIsAwayOpensWithOneLineForEachPage() {
+        val old = test.seedKey()
+        test.seedMachine(testMachine(keyId = old.id))
+        val model = SettingsViewModel(test.graph)
+        var settings by mutableStateOf(false)
+        try {
+            // the key is made while another destination shows
+            compose.setContent {
+                NgtermTheme {
+                    if (settings) {
+                        SettingsRoute(
+                            test.graph,
+                            "settings-test",
+                            model = model,
+                        )
+                    }
+                }
+            }
+            compose.runOnIdle { model.rotate() }
+            compose.awaitStore {
+                shadowOf(Looper.getMainLooper()).idle()
+                model.newKey.value != null
+            }
+            compose.runOnIdle { settings = true }
+            compose.awaitText("Use for every machine")
+            compose.waitForIdle()
+            // Settings, then the new key's page, each once and in that order
+            assertEquals(
+                listOf("I nav: settings page=home", "I nav: settings page=key"),
+                test.logs.lines.filter { "settings page=" in it },
+            )
+        } finally {
+            model.viewModelScope.cancel()
+        }
     }
 
     @Test

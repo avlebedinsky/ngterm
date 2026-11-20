@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
@@ -79,6 +80,20 @@ class LogsScreenTest {
         compose.onNodeWithText("Logs").performScrollTo().performClick()
         compose.awaitText("settings page=logs", substring = true)
         // each page once, as it was shown
+        assertEquals(listOf("I nav: settings page=logs"), pages())
+    }
+
+    @Test
+    fun aRestoredLogsPageShowsTheLineWrittenAsItComesBack() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { NgtermTheme { SettingsRoute(test.graph, "settings-test") } }
+        compose.awaitText("core settings-test")
+        compose.onNodeWithText("Logs").performScrollTo().performClick()
+        compose.awaitText("settings page=logs", substring = true)
+        compose.runOnIdle { test.logs.clear() }
+        // a rotation: the restored page is written before the screen reads the log again
+        restoration.emulateSavedInstanceStateRestore()
+        compose.awaitText("settings page=logs", substring = true)
         assertEquals(listOf("I nav: settings page=logs"), pages())
     }
 

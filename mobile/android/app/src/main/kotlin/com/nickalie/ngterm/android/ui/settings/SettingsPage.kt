@@ -35,7 +35,7 @@ internal class SettingsPage(
         note(value.substringBefore(':'))
     }
 
-    /** Tells the log that Settings shows the page [shown], once. */
+    /** Tells the log that Settings shows the page [shown], once for each change of the page. */
     fun note(shown: String) {
         if (shown == noted) return
         noted = shown

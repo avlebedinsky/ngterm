@@ -31,8 +31,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nickalie.ngterm.android.AppGraph
 import com.nickalie.ngterm.android.R
-import com.nickalie.ngterm.android.data.Diagnostics
-import com.nickalie.ngterm.android.data.LogTag
 import com.nickalie.ngterm.android.platform.AndroidKeyExports
 import com.nickalie.ngterm.android.platform.DeviceAuth
 import com.nickalie.ngterm.android.platform.rememberDeviceAuth
@@ -139,8 +137,9 @@ private fun OpenFreshKey(
     LaunchedEffect(fresh) { fresh?.let(open) }
 }
 
-// back from a page Settings opened ([onBack] first) returns to Settings; the page shown when Settings opens, and the
-// export's page, are logged here (a page set by a tap is logged as it is set)
+// back from a page Settings opened ([onBack] first) returns to Settings; the page shown is logged here as it composes,
+// before the page itself composes (the Logs page then reads its own line), also when Settings opens or comes back
+// after a rotation or a restore, and for the export's page; a page set by a tap is logged as it is set
 @Composable
 private fun PageEffects(
     pages: SettingsPage,
@@ -154,7 +153,9 @@ private fun PageEffects(
         page = HOME
     }
     val shown = if (exporting) "export" else page.substringBefore(':')
-    LaunchedEffect(shown) { pages.note(shown) }
+    // in the composition, not in an effect: an effect runs after the page reads the log, and an effect that a newer
+    // page replaced before it ran writes a stale page
+    pages.note(shown)
 }
 
 /**
