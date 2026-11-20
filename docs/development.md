@@ -1719,7 +1719,7 @@ fit at once, so one job saves each cache and only these save (sizes of November 
 | vendor `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.4 GB |
 | vendor `xcode-27` | `ios.yml` `core` | the other `ios.yml` jobs, `ios-release.yml`, `release.yml` | 0.3 GB |
 | Gradle | `android.yml` `app` (setup-gradle) | `emulator`, `release.yml`'s Android build | 0.7 GB |
-| the upstream reference | `reference-macos.yml` on main | its PR runs | one upstream release |
+| the upstream reference | `reference-macos.yml` run by hand on main | its PR runs | one upstream release |
 | the iOS core | `ios.yml` `core` | | 0.05 GB for each |
 
 That is about 9 GB. The saved cargo caches are those that save the most time on each workflow's longest path; the other

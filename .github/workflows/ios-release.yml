@@ -124,7 +124,12 @@ jobs:
           echo "NAME=ngterm-ios-$version-$build" >>"$GITHUB_ENV"
           echo "ngterm $version, build $build, upload: $upload, signed: $signing" >>"$GITHUB_STEP_SUMMARY"
       - name: rust toolchain (rust-toolchain.toml), the only one installed
-        run: scripts/ci-rust-toolchain.sh
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          # An older release tag can lack the helper that this workflow uses.
+          git show "$WORKFLOW_SHA:scripts/ci-rust-toolchain.sh" > scripts/ci-rust-toolchain.sh
+          bash scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ios

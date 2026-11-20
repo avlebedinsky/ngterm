@@ -46,8 +46,7 @@ jobs:
             exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-      # Only a run on main saves the reference: a PR's entry would stay on its own ref and use the repository's cache
-      # space (docs/development.md, CI caches). A PR reads main's entry.
+      # A PR reads the entry from a manual run on main. Run this workflow on main after an upstream tag change.
       - uses: actions/cache/restore@v6
         id: reference-cache
         with:
