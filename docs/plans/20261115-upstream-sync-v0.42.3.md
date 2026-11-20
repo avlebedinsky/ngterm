@@ -244,11 +244,11 @@ skipped write sends no status frame.
 **Apps:** desktop; Android and iOS in Task 37.
 **Conformance:** the shape-list cases in `tests/protocol/test_session.py` and `test_ask_pick.py`.
 
-- [ ] `checkmark` in the model, `session status --shape`, pick items and Settings; drawn as an outline traced after
+- [x] `checkmark` in the model, `session status --shape`, pick items and Settings; drawn as an outline traced after
   the SF Symbol on Linux and Windows.
-- [ ] The origin lists `status.checkmark`; a viewer that lists `status.shapes` without it gets the expanded set and
+- [x] The origin lists `status.checkmark`; a viewer that lists `status.shapes` without it gets the expanded set and
   draws its own Settings shape for a checkmark row.
-- [ ] Rust unit tests with the Swift cases; the ratcheted shape-list strings move in the same commit.
+- [x] Rust unit tests with the Swift cases; the ratcheted shape-list strings move in the same commit.
 
 ### Task 6: The agent-status package and the installers (#959, #905, #974, `f52cb2bf`, `5cc32465`)
 

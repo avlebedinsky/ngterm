@@ -26,11 +26,13 @@ pub enum StatusShape {
     Star,
     Bolt,
     Bell,
+    /// A check, drawn as a heavy stroke rather than a filled area ([`Self::is_stroke`]).
+    Checkmark,
 }
 
 impl StatusShape {
     /// Every shape, in upstream's declaration order (the order of the accepted-names lists and the Settings picker).
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Circle,
         Self::Square,
         Self::Triangle,
@@ -42,6 +44,7 @@ impl StatusShape {
         Self::Star,
         Self::Bolt,
         Self::Bell,
+        Self::Checkmark,
     ];
 
     /// The shapes a viewer that does not list `status.shapes` decodes (upstream's `StatusShape.original`): v0.40.0's
@@ -53,6 +56,22 @@ impl StatusShape {
         Self::Diamond,
         Self::Capsule,
         Self::Star,
+    ];
+
+    /// The shapes a viewer that lists `status.shapes` but not `status.checkmark` decodes (upstream's
+    /// `StatusShape.expanded`): every shape but [`Self::Checkmark`], which came after `status.shapes` shipped.
+    pub const EXPANDED: [Self; 11] = [
+        Self::Circle,
+        Self::Square,
+        Self::Triangle,
+        Self::TriangleDown,
+        Self::Play,
+        Self::Diamond,
+        Self::Capsule,
+        Self::Seal,
+        Self::Star,
+        Self::Bolt,
+        Self::Bell,
     ];
 
     /// The wire, settings and read-back spelling.
@@ -70,6 +89,7 @@ impl StatusShape {
             Self::Star => "star",
             Self::Bolt => "bolt",
             Self::Bell => "bell",
+            Self::Checkmark => "checkmark",
         }
     }
 
@@ -89,6 +109,7 @@ impl StatusShape {
             Self::Star => "Star",
             Self::Bolt => "Bolt",
             Self::Bell => "Bell",
+            Self::Checkmark => "Checkmark",
         }
     }
 
@@ -96,6 +117,14 @@ impl StatusShape {
     #[must_use]
     pub fn is_original(self) -> bool {
         Self::ORIGINAL.contains(&self)
+    }
+
+    /// Whether the glyph is a line and not a filled area (upstream's `isStroke`): SF Symbols has no filled checkmark, and
+    /// at regular weight its stroke paints about a third of the lightest filled shape, so every renderer draws it
+    /// heavy.
+    #[must_use]
+    pub fn is_stroke(self) -> bool {
+        self == Self::Checkmark
     }
 
     /// Parses the wire spelling; `None` for anything else.

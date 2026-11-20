@@ -928,8 +928,17 @@ def test_status_shape(ctl):
     sid = _new(ctl)
     assert_ok(ctl.request("session.status", sid, status="active", shape="star"))
     rejected = ctl.request("session.status", sid, status="blocked", shape="hexagon")
-    assert_error(rejected, "invalid shape: hexagon (circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell)")
+    assert_error(rejected, "invalid shape: hexagon (circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell|checkmark)")
     assert_subset(_node(ctl, sid), {"status": "active", "statusShape": "star"})
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status", "field:tree.session.statusShape")
+def test_status_shape_checkmark(ctl):
+    """`checkmark` is a status shape, read back as set (#947)."""
+    sid = _new(ctl)
+    assert_ok(ctl.request("session.status", sid, status="completed", shape="checkmark"))
+    assert_subset(_node(ctl, sid), {"status": "completed", "statusShape": "checkmark"})
 
 
 def _status_events_since(ctl, cursor, sid):

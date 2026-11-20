@@ -103,16 +103,26 @@ struct Subscriber {
 }
 
 impl Subscriber {
-    /// `body` as this viewer decodes it (upstream's `Subscriber.decodable`): without [`STATUS_SHAPES_KIND`] a status,
-    /// alone or in a snapshot, loses a shape outside [`ORIGINAL`](crate::model::StatusShape::ORIGINAL).
+    /// `body` as this viewer decodes it (upstream's `Subscriber.decodable`): a status, alone or in a snapshot, loses a
+    /// shape this viewer's kinds do not name ([`decodes_shape`]).
     fn decodable(&self, body: Body) -> Body {
-        if self.kinds.iter().any(|kind| kind == STATUS_SHAPES_KIND) {
+        let kinds = &self.kinds;
+        if crate::model::StatusShape::ALL
+            .into_iter()
+            .all(|shape| decodes_shape(kinds, shape))
+        {
             return body;
         }
+        let decoded = |mut status: PresentationStatus| {
+            if status.shape.is_some_and(|shape| !decodes_shape(kinds, shape)) {
+                status.shape = None;
+            }
+            status
+        };
         match body {
-            Body::Status(status) => Body::Status(status.map(with_original_shape)),
+            Body::Status(status) => Body::Status(status.map(decoded)),
             Body::Snapshot(mut snapshot) => {
-                snapshot.status = snapshot.status.map(with_original_shape);
+                snapshot.status = snapshot.status.map(decoded);
                 Body::Snapshot(snapshot)
             }
             body => body,
@@ -136,12 +146,18 @@ impl Subscriber {
     }
 }
 
-/// `status` with its shape cleared when a viewer without [`STATUS_SHAPES_KIND`] could not decode it.
-fn with_original_shape(mut status: PresentationStatus) -> PresentationStatus {
-    if status.shape.is_some_and(|shape| !shape.is_original()) {
-        status.shape = None;
+/// Whether a viewer whose hello listed `kinds` decodes `shape` (upstream's `PresentationHub.acceptedShapes`): the
+/// [`ORIGINAL`](crate::model::StatusShape::ORIGINAL) six always, the rest of
+/// [`EXPANDED`](crate::model::StatusShape::EXPANDED) with [`STATUS_SHAPES_KIND`], the checkmark with
+/// [`STATUS_CHECKMARK_KIND`]. The hub clears a shape such a viewer does not decode, and the viewer draws its own settings
+/// shape instead.
+fn decodes_shape(kinds: &[String], shape: crate::model::StatusShape) -> bool {
+    let lists = |kind: &str| kinds.iter().any(|listed| listed == kind);
+    if shape == crate::model::StatusShape::Checkmark {
+        lists(STATUS_CHECKMARK_KIND)
+    } else {
+        shape.is_original() || lists(STATUS_SHAPES_KIND)
     }
-    status
 }
 
 /// Decides which viewer connection is a session's sole presenter (upstream's `PresenterGrant`). The first acquire wins
@@ -235,6 +251,12 @@ pub const PAGE_DOCUMENT_KIND: &str = "page.document";
 /// instead. It names no frame body.
 pub const STATUS_SHAPES_KIND: &str = "status.shapes";
 
+/// A viewer draws [`StatusShape::Checkmark`](crate::model::StatusShape::Checkmark) (upstream's `statusCheckmarkKind`),
+/// the shape added after [`STATUS_SHAPES_KIND`] shipped. One that lists `status.shapes` without it decodes only
+/// [`EXPANDED`](crate::model::StatusShape::EXPANDED), so the hub clears a checkmark from what it sends that viewer,
+/// which draws its own settings shape instead. It names no frame body.
+pub const STATUS_CHECKMARK_KIND: &str = "status.checkmark";
+
 /// A presenter attaches the page companions a headless origin creates under the session it presents
 /// ([`super::frames::Body::CompanionPage`]). This build's addition, listed with the page kinds.
 pub const COMPANION_PAGE_KIND: &str = "companion.page";
@@ -249,7 +271,7 @@ pub const PAGE_DETACHED_KIND: &str = "page.detached";
 /// presenter ([`PresentationHub::send_to_presenter`]) is refused when its kind is listed here but missing from that
 /// presenter's hello, so an older presenter leaves that work on the origin. Published state ([`PresentationHub::publish`])
 /// goes to every viewer whatever its hello listed, as upstream's; this build's [`OPT_IN_KINDS`] are the exception.
-pub const SUPPORTED_KINDS: [&str; 22] = [
+pub const SUPPORTED_KINDS: [&str; 23] = [
     "status",
     "hud",
     "notify",
@@ -263,6 +285,7 @@ pub const SUPPORTED_KINDS: [&str; 22] = [
     PAGE_CONTENT_KIND,
     PAGE_DOCUMENT_KIND,
     STATUS_SHAPES_KIND,
+    STATUS_CHECKMARK_KIND,
     super::page_tunnel::TUNNEL_KIND,
     COMPANION_PAGE_KIND,
     PAGE_DETACHED_KIND,
@@ -1038,25 +1061,46 @@ mod tests {
         }
     }
 
-    /// Upstream's `oneStatusReachesAViewerWithoutTheShapesKindWithOnlyAShapeItDecodes`, over every shape.
+    fn checkmark_hello() -> PresentationHello {
+        let mut hello = shapes_hello();
+        hello.kinds.push(STATUS_CHECKMARK_KIND.to_owned());
+        hello
+    }
+
+    /// Upstream's `oneStatusReachesEachViewerWithOnlyAShapeItDecodes`, over every shape: a viewer with neither kind
+    /// gets the original six, one with `status.shapes` the expanded set, one with both kinds every shape.
     #[test]
-    fn one_status_reaches_a_viewer_without_the_shapes_kind_with_only_a_shape_it_decodes() {
+    fn one_status_reaches_each_viewer_with_only_a_shape_it_decodes() {
         for shape in StatusShape::ALL {
             let (mut hub, _) = hub();
             let session = Uuid::new_v4();
             let (legacy, older) = sink();
-            let (capable, newer) = sink();
+            let (shapes, expanded) = sink();
+            let (current, newest) = sink();
             hub.subscribe(session, &hello(PresentationMode::Mirror), legacy, |_| {
                 PresentationSnapshot::default()
             })
             .unwrap();
-            hub.subscribe(session, &shapes_hello(), capable, |_| PresentationSnapshot::default())
+            hub.subscribe(session, &shapes_hello(), shapes, |_| PresentationSnapshot::default())
                 .unwrap();
+            hub.subscribe(session, &checkmark_hello(), current, |_| {
+                PresentationSnapshot::default()
+            })
+            .unwrap();
             hub.publish(&Body::Status(Some(shaped(Some(shape)))), session);
 
-            let decodable = shape.is_original().then_some(shape);
-            assert_eq!(bodies(&newer).last(), Some(&Body::Status(Some(shaped(Some(shape))))));
-            assert_eq!(bodies(&older).last(), Some(&Body::Status(Some(shaped(decodable)))));
+            let in_expanded = StatusShape::EXPANDED.contains(&shape);
+            assert_eq!(bodies(&newest).last(), Some(&Body::Status(Some(shaped(Some(shape))))));
+            assert_eq!(
+                bodies(&expanded).last(),
+                Some(&Body::Status(Some(shaped(in_expanded.then_some(shape))))),
+                "{shape:?}"
+            );
+            assert_eq!(
+                bodies(&older).last(),
+                Some(&Body::Status(Some(shaped(shape.is_original().then_some(shape))))),
+                "{shape:?}"
+            );
             let line = frames::encode(older.borrow().frames.last().unwrap()).unwrap();
             let line = String::from_utf8(line).unwrap();
             assert_eq!(
@@ -1064,7 +1108,78 @@ mod tests {
                 shape.is_original(),
                 "{line}"
             );
+            let line = frames::encode(expanded.borrow().frames.last().unwrap()).unwrap();
+            let line = String::from_utf8(line).unwrap();
+            assert_eq!(
+                line.contains(&format!("\"{}\"", shape.wire_name())),
+                in_expanded,
+                "{line}"
+            );
         }
+    }
+
+    /// Upstream's `aViewerWithoutTheCheckmarkKindGetsTheSnapshotAndAHeldDeltaWithoutTheCheckmark`.
+    #[test]
+    fn a_viewer_without_the_checkmark_kind_gets_the_snapshot_and_a_held_delta_without_the_checkmark() {
+        let (mut hub, _) = hub();
+        let session = Uuid::new_v4();
+        let (sink, seen) = sink();
+        let snapshot = PresentationSnapshot {
+            status: Some(shaped(Some(StatusShape::Checkmark))),
+            context: Some("build".to_owned()),
+            ..PresentationSnapshot::default()
+        };
+        hub.subscribe(session, &shapes_hello(), sink, |hub| {
+            hub.publish(&Body::Status(Some(shaped(Some(StatusShape::Bolt)))), session);
+            snapshot
+        })
+        .unwrap();
+        let expected = PresentationSnapshot {
+            status: Some(shaped(None)),
+            context: Some("build".to_owned()),
+            ..PresentationSnapshot::default()
+        };
+        assert_eq!(
+            bodies(&seen),
+            vec![
+                Body::Hello(shapes_hello()),
+                Body::Snapshot(expected),
+                Body::Status(Some(shaped(Some(StatusShape::Bolt))))
+            ]
+        );
+    }
+
+    /// Upstream's `aViewerAdvertisingTheCheckmarkKindGetsTheSnapshotUnchanged`.
+    #[test]
+    fn a_viewer_advertising_the_checkmark_kind_gets_the_snapshot_unchanged() {
+        let (mut hub, _) = hub();
+        let (sink, seen) = sink();
+        let snapshot = PresentationSnapshot {
+            status: Some(shaped(Some(StatusShape::Checkmark))),
+            ..PresentationSnapshot::default()
+        };
+        let state = snapshot.clone();
+        hub.subscribe(Uuid::new_v4(), &checkmark_hello(), sink, move |_| state)
+            .unwrap();
+        assert_eq!(
+            bodies(&seen),
+            vec![Body::Hello(checkmark_hello()), Body::Snapshot(snapshot)]
+        );
+        assert!(SUPPORTED_KINDS.contains(&STATUS_CHECKMARK_KIND));
+    }
+
+    /// The checkmark kind alone names the checkmark and no shape beyond the original six (upstream's
+    /// `acceptedShapes`, a union over the kinds).
+    #[test]
+    fn the_checkmark_kind_alone_adds_only_the_checkmark() {
+        let kinds = [STATUS_CHECKMARK_KIND.to_owned()];
+        let decoded: Vec<StatusShape> = StatusShape::ALL
+            .into_iter()
+            .filter(|shape| decodes_shape(&kinds, *shape))
+            .collect();
+        let mut expected = StatusShape::ORIGINAL.to_vec();
+        expected.push(StatusShape::Checkmark);
+        assert_eq!(decoded, expected);
     }
 
     /// Upstream's `aViewerWithoutTheShapesKindGetsTheSnapshotAndAHeldDeltaWithoutANewShape`.
@@ -1231,6 +1346,7 @@ mod tests {
                 "page.content",
                 "page.document",
                 "status.shapes",
+                "status.checkmark",
                 "page.tunnel",
                 "companion.page",
                 "page.detached",

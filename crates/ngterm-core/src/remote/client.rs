@@ -22,7 +22,7 @@ use super::frames::{
 };
 use super::hub::{
     AGENT_KIND, COMPANION_PAGE_KIND, NO_OVERLAYS_KIND, OPT_IN_KINDS, PAGE_CONTENT_KIND, PAGE_DETACHED_KIND,
-    PAGE_DOCUMENT_KIND, PAGE_KINDS, SUPPORTED_KINDS,
+    PAGE_DOCUMENT_KIND, PAGE_KINDS, STATUS_CHECKMARK_KIND, SUPPORTED_KINDS,
 };
 use super::reconnect::retry_delay;
 use crate::model::RemoteConnection;
@@ -40,7 +40,8 @@ pub const PAGES_UNSUPPORTED: &str = "pages are not shown on this Mac";
 /// three extensions of this build. Upstream's hello lists them all; an origin a viewer
 /// leaves them out for hands it no page and keeps its own refusal, rather than handing over a page that is refused at
 /// once. `status.shapes` ([`super::hub::STATUS_SHAPES_KIND`]) is always listed: desktop and both mobile apps draw
-/// every status shape.
+/// every shape it names. `status.checkmark` ([`STATUS_CHECKMARK_KIND`]) is listed too: a viewer that does not draw the
+/// checkmark leaves it out of its hello ([`PresentationClient::set_draws_checkmark`]).
 #[must_use]
 pub fn viewer_kinds(pages: bool) -> Vec<String> {
     SUPPORTED_KINDS
@@ -145,6 +146,8 @@ pub struct PresentationClient {
     mode: Option<PresentationMode>,
     /// The hello lists the page kinds ([`viewer_kinds`]).
     shows_pages: bool,
+    /// The hello lists [`STATUS_CHECKMARK_KIND`] ([`PresentationClient::set_draws_checkmark`]).
+    draws_checkmark: bool,
     /// The [`OPT_IN_KINDS`] the hello lists; [`AGENT_KIND`]'s frames are reported only when it is one.
     opt_in: Vec<&'static str>,
     /// The kinds the origin's last hello answer listed, kept after its link goes so what is said about that link's
@@ -185,6 +188,7 @@ impl PresentationClient {
             connection: None,
             mode: None,
             shows_pages: false,
+            draws_checkmark: true,
             opt_in: Vec::new(),
             origin_kinds: Vec::new(),
         }
@@ -193,6 +197,12 @@ impl PresentationClient {
     /// Whether this machine shows handed-over pages, which the next hello says.
     pub fn set_shows_pages(&mut self, shows_pages: bool) {
         self.shows_pages = shows_pages;
+    }
+
+    /// Whether this viewer draws the checkmark status shape, which the next hello says ([`STATUS_CHECKMARK_KIND`]); on
+    /// by default. A viewer that does not draw it gets its status without that shape and draws its own one instead.
+    pub fn set_draws_checkmark(&mut self, draws_checkmark: bool) {
+        self.draws_checkmark = draws_checkmark;
     }
 
     /// Whether this viewer shows what each pane runs (the Android chat view): the next hello lists [`AGENT_KIND`], an
@@ -223,6 +233,9 @@ impl PresentationClient {
     /// The kinds the next hello lists.
     fn hello_kinds(&self) -> Vec<String> {
         let mut kinds = viewer_kinds(self.shows_pages);
+        if !self.draws_checkmark {
+            kinds.retain(|kind| kind != STATUS_CHECKMARK_KIND);
+        }
         kinds.extend(
             OPT_IN_KINDS
                 .iter()
@@ -704,7 +717,7 @@ mod tests {
             "a viewer that shows pages builds content and document pages"
         );
         // desktop Attach Remote shows no agent chat, so it never asks for the agent kind; every viewer (desktop, both
-        // mobile apps) draws all eleven status shapes, so each lists `status.shapes`
+        // mobile apps) draws the eleven status shapes `status.shapes` names, so each lists it
         for pages in [false, true] {
             assert!(
                 !viewer_kinds(pages)
@@ -760,6 +773,32 @@ mod tests {
             panic!("the frame is reported")
         };
         assert_eq!(frame.agent.as_deref(), Some("claude"));
+    }
+
+    /// Desktop draws the checkmark and lists `status.checkmark`; a viewer that does not draw it leaves the kind out of
+    /// its hello, so the origin clears the shape for it.
+    #[test]
+    fn a_viewer_lists_the_checkmark_kind_unless_it_does_not_draw_the_checkmark() {
+        let listed = |draws: bool| {
+            let mut harness = Harness::new(Some(1));
+            harness.client.set_draws_checkmark(draws);
+            harness.start();
+            let hello = harness.transport.link(0).0.borrow().sent[0].body.clone();
+            let Body::Hello(hello) = hello else {
+                panic!("the first frame is the hello")
+            };
+            hello.kinds
+        };
+        assert!(viewer_kinds(false).iter().any(|kind| kind == STATUS_CHECKMARK_KIND));
+        assert_eq!(listed(true), viewer_kinds(false));
+        let mut without = viewer_kinds(false);
+        without.retain(|kind| kind != STATUS_CHECKMARK_KIND);
+        assert_eq!(listed(false), without);
+        assert!(
+            without
+                .iter()
+                .any(|kind| kind == crate::remote::hub::STATUS_SHAPES_KIND)
+        );
     }
 
     #[test]

@@ -418,7 +418,7 @@ mod tests {
             (&["--color", "#ff00"], "color must be a #rrggbb hex value"),
             (
                 &["--shape", "hexagon"],
-                "shape must be one of: circle, square, triangle, triangle-down, play, diamond, capsule, seal, star, bolt, bell",
+                "shape must be one of: circle, square, triangle, triangle-down, play, diamond, capsule, seal, star, bolt, bell, checkmark",
             ),
             (&["--pane", "other"], "--pane must be left, right, or scratch"),
             (

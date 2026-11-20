@@ -196,8 +196,11 @@ fn in_the_margin(index: usize) -> bool {
 fn every_shape_fills_its_own_silhouette_inside_the_slot() {
     let rendered = rendered();
     for (shape, alpha) in StatusShape::ALL.iter().zip(&rendered) {
-        // the slot's center is inside every silhouette, its corners and margin outside all
-        assert_eq!(alpha[16 * 32 + 16], 255, "{shape:?} is filled at its center");
+        // the slot's center is inside every filled silhouette (a stroke has no inside), its corners and margin outside
+        // all
+        if !shape.is_stroke() {
+            assert_eq!(alpha[16 * 32 + 16], 255, "{shape:?} is filled at its center");
+        }
         let inked_outside = (0..32 * 32).filter(|&index| alpha[index] > 0 && in_the_margin(index));
         assert_eq!(inked_outside.count(), 0, "{shape:?} stays inside its extent");
     }
@@ -224,6 +227,93 @@ fn each_silhouette_has_its_own_outline() {
     // the bolt's two strokes leave its upper left and lower right empty
     let bolt = of(&rendered, StatusShape::Bolt);
     assert_eq!((bolt[6 * 32 + 6], bolt[26 * 32 + 26]), (0, 0));
+}
+
+/// The ink a coverage canvas holds, in full pixels.
+fn ink(alpha: &[u8]) -> f64 {
+    alpha.iter().map(|&value| f64::from(value)).sum::<f64>() / 255.0
+}
+
+/// Upstream's heavy checkmark: a stroke, not a filled area, with about the ink of `bolt.fill`, the lightest filled shape
+/// (a regular-weight stroke paints about a third of it).
+#[test]
+fn the_checkmark_is_a_heavy_stroke_with_the_ink_of_the_lightest_filled_shape() {
+    let rendered = rendered();
+    let checkmark = of(&rendered, StatusShape::Checkmark);
+    // the pixel under design point (x, y), from the slot's center, at 2x
+    let at = |x: f64, y: f64| {
+        let pixel = |offset: f64| {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "inside the 32-pixel canvas"
+            )]
+            let pixel = (16.0 + 2.0 * offset).floor() as usize;
+            pixel
+        };
+        checkmark[pixel(y) * 32 + pixel(x)]
+    };
+    // its vertex at the lower left and its two arm ends are inked; inside the check above the short arm is not, nor is
+    // the lower right
+    assert_eq!(at(-1.6, 4.85), 255, "the vertex");
+    assert_eq!(at(-5.0, 0.75), 255, "the short arm's end");
+    assert_eq!(at(5.0, -4.85), 255, "the long arm's end");
+    assert_eq!(at(-4.0, -3.0), 0, "above the short arm");
+    assert_eq!(at(5.0, 5.0), 0, "the lower right");
+    let lightest = StatusShape::ALL
+        .iter()
+        .filter(|shape| !shape.is_stroke())
+        .map(|&shape| ink(of(&rendered, shape)))
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        (ink(of(&rendered, StatusShape::Bolt)) - lightest).abs() < 1e-9,
+        "the bolt is the lightest"
+    );
+    let ratio = ink(checkmark) / lightest;
+    assert!(
+        (0.8..=1.6).contains(&ratio),
+        "the checkmark's ink is {ratio:.2} of the bolt's"
+    );
+    // centered in the slot: its inked rows and columns span the same distance from each edge, within a pixel
+    let inked: Vec<(usize, usize)> = (0..32 * 32)
+        .filter(|&index| checkmark[index] > 0)
+        .map(|index| (index / 32, index % 32))
+        .collect();
+    let (top, bottom) = (
+        inked.iter().map(|point| point.0).min().unwrap(),
+        inked.iter().map(|point| point.0).max().unwrap(),
+    );
+    let (left, right) = (
+        inked.iter().map(|point| point.1).min().unwrap(),
+        inked.iter().map(|point| point.1).max().unwrap(),
+    );
+    assert!(top.abs_diff(31 - bottom) <= 1, "rows {top}..={bottom}");
+    assert!(left.abs_diff(31 - right) <= 1, "columns {left}..={right}");
+}
+
+/// Upstream's `shapeResolvesOverrideThenConfiguredThenCircle`, with the checkmark.
+#[test]
+fn the_checkmark_resolves_as_override_then_configured() {
+    let configured = AppSettings {
+        completed_status_shape: Some("checkmark".into()),
+        ..AppSettings::default()
+    };
+    assert_eq!(look(AgentStatus::Completed, &configured).shape, StatusShape::Checkmark);
+    let overridden = AgentIndicator {
+        status: AgentStatus::Completed,
+        shape: Some(StatusShape::Checkmark),
+        ..AgentIndicator::default()
+    };
+    let star = AppSettings {
+        completed_status_shape: Some("star".into()),
+        ..AppSettings::default()
+    };
+    let resolved = resolve(&overridden, &star).expect("completed has a look");
+    assert_eq!(resolved.shape, StatusShape::Checkmark);
+    assert_eq!(
+        look(AgentStatus::Completed, &AppSettings::default()).shape,
+        StatusShape::Circle
+    );
 }
 
 #[test]

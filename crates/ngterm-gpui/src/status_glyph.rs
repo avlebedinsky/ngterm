@@ -5,8 +5,8 @@
 //! `GhosttyApp.swift`).
 //!
 //! [`resolve`] is display-free: it turns an indicator and the settings into a [`GlyphLook`], or `None` for `idle`,
-//! which renders nothing. [`glyph`] draws a look in place of the SF Symbol `*.fill` silhouettes (traced like the row
-//! icons, [`crate::row_icon`]) and pulses its opacity while the look blinks, unless the desktop turned animations off
+//! which renders nothing. [`glyph`] draws a look in place of the SF Symbol `*.fill` silhouettes and the heavy
+//! `checkmark` stroke (traced like the row icons, [`crate::row_icon`]) and pulses its opacity while the look blinks, unless the desktop turned animations off
 //! ([`Motion`], GTK's `gtk-enable-animations`, upstream's reduce-motion check).
 
 #[cfg(test)]
@@ -373,10 +373,23 @@ pub fn rasterize(shape: StatusShape, side: u32) -> Vec<u8> {
         StatusShape::Star => trace.polygon(&star_points(half).map(at)),
         StatusShape::Bolt => trace.polygon(&BOLT.map(at)),
         StatusShape::Bell => trace_bell(&mut trace, at),
+        StatusShape::Checkmark => {
+            // SF Symbols has no filled checkmark: its stroke is drawn heavy, round-capped
+            trace.polyline(&CHECKMARK.map(at));
+            ink.stroke(trace, CHECKMARK_WEIGHT);
+            return ink.coverage();
+        }
     }
     ink.fill(trace);
     ink.coverage()
 }
+
+/// A check (SF Symbols' `checkmark`): a short stroke down to the lower left vertex and a long one up to the upper
+/// right, centered in the extent once [`CHECKMARK_WEIGHT`]'s round caps are added.
+const CHECKMARK: [(f64, f64); 3] = [(-5.0, 0.75), (-1.6, 4.85), (5.0, -4.85)];
+/// The checkmark's stroke width: SF Symbols' heavy weight at the glyph's size, whose ink is close to `bolt.fill`'s, the
+/// lightest filled shape (upstream's `isStroke` glyphs draw heavy, as regular paints about a third of it).
+const CHECKMARK_WEIGHT: f64 = 2.5;
 
 /// A lightning bolt (SF Symbols' `bolt.fill`): a flat-topped stroke down to the left, a step across the middle, and a
 /// stroke tapering to the lower left point.

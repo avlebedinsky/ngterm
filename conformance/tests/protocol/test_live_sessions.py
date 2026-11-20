@@ -1112,6 +1112,41 @@ def test_a_viewer_without_status_shapes_gets_only_shapes_it_decodes(live):
     assert_ok(live.request("session.close", sid))
 
 
+# A viewer that also draws the checkmark, the shape added after `status.shapes` shipped (#947).
+CHECKMARK_KINDS = [*SHAPES_KINDS, "status.checkmark"]
+
+
+@LIVE_IN_ANY_SHELL
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.status", "live.present", streams=("live.present",))
+def test_a_viewer_without_status_checkmark_gets_no_checkmark(live):
+    """A viewer listing `status.shapes` but not `status.checkmark` decodes only the shapes before the checkmark, so the
+    origin clears a checkmark from its status and snapshot, and keeps every other shape; a viewer listing
+    `status.checkmark` gets the checkmark as set (#947)."""
+    sid = _live_session(live)
+    shapes, _ = _subscribed(live, sid, "mirror", SHAPES_KINDS)
+    current, _ = _subscribed(live, sid, "mirror", CHECKMARK_KINDS)
+    with shapes, current:
+        for status, shape in [("active", "bell"), ("completed", "checkmark")]:
+            assert_ok(live.request("session.status", sid, status=status, color="#ff8800", shape=shape))
+            seen = wait_frame(shapes.read, "status", shapes.send)["status"]
+            assert_subset(seen, {"status": status, "color": "#ff8800"})
+            if shape == "checkmark":
+                assert_absent(seen, "shape")
+            else:
+                assert seen["shape"] == shape
+            assert_subset(wait_frame(current.read, "status", current.send)["status"], {"status": status, "shape": shape})
+        late_shapes, snapshot = _subscribed_snapshot(live, sid, SHAPES_KINDS)
+        with late_shapes:
+            assert_subset(snapshot["snapshot"]["status"], {"status": "completed", "color": "#ff8800"})
+            assert_absent(snapshot["snapshot"]["status"], "shape")
+        late_current, snapshot = _subscribed_snapshot(live, sid, CHECKMARK_KINDS)
+        with late_current:
+            assert_subset(snapshot["snapshot"]["status"], {"status": "completed", "shape": "checkmark"})
+    assert_ok(live.request("session.status", sid, status="idle"))
+    assert_ok(live.request("session.close", sid))
+
+
 @LIVE_IN_ANY_SHELL
 @pytest.mark.since("0.39.1")
 @pytest.mark.covers("live.tree", "field:result.remote", "session.companion.page", "session.companion.new")

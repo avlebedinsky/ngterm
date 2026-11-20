@@ -120,7 +120,7 @@ fn wire_vocabularies_round_trip() {
     assert_eq!(StatusShape::from_wire(""), None);
     assert_eq!(
         StatusShape::valid_names_list(),
-        "circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell"
+        "circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell|checkmark"
     );
     assert!(
         indicator(Blocked, None)
@@ -134,7 +134,9 @@ fn wire_vocabularies_round_trip() {
 
 #[test]
 fn status_shapes_keep_upstreams_order_names_and_original_set() {
-    use StatusShape::{Bell, Bolt, Capsule, Circle, Diamond, Play, Seal, Square, Star, Triangle, TriangleDown};
+    use StatusShape::{
+        Bell, Bolt, Capsule, Checkmark, Circle, Diamond, Play, Seal, Square, Star, Triangle, TriangleDown,
+    };
     assert_eq!(
         StatusShape::ALL,
         [
@@ -148,7 +150,8 @@ fn status_shapes_keep_upstreams_order_names_and_original_set() {
             Seal,
             Star,
             Bolt,
-            Bell
+            Bell,
+            Checkmark
         ]
     );
     let names: Vec<&str> = StatusShape::ALL.map(StatusShape::display_name).to_vec();
@@ -165,7 +168,8 @@ fn status_shapes_keep_upstreams_order_names_and_original_set() {
             "Seal",
             "Star",
             "Bolt",
-            "Bell"
+            "Bell",
+            "Checkmark"
         ]
     );
     // v0.40.0's six, which an older viewer decodes: not the first six of the new order
@@ -177,7 +181,24 @@ fn status_shapes_keep_upstreams_order_names_and_original_set() {
         assert_eq!(shape.is_original(), StatusShape::ORIGINAL.contains(&shape), "{shape:?}");
     }
     assert!(!TriangleDown.is_original() && !Play.is_original() && !Seal.is_original());
-    assert!(!Bolt.is_original() && !Bell.is_original());
+    assert!(!Bolt.is_original() && !Bell.is_original() && !Checkmark.is_original());
+}
+
+/// Upstream's `statusShapeExpandedIsEveryShapeButTheCheckmark`.
+#[test]
+fn the_expanded_set_is_every_shape_but_the_checkmark() {
+    let expected: Vec<StatusShape> = StatusShape::ALL
+        .into_iter()
+        .filter(|shape| *shape != StatusShape::Checkmark)
+        .collect();
+    assert_eq!(StatusShape::EXPANDED.to_vec(), expected);
+}
+
+/// Upstream's `statusShapeOnlyTheCheckmarkIsAStroke`.
+#[test]
+fn only_the_checkmark_is_a_stroke() {
+    let strokes: Vec<StatusShape> = StatusShape::ALL.into_iter().filter(|shape| shape.is_stroke()).collect();
+    assert_eq!(strokes, [StatusShape::Checkmark]);
 }
 
 #[test]

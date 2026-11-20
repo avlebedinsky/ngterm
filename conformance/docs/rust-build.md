@@ -400,7 +400,7 @@ additions and how each OS does them. Their observable contracts are:
   marked clicked.
 - Presented sessions: image, Markdown and text pages go only to a presenter whose viewer lists `page.content`; the
   page serve channel serves a content page's files under the page's own rules. Status shapes go to a viewer as the
-  original six unless it lists `status.shapes`.
+  original six unless it lists `status.shapes`, and without the checkmark unless it lists `status.checkmark`.
 - `tree.sidebarDensity` (`default` or `compact`, set app-wide by `sidebar.density`, which echoes it) is always
   reported; `tree.snapshotUnsaved` is `true` while a window's state file cannot be written and absent otherwise.
 - Tints take the five new names and `#rrggbb`, read back lowercase; info markup takes the new names but no hex.

@@ -597,7 +597,7 @@ fn sliders_read_their_setting_and_move_it_in_whole_steps() {
 /// Upstream's `testAgentStatusShapePickerRowLayoutAndOptions`: every shape's display name, and nothing else; a new
 /// shape stored in the settings shows as the picker's choice.
 #[test]
-fn each_status_shape_picker_offers_the_eleven_shapes_by_display_name() {
+fn each_status_shape_picker_offers_the_twelve_shapes_by_display_name() {
     let shapes = [
         "Circle",
         "Square",
@@ -610,10 +610,12 @@ fn each_status_shape_picker_offers_the_eleven_shapes_by_display_name() {
         "Star",
         "Bolt",
         "Bell",
+        "Checkmark",
     ];
     let items = every_item(&snapshot(AppSettings {
         completed_status_shape: Some("triangle-down".to_owned()),
         blocked_status_shape: Some("bell".to_owned()),
+        active_status_shape: Some("checkmark".to_owned()),
         ..AppSettings::default()
     }));
     for status in [AgentStatus::Active, AgentStatus::Blocked, AgentStatus::Completed] {
@@ -623,6 +625,10 @@ fn each_status_shape_picker_offers_the_eleven_shapes_by_display_name() {
     let completed = picker_of(item(&items, "settings-status-shape-completed"));
     assert_eq!(completed.label(), "Down Triangle");
     assert_eq!(picker_of(item(&items, "settings-status-shape-blocked")).label(), "Bell");
+    assert_eq!(
+        picker_of(item(&items, "settings-status-shape-active")).label(),
+        "Checkmark"
+    );
 }
 
 #[test]
