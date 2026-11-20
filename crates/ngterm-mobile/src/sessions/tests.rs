@@ -475,6 +475,45 @@ async fn a_run_reports_status_output_and_a_signal_as_desktops_runner_does() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_remote_command_keeps_apostrophes_with_marks_as_literal_bytes() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let arguments = [
+        "session",
+        "new",
+        "--name",
+        "it'\u{301}s; echo INJECTED",
+        "x'\u{fe0f}",
+        "y'\u{1f3fb}",
+    ];
+    let transport = FakeTransport::new();
+    let line = control_tail(OriginShell::Posix, &arguments);
+    transport.script(&line, Script::ok("{}"));
+    let connection = connected(&transport).await;
+    control_in(&connection, connection.origin_form(), &arguments)
+        .await
+        .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let bin = home.path().join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let cli = bin.join("ngtermctl");
+    std::fs::write(&cli, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
+    std::fs::set_permissions(cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = std::process::Command::new("/bin/sh")
+        .args(["-c", &commands(&transport)[0]])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    let mut expected = arguments.to_vec();
+    expected.push("--json");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, format!("{}\0", expected.join("\0")).into_bytes());
+}
+
 // MARK: - New Session
 
 #[tokio::test(start_paused = true)]

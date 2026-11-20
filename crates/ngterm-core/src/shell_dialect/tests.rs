@@ -8,7 +8,14 @@ use super::*;
 
 /// Arguments each dialect must hand on whole: spaces, both quotes and PowerShell's typographic ones, backslashes
 /// before a quote and at the end, an empty one, every shell's operators and what each would expand unquoted.
-const NASTY: [&str; 22] = [
+const NASTY: [&str; 29] = [
+    r"a\\b",
+    r"tail\",
+    "it'\u{301}s; echo INJECTED",
+    "x'\u{fe0f}",
+    "y'\u{1f3fb}",
+    "\u{600}'",
+    "'\u{200d}",
     "a b",
     "it's \"quoted\"",
     r#"back\"slash"#,

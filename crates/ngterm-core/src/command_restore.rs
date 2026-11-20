@@ -544,6 +544,16 @@ pub fn should_restore<S: AsRef<str>>(argv: &[String], denylist: &[S]) -> bool {
     !denylist.iter().any(|entry| same_program(name, entry.as_ref()))
 }
 
+/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes.
+#[must_use]
+pub fn should_restore_in_shell<S: AsRef<str>>(argv: &[String], denylist: &[S], shell: Option<&str>) -> bool {
+    should_restore(argv, denylist)
+        && !(shell.is_some_and(|shell| {
+            let name = shell_name(basename(shell));
+            name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
+        }) && argv.iter().any(|word| word.contains('!')))
+}
+
 /// Whether `value` carries a character a line editor reads as an editing command (C0 or DEL), tab included.
 #[must_use]
 pub fn has_control_character(value: &str) -> bool {
@@ -1573,6 +1583,54 @@ mod tests {
             argv(&["tmux", "screen", "zellij"])
         );
         assert!(!should_restore(&argv(&["zellij"]), &parse_denylist(&crlf)));
+    }
+
+    #[test]
+    fn a_bang_is_refused_only_for_a_csh_receiver() {
+        let none: [&str; 0] = [];
+        for shell in ["/bin/csh", "/bin/tcsh", "tcsh", "csh.exe", "/bin/CSH", "TcSh.ExE"] {
+            for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
+                assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
+            }
+            assert!(should_restore_in_shell(&argv(&["grep", "needle"]), &none, Some(shell)));
+        }
+        for shell in [None, Some("/bin/zsh"), Some("/bin/bash"), Some("/usr/bin/fish")] {
+            assert!(should_restore_in_shell(&argv(&["grep", "!needle"]), &none, shell));
+            assert!(!should_restore_in_shell(&argv(&["vim", "!x"]), &["vim"], shell));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apostrophes_with_marks_reach_the_program_as_the_same_bytes() {
+        let arguments = [
+            "it's",
+            "it'\u{301}s; echo INJECTED",
+            "x'\u{fe0f}",
+            "y'\u{1f3fb}",
+            "\u{600}'",
+            "'\u{200d}",
+        ];
+        let mut words = vec!["/usr/bin/printf", "%s\\0"];
+        words.extend(arguments);
+        let expected = format!("{}\0", arguments.join("\0")).into_bytes();
+        let home = tempfile::tempdir().unwrap();
+        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+            if !std::path::Path::new(shell).is_file() {
+                continue;
+            }
+            let output = std::process::Command::new(shell)
+                .args(["-c", &shell_quoted_line(&words)])
+                .env_clear()
+                .env("HOME", home.path())
+                .env("ZDOTDIR", home.path())
+                .env("XDG_CONFIG_HOME", home.path())
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell}: {output:?}");
+            assert_eq!(output.stdout, expected, "{shell}");
+        }
     }
 
     #[test]

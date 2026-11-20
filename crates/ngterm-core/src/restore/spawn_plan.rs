@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::command_restore::{PaneInput, RestoreInputs, restore_plan, should_restore};
+use crate::command_restore::{PaneInput, RestoreInputs, restore_plan, should_restore_in_shell};
 use crate::live::support::{Configuration, Creation, LiveAttach, attach_line, live_attach, settled};
 use crate::model::{PaneLaunch, Session, StatusPane};
 use crate::shell_dialect::ShellDialect;
@@ -100,15 +100,17 @@ pub struct LaunchSeedPolicy {
     /// Daemons whose reset could not be confirmed at this launch: their panes attach with neither the captured replay
     /// nor the durable command, so a process that may still run is not started twice.
     pub suppressed_daemons: BTreeSet<String>,
+    /// The shell that receives an ordinary pane's captured command.
+    pub receiving_shell: Option<String>,
 }
 
 impl LaunchSeedPolicy {
     /// The `initial_input` for a captured argv: its replay, or `None` outside rerun mode or when the argv may not be
     /// replayed (denylisted, a control character, an undecodable byte).
-    fn restore_initial_input(&self, argv: Option<&[String]>) -> Option<PaneInput> {
+    fn restore_initial_input(&self, argv: Option<&[String]>, shell: Option<&str>) -> Option<PaneInput> {
         let argv = argv.filter(|_| self.restore_enabled)?;
         let denylist: Vec<&str> = self.denylist.iter().map(String::as_str).collect();
-        should_restore(argv, &denylist).then(|| PaneInput::Replay(argv.to_vec()))
+        should_restore_in_shell(argv, &denylist, shell).then(|| PaneInput::Replay(argv.to_vec()))
     }
 }
 
@@ -160,7 +162,11 @@ fn resolve_seed_in(
         }
     } else {
         let capture = session.take_pending_foreground(pane);
-        let mut foreground_input = policy.restore_initial_input(capture.as_deref());
+        let shell = session
+            .shell_profile_for(pane)
+            .map(|profile| profile.executable.as_str())
+            .or(policy.receiving_shell.as_deref());
+        let mut foreground_input = policy.restore_initial_input(capture.as_deref(), shell);
         // a replay is typed quoted for the shell; one that would expand `!NAME!` in it starts the plain shell
         if foreground_input.is_some()
             && session
@@ -338,6 +344,65 @@ mod tests {
             resolve_seed(&mut restored, StatusPane::Left, &rerun).command.as_deref(),
             Some("/bin/sh")
         );
+    }
+
+    #[test]
+    fn a_csh_receiver_starts_a_plain_shell_instead_of_a_capture_with_a_bang() {
+        for pane in [StatusPane::Left, StatusPane::Right] {
+            for shell in ["/bin/csh", "/bin/tcsh", "/bin/zsh", "/usr/bin/fish"] {
+                let mut restored = session(Some("stale-command"), false, true);
+                restored.split.shown = true;
+                restored.split.exists = true;
+                restored.split_launch.command = Some("stale-command".into());
+                let capture = argv(&["grep", "!needle", "log"]);
+                let restore = if pane == StatusPane::Left {
+                    &mut restored.restore
+                } else {
+                    &mut restored.split_restore
+                };
+                restore.pending_foreground = Some(capture.clone());
+                let rerun = LaunchSeedPolicy {
+                    receiving_shell: Some(shell.to_owned()),
+                    ..policy(true, &[])
+                };
+                let seed = resolve_seed(&mut restored, pane, &rerun);
+                assert_eq!(seed.command, None, "{pane:?} {shell}");
+                let expected = (!shell.ends_with("csh")).then_some(PaneInput::Replay(capture));
+                assert_eq!(seed.initial_input, expected, "{pane:?} {shell}");
+                assert!(restored.pane_restore(pane).unwrap().pending_foreground.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn the_pane_profile_selects_the_receiver_and_a_pin_stays_explicit() {
+        for (profile, receiver, replay) in [("/bin/tcsh", "/bin/zsh", false), ("/bin/zsh", "/bin/tcsh", true)] {
+            let mut restored = session(Some("stale-command"), false, true);
+            restored.shell_profile = Some(crate::shell_profiles::ShellProfile::new(
+                "test",
+                "test",
+                profile.into(),
+                &[],
+            ));
+            let captured = argv(&["echo", "!"]);
+            let rerun = LaunchSeedPolicy {
+                receiving_shell: Some(receiver.into()),
+                ..policy(true, &[])
+            };
+            restored.restore.pending_foreground = Some(captured.clone());
+            let seed = resolve_seed(&mut restored, StatusPane::Left, &rerun);
+            assert_eq!(seed.command, None);
+            assert_eq!(
+                seed.initial_input,
+                replay.then_some(PaneInput::Replay(captured.clone()))
+            );
+            restored.restore.pending_foreground = Some(captured);
+            restored.restore.pending_command = Some("echo !".into());
+            assert_eq!(
+                resolve_seed(&mut restored, StatusPane::Left, &rerun).initial_input,
+                Some(PaneInput::Line("echo !".into()))
+            );
+        }
     }
 
     #[test]

@@ -43,6 +43,26 @@ fn stat(pid: i32, parent: i32, pgrp: i32, session: i32) -> ProcessStat {
 }
 
 #[test]
+fn the_launch_receiver_reaches_the_pane_seed() {
+    for (shell, replay) in [("/bin/tcsh", false), ("/bin/zsh", true)] {
+        let mut fixture = Fixture::new(0);
+        let id = fixture.sessions[0];
+        let session = fixture.store_mut().unwrap().session_mut(id).unwrap();
+        session.was_restored = true;
+        session.launch.command = Some("stale-command".into());
+        session.restore.pending_foreground = Some(vec!["echo".into(), "!".into()]);
+        let token = install(&mut fixture.core, id, None);
+        let mut decision = RestoreLaunchDecision::new(RestoreMode::Rerun, None);
+        decision.receiving_shell = Some(shell.into());
+        fixture.core.set_restore_launch(decision);
+        fixture.core.wake_session(id);
+        let seed = fixture.core.request_pane_spawn(id, &token).unwrap();
+        assert_eq!(seed.command, None);
+        assert_eq!(seed.initial_input.is_some(), replay, "{shell}");
+    }
+}
+
+#[test]
 fn the_mode_reads_the_launch_and_a_set_applies_to_the_next_one() {
     let mut fixture = Fixture::new(0);
     let none = json!({"configured": "none", "requestedAtLaunch": "none", "active": "none", "restartRequired": false});
