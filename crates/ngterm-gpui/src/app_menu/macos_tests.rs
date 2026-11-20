@@ -168,7 +168,7 @@ fn each_bindable_key_gets_appkits_key_equivalent() {
         ("return", "\r"),
         ("tab", "\t"),
         ("space", " "),
-        ("delete", "\u{7f}"),
+        ("delete", "\u{8}"),
         ("up", "\u{f700}"),
         ("down", "\u{f701}"),
         ("left", "\u{f702}"),

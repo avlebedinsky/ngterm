@@ -18,12 +18,12 @@ ITEMS = (
     ("next_session", ("Navigate", "Next Session")),
 )
 # AppKit's key equivalent characters (NSCarriageReturnCharacter, the NSUpArrowFunctionKey family). Delete is
-# NSDeleteCharacter (0x7F) or SwiftUI's `.delete` (0x08); upstream's `namedKey(forKeyEquivalent:)` reads both.
+# NSBackspaceCharacter, SwiftUI's `.delete`: AppKit shows it as ⌫ and NSDeleteCharacter (0x7F) as Forward Delete ⌦.
 KEYS = {
     "return": ("\r",),
     "tab": ("\t",),
     "space": (" ",),
-    "delete": ("\x7f", "\x08"),
+    "delete": ("\x08",),
     "up": ("\uf700",),
     "down": ("\uf701",),
     # NSF1FunctionKey onward
@@ -109,10 +109,12 @@ def test_quit_and_settings_show_their_command_chords(ui):
         wait_until(shown)
 
 
-# a function key on a keyed item and on a keyless one (upstream's View ▸ Hide Sidebar, Navigate ▸ Last Session)
-FUNCTION_KEY_ITEMS = (
+# a function key on a keyed item and on a keyless one, and Delete, which shows ⌫ (upstream's View ▸ Hide Sidebar,
+# Navigate ▸ Last Session, File ▸ Clear Status)
+BOUND_KEY_ITEMS = (
     ("toggle_sidebar", "f5", ("View", "Hide Sidebar")),
     ("last_session", "f12", ("Navigate", "Last Session")),
+    ("clear_status", "ctrl+opt+delete", ("File", "Clear Status")),
 )
 
 
@@ -133,19 +135,19 @@ def _wait_shown(ui, path, chord):
 
 
 @pytest.mark.covers("keymap.reload", "keymap.list")
-def test_a_function_key_binding_shows_in_the_menu_until_it_is_removed(app, ctl, ui):
+def test_a_named_key_binding_shows_in_the_menu_until_it_is_removed(app, ctl, ui):
     defaults = _chords(ctl)
     keymap = ctl.instance.state_dir / "config" / "keymap.conf"
     keymap.parent.mkdir(parents=True, exist_ok=True)
-    keymap.write_text("".join(f"map {key} {action}\n" for action, key, _ in FUNCTION_KEY_ITEMS))
+    keymap.write_text("".join(f"map {key} {action}\n" for action, key, _ in BOUND_KEY_ITEMS))
     assert assert_ok(ctl.request("keymap.reload")) == {"count": 0}
     chords = _chords(ctl)
-    for action, key, path in FUNCTION_KEY_ITEMS:
+    for action, key, path in BOUND_KEY_ITEMS:
         assert chords[action] == key, (action, chords[action])
         _wait_shown(ui, path, key)
 
     keymap.write_text("")
     assert assert_ok(ctl.request("keymap.reload")) == {"count": 0}
     assert _chords(ctl) == defaults
-    for action, _, path in FUNCTION_KEY_ITEMS:
+    for action, _, path in BOUND_KEY_ITEMS:
         _wait_shown(ui, path, defaults[action])
