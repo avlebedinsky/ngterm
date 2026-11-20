@@ -5,6 +5,7 @@ floats over normal windows, and it takes the keyboard: the keys typed next go to
 upstream's `targetFrame`: the panel size of its screen's visible frame (the menu bar and Dock left out), centered in
 it, and the whole visible frame while zoomed."""
 
+import math
 import re
 import sys
 
@@ -19,10 +20,11 @@ MAX_DEPTH = 40
 # `QuickTerminalMetrics`' built-in size: a share of the visible frame, at most this size
 DEFAULT_SHARE = 0.9
 DEFAULT_MAX_SIZE = (1100.0, 700.0)
-# both builds round the panel's size to whole points, then center it on whole points: the size is up to half a
-# point off the unrounded frame, the origin up to one point
-SIZE_SLACK = 0.5
+# upstream frames a fractional size and AppKit puts its edges on whole points; ngterm rounds the size, then
+# centers it on whole points: the origin is up to one point off the unrounded frame
 ORIGIN_SLACK = 1.0
+# the float error of the share, so that a whole size stays whole
+EPSILON = 1e-6
 
 
 def _holds_quick(ui, handle, depth=0):
@@ -73,14 +75,19 @@ def _target_frame(visible):
     return left + (width - panel[0]) / 2, top + (height - panel[1]) / 2, *panel
 
 
+def _sized(got, want):
+    """`got` is the whole point below or above a fractional `want`, or `want` itself when it is whole."""
+    return math.floor(want + EPSILON) - EPSILON <= got <= math.ceil(want - EPSILON) + EPSILON
+
+
 def _framed(zoomed):
     """A check that the panel's frame is the visible frame (zoomed), else the target frame in it."""
 
     def check(frame):
         visible = _visible_frame(frame)
         want = visible if zoomed else _target_frame(visible)
-        slack = (ORIGIN_SLACK, ORIGIN_SLACK, SIZE_SLACK, SIZE_SLACK)
-        return all(abs(got - expected) <= most for got, expected, most in zip(frame, want, slack))
+        origin = all(abs(got - expected) <= ORIGIN_SLACK for got, expected in zip(frame[:2], want[:2]))
+        return origin and all(_sized(got, expected) for got, expected in zip(frame[2:], want[2:]))
 
     return check
 
