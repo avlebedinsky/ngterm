@@ -1,8 +1,9 @@
 """The quick terminal's panel on macOS, as the user meets it. The in-app chord (ctrl+`, through the OS's keyboard
 input) shows it without a title bar: its AX window has none of the title bar's buttons, also when it is zoomed. It
 floats over normal windows at the floating level, not over the floating panels of other apps, and it takes the
-keyboard: the keys typed next go to its terminal. Upstream's `QuickTerminalPanel` is
-`[.borderless, .nonactivatingPanel]` at the floating level and can become key. Its frame is
+keyboard: the keys typed next go to its terminal. It also shows over the main window in native full screen. Upstream's
+`QuickTerminalPanel` is `[.borderless, .nonactivatingPanel]` at the floating level, joins all Spaces as a full screen
+auxiliary window and can become key. Its frame is
 upstream's `targetFrame`: the panel size of its screen's visible frame (the menu bar and Dock left out), centered in
 it, and the whole visible frame while zoomed."""
 
@@ -12,7 +13,7 @@ import sys
 
 import pytest
 from agterm_conformance.match import assert_ok
-from agterm_conformance.wait import wait_until
+from agterm_conformance.wait import WaitTimeout, wait_until
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="the panel's title bar buttons as macOS AX has them")
 
@@ -179,3 +180,70 @@ def test_the_quick_panel_has_no_title_bar_and_takes_the_keyboard(app, ctl, ui):
     finally:
         ctl.request("surface.zoom", "quick", mode="hide")
         ctl.request("quick", mode="hide")
+
+
+def _fullscreen(ctl):
+    return [bool(window.get("fullscreen")) for window in assert_ok(ctl.request("window.list"))["windows"]]
+
+
+def _set_fullscreen(ctl, on):
+    """Toggle the main window's native full screen until `window.list` reads `on`, sending a toggle that changed
+    nothing in 5s again: macOS drops a full screen toggle now and then."""
+    for attempt in range(3):
+        if _fullscreen(ctl) == [on]:
+            return
+        ctl.request("window.fullscreen")
+        try:
+            wait_until(lambda: _fullscreen(ctl) == [on], timeout=5.0)
+            return
+        except WaitTimeout:
+            if attempt == 2:
+                raise
+
+
+def _full_screen_settled(ui):
+    """The app is frontmost and its focused AX window is the main window in full screen, spanning its screen: the Space
+    animation is over and the keys go to it. A screen with a camera housing keeps the strip of the menu bar above a
+    full screen window. An activation sent during the Space animation can be lost, so it is sent again."""
+    import AppKit
+
+    def settled():
+        if not ui.attribute(ui.app, "AXFrontmost"):
+            ui.activate()
+            raise AssertionError("the app is not frontmost")
+        window = ui.attribute(ui.app, "AXFocusedWindow")
+        assert window is not None, "no focused window"
+        assert ui.attribute(window, "AXFullScreen"), "the focused window is not in full screen"
+        x, y, width, height = _frame(ui, window)
+        primary_height = AppKit.NSScreen.screens()[0].frame().size.height
+        screens = [_flipped(screen.frame(), primary_height) for screen in AppKit.NSScreen.screens()]
+        assert any(
+            (x, width, y + height) == (left, extent, top + tall) and y >= top for left, top, extent, tall in screens
+        ), f"the focused window's frame {(x, y, width, height)} does not span a screen of {screens}"
+        return True
+
+    settled.__qualname__ = "the main window settled in full screen"
+    wait_until(settled)
+
+
+@pytest.mark.covers("ui:quick-terminal", "quick.text", "window.fullscreen")
+def test_the_quick_panel_shows_over_a_full_screen_window(app, ctl, ui):
+    pid = ctl.instance.pid
+    ui.activate()
+    try:
+        _set_fullscreen(ctl, True)
+        _full_screen_settled(ui)
+        # the first key after the move to the full screen Space can be lost, upstream's and ngterm's alike
+        for attempt in range(3):
+            ui.press("ctrl+`")
+            try:
+                ctl.wait_tree(lambda tree: tree["tree"]["quickVisible"] is True, timeout=3.0)
+                break
+            except WaitTimeout:
+                if attempt == 2:
+                    raise
+        _borderless(ui, pid, "shown over the full screen window", _framed(zoomed=False))
+        _types_into_it(ctl, ui, "quick-over-full-screen")
+    finally:
+        ctl.request("quick", mode="hide")
+        _set_fullscreen(ctl, False)
