@@ -1068,6 +1068,37 @@ fn releasing_a_lone_modifier_puts_out_the_link_it_lit(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 #[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn a_link_opens_after_a_drag_selection(cx: &mut TestAppContext) {
+    let script = "printf '\\033[?1000hready\\r\\nhello world\\r\\nhttps://example.com/p'; exec sleep 30";
+    let mut f = fixture(cx, script, config(""));
+    f.wait_painted("example.com/p");
+    for (capture, modifiers) in [(false, Modifiers::control()), (true, CTRL_SHIFT), (true, SUPER_SHIFT)] {
+        f.pane().set_mouse_reporting(capture);
+        assert_eq!(f.pane().mouse_tracking(), capture);
+        let selection_modifiers = Modifiers {
+            shift: capture,
+            ..Modifiers::default()
+        };
+        f.cx.simulate_mouse_down(Fixture::at(0, 1), MouseButton::Left, selection_modifiers);
+        f.cx.simulate_mouse_move(Fixture::at(4, 1), Some(MouseButton::Left), selection_modifiers);
+        f.cx.simulate_mouse_up(Fixture::at(4, 1), MouseButton::Left, selection_modifiers);
+        assert!(f.selection().is_some());
+        f.events.borrow_mut().clear();
+
+        f.cx.simulate_mouse_move(Fixture::at(2, 2), None, modifiers);
+        f.cx.simulate_mouse_down(Fixture::at(2, 2), MouseButton::Left, modifiers);
+        assert!(
+            f.view.read_with(f.cx, |view, _| view.hovered_link().is_some()),
+            "capture={capture}, modifiers={modifiers:?}"
+        );
+        f.cx.simulate_mouse_up(Fixture::at(2, 2), MouseButton::Left, modifiers);
+        f.cx.run_until_parked();
+        assert_eq!(opened_links(&f), [open_url("https://example.com/p", false)]);
+    }
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
 fn links_open_with_ctrl_shift_while_the_program_has_the_mouse(cx: &mut TestAppContext) {
     let script = "stty -echo -icanon; printf '\\033[?1000hready\\r\\nsee https://example.com/p\\r\\n'; exec cat -v";
     let mut f = fixture(cx, script, config(""));

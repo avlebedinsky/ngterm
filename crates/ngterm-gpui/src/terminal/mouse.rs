@@ -303,7 +303,6 @@ impl TerminalView {
             window.focus(&self.focus, cx);
         }
         let position = self.surface_position(event.position, bounds);
-        self.pointer.held[index] = true;
         self.pointer.last = Some(position);
         let held = mods(&event.modifiers);
         self.pointer.mods = held;
@@ -312,6 +311,7 @@ impl TerminalView {
         };
         let inside = bounds.contains(&event.position);
         self.refresh_link(&pane, inside.then_some(position), cx);
+        self.pointer.held[index] = true;
         self.press(&pane, index, position, cx);
         cx.notify();
     }
