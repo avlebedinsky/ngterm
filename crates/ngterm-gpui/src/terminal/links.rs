@@ -1,6 +1,6 @@
 //! Links in a terminal (Ghostty's `linkAtPos`, `link-url`, `link-osc8`): an OSC 8 hyperlink under the pointer, or a
-//! URL detected in the text. Both need Ctrl (Super) and no other modifier held, as Ghostty's defaults ask
-//! (`ctrlOrSuper` for OSC 8, `hover_mods` for the URL matcher): then the link is underlined while hovered, the pointer
+//! URL detected in the text. Both use Ctrl or Super alone. Session links also accept Shift.
+//! Ghostty uses `ctrlOrSuper` for OSC 8 and `hover_mods` for URL detection. The link has an underline, the pointer
 //! becomes a hand, and a click (a press and release on the link without a drag) opens it — through
 //! [`super::TerminalEvent::OpenUrl`], which the frontend routes through the link policy ([`follow_link`] is the
 //! default route: the desktop's handler for a web or mail link, the file manager for a local file, nothing for the
@@ -138,11 +138,19 @@ pub fn activates(mods: Mods) -> bool {
 /// (`link-url`).
 #[must_use]
 pub fn link_at(pane: &Pane, frame: &Frame, at: GridPoint, mods: Mods, urls: bool) -> Option<Link> {
-    if !activates(mods) {
+    let shifted = !activates(mods) && activates(mods - Mods::SHIFT);
+    if !activates(mods) && !shifted {
         return None;
     }
     let (col, row) = (at.x, u16::try_from(at.y).ok()?);
-    osc8_at(pane, frame, col, row).or_else(|| if urls { url_at(frame, col, row) } else { None })
+    let link = osc8_at(pane, frame, col, row).or_else(|| if urls { url_at(frame, col, row) } else { None })?;
+    let session = [
+        ngterm_core::remote::peer::RemotePeer::Ngterm,
+        ngterm_core::remote::peer::RemotePeer::Agterm,
+    ]
+    .into_iter()
+    .any(|peer| link_policy::session_link(&link.url, peer).is_some());
+    (!shifted || session).then_some(link)
 }
 
 /// The OSC 8 hyperlink on viewport cell (`col`, `row`): the run of cells around it carrying the same link.
@@ -374,7 +382,7 @@ pub fn follow_link(raw: &str, mode: LinkOpenMode, origin: ClickOrigin, cx: &App)
         | Route::Markdown { path, .. }
         | Route::Document { path, .. }
         | Route::Text { path, .. } => cx.reveal_path(&path),
-        Route::Ignore => tracing::debug!(raw, "link click ignored by the link policy"),
+        Route::SelectSession(_) | Route::Ignore => tracing::debug!(raw, "link click ignored by the link policy"),
     }
 }
 

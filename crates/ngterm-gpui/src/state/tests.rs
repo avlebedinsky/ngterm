@@ -2998,3 +2998,199 @@ fn a_pane_keystroke_clears_the_badge_without_a_status_glyph() {
     assert_eq!(state.core.library().held_session(session).unwrap().unseen_count, 0);
     assert!(state.take_frontend_work().banners.is_empty());
 }
+
+#[test]
+fn session_links_select_from_the_clicked_pane_and_ignore_reveal_or_non_shell_origins() {
+    let (mut state, window, session) = state_with_terminal();
+    let store = state.core.library_mut().store_mut(window).unwrap();
+    let workspace = store.current_workspace_id().unwrap();
+    let target = store.add_session(workspace, NewSession::at_cwd("/tmp")).unwrap();
+    let raw = format!("ngterm://session/{target}");
+    for mode in [
+        ngterm_core::persist::settings::LinkOpenMode::Browser,
+        ngterm_core::persist::settings::LinkOpenMode::Overlay,
+    ] {
+        state
+            .core
+            .update_settings(|settings| settings.link_open_mode = Some(mode.raw().to_owned()));
+        for intent in [ClickIntent::Normal, ClickIntent::Browser, ClickIntent::Reveal] {
+            state
+                .core
+                .library_mut()
+                .store_mut(window)
+                .unwrap()
+                .select_session(Some(session));
+            state.follow_pane_link(&raw, session, "T", intent, crate::terminal::LinkKind::Osc8);
+            assert_eq!(
+                state.core.library().store(window).unwrap().selected_session_id(),
+                Some(if intent == ClickIntent::Reveal { session } else { target })
+            );
+            let work = state.take_frontend_work();
+            assert!(work.open_urls.is_empty());
+            assert!(work.reveals.is_empty());
+        }
+    }
+    for origin in [ClickOrigin::Hud, ClickOrigin::ProgramOverlay, ClickOrigin::Quick] {
+        state
+            .core
+            .library_mut()
+            .store_mut(window)
+            .unwrap()
+            .select_session(Some(session));
+        state.follow_link(&raw, origin, ClickIntent::Normal);
+        assert_eq!(
+            state.core.library().store(window).unwrap().selected_session_id(),
+            Some(session)
+        );
+    }
+    state.follow_pane_link(
+        &raw,
+        session,
+        "missing",
+        ClickIntent::Normal,
+        crate::terminal::LinkKind::Osc8,
+    );
+    assert_eq!(
+        state.core.library().store(window).unwrap().selected_session_id(),
+        Some(session)
+    );
+}
+
+fn remote_link_row(
+    store: &mut ngterm_core::model::AppStore,
+    token: &str,
+    id: Uuid,
+    peer: ngterm_core::remote::peer::RemotePeer,
+) -> Uuid {
+    use ngterm_core::model::{RemoteBinding, RemoteOrigin};
+    let workspace = store.current_workspace_id().unwrap();
+    let row = store
+        .add_session(
+            workspace,
+            NewSession {
+                remote_host: Some("box".into()),
+                ..NewSession::at_cwd("/tmp")
+            },
+        )
+        .unwrap();
+    let found = store.session_mut(row).unwrap();
+    found.surface.replace(Box::new(FakeSurface::new(token)));
+    let pane = found.pane_identity;
+    let daemon = match peer {
+        ngterm_core::remote::peer::RemotePeer::Ngterm => ngterm_core::live::daemon_name(Uuid::new_v4()),
+        ngterm_core::remote::peer::RemotePeer::Agterm => format!(
+            "{}{}",
+            ngterm_core::remote::peer::agterm::DAEMON_PREFIX,
+            Uuid::new_v4().simple()
+        ),
+    };
+    store.bind_remote(
+        RemoteBinding::new(
+            id.to_string(),
+            std::collections::HashMap::from([(pane, daemon)]),
+            Some(1),
+            Some(RemoteOrigin {
+                host: "box".into(),
+                session_name: id.to_string(),
+                endpoint: ngterm_proto::ControlLiveEndpoint {
+                    executable: "/srv/live".into(),
+                    socket_directory: "/run/live".into(),
+                    peer: Some(peer),
+                    attach_bridge: None,
+                },
+            }),
+        ),
+        row,
+    );
+    row
+}
+
+#[test]
+fn session_links_accept_the_upstream_scheme_only_from_a_mapped_upstream_pane() {
+    use ngterm_core::remote::peer::{self, RemotePeer};
+    let (mut state, window, local) = state_with_terminal();
+    let store = state.core.library_mut().store_mut(window).unwrap();
+    let clicked = remote_link_row(store, "remote", Uuid::new_v4(), RemotePeer::Agterm);
+    let id = Uuid::new_v4();
+    let target = remote_link_row(store, "target", id, RemotePeer::Agterm);
+    let native = remote_link_row(store, "native", Uuid::new_v4(), RemotePeer::Ngterm);
+    let raw = format!("{}{id}", peer::session_link_prefix(RemotePeer::Agterm));
+    store.select_session(Some(local));
+    let found = store.session_mut(clicked).unwrap();
+    found.scratch_surface.replace(Box::new(FakeSurface::new("scratch")));
+    found.split_surface.replace(Box::new(FakeSurface::new("split")));
+    found.split_pane_identity = Some(Uuid::new_v4());
+    for (row, token) in [
+        (local, "T"),
+        (clicked, "scratch"),
+        (clicked, "split"),
+        (native, "native"),
+    ] {
+        state.follow_pane_link(&raw, row, token, ClickIntent::Normal, crate::terminal::LinkKind::Osc8);
+        assert_eq!(
+            state.core.library().store(window).unwrap().selected_session_id(),
+            Some(local)
+        );
+    }
+    state.follow_pane_link(
+        &raw,
+        clicked,
+        "remote",
+        ClickIntent::Normal,
+        crate::terminal::LinkKind::Osc8,
+    );
+    assert_eq!(
+        state.core.library().store(window).unwrap().selected_session_id(),
+        Some(target)
+    );
+    let work = state.take_frontend_work();
+    assert!(work.open_urls.is_empty());
+    assert!(work.reveals.is_empty());
+}
+
+#[test]
+fn session_links_read_the_origin_peer_from_a_catalog_scratch() {
+    use ngterm_core::remote::peer::{self, RemotePeer};
+    let (mut state, window, local) = state_with_terminal();
+    let store = state.core.library_mut().store_mut(window).unwrap();
+    let clicked = remote_link_row(store, "remote", Uuid::new_v4(), RemotePeer::Agterm);
+    let id = Uuid::new_v4();
+    let target = remote_link_row(store, "target", id, RemotePeer::Agterm);
+    let mut binding = store
+        .session(clicked)
+        .unwrap()
+        .remote_presentation()
+        .unwrap()
+        .binding
+        .clone();
+    binding.catalog_owned = true;
+    store.bind_remote(binding, clicked);
+    store
+        .session_mut(clicked)
+        .unwrap()
+        .scratch_surface
+        .replace(Box::new(FakeSurface::new("scratch")));
+    let mut binding = store
+        .session(target)
+        .unwrap()
+        .remote_presentation()
+        .unwrap()
+        .binding
+        .clone();
+    binding.catalog_owned = true;
+    binding.origin = None;
+    store.bind_remote(binding, target);
+    store.select_session(Some(local));
+    let raw = format!("{}{id}", peer::session_link_prefix(RemotePeer::Agterm));
+    state.follow_pane_link(
+        &raw,
+        clicked,
+        "scratch",
+        ClickIntent::Normal,
+        crate::terminal::LinkKind::Osc8,
+    );
+    assert_eq!(
+        state.core.library().store(window).unwrap().selected_session_id(),
+        Some(target)
+    );
+}

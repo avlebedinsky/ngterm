@@ -478,3 +478,92 @@ fn search_sessions_stands_down_while_a_zoom_covers_the_sidebar() {
     f.run(BuiltinAction::ToggleTerminalZoom);
     assert_eq!(f.run(BuiltinAction::FocusSidebarSearch), ActionEffect::Done);
 }
+
+#[test]
+fn session_links_raise_and_focus_the_target_without_a_status_pane_reveal() {
+    use crate::link_policy::ClickOrigin;
+    let mut f = Fixture::new();
+    let target_window = f.core.library_mut().new_window(None);
+    let store = f.core.library_mut().store_mut(target_window).unwrap();
+    let workspace = store.current_workspace_id().unwrap();
+    let target = store
+        .add_session(workspace, crate::model::NewSession::at_cwd("/tmp"))
+        .unwrap();
+    let session = store.session_mut(target).unwrap();
+    session.agent_indicator = crate::model::AgentIndicator {
+        status: crate::model::AgentStatus::Blocked,
+        status_pane: Some(StatusPane::Scratch),
+        ..crate::model::AgentIndicator::default()
+    };
+    f.core.take_frontmost(f.window);
+    f.core.take_window_requests();
+    assert!(f.core.follow_session_link(target, ClickOrigin::Pane(f.session), None));
+    assert_eq!(f.core.library().active_window_id(), Some(target_window));
+    assert_eq!(
+        f.core.library().store(target_window).unwrap().selected_session_id(),
+        Some(target)
+    );
+    assert!(
+        !f.core
+            .library()
+            .store(target_window)
+            .unwrap()
+            .session(target)
+            .unwrap()
+            .scratch_active
+    );
+    assert!(f.core.pane_focus_requested(target));
+    assert!(
+        f.core
+            .take_window_requests()
+            .contains(&crate::WindowRequest::Raise(target_window))
+    );
+    assert!(f.core.follow_session_link(target, ClickOrigin::Pane(f.session), None));
+    assert!(f.core.take_window_requests().is_empty());
+}
+
+#[test]
+fn session_links_refuse_unknown_targets_and_windows_with_covers() {
+    use crate::link_policy::ClickOrigin;
+    let mut f = Fixture::new();
+    let window = f.core.library_mut().new_window(None);
+    let target = f.core.library().store(window).unwrap().selected_session_id().unwrap();
+    f.core.take_frontmost(f.window);
+    let origin = ClickOrigin::Pane(f.session);
+    assert!(!f.core.follow_session_link(Uuid::new_v4(), origin, None));
+    f.core.set_zoom_target(
+        window,
+        Some(crate::zoom::SurfaceId {
+            session: target,
+            surface: crate::zoom::ZoomSurface::Primary,
+        }),
+    );
+    assert!(!f.core.follow_session_link(target, origin, None));
+    f.core.set_zoom_target(window, None);
+    f.core.toggle_dashboard(window);
+    assert!(!f.core.follow_session_link(target, origin, None));
+    f.core.toggle_dashboard(window);
+    f.core
+        .modals
+        .open_pick(
+            window,
+            crate::modal::PendingPick {
+                id: "session-link".into(),
+                items: Vec::new(),
+                prompt: None,
+                query: None,
+                allow_custom: false,
+                selection: None,
+            },
+        )
+        .unwrap();
+    assert!(!f.core.follow_session_link(target, origin, None));
+    f.core.resolve_pick(
+        window,
+        "session-link",
+        ngterm_proto::ControlPickResult::outcome(ngterm_proto::ControlPickOutcome::Cancelled),
+    );
+    assert_eq!(f.core.library().active_window_id(), Some(f.window));
+    f.core.library_mut().close_window(window);
+    assert!(!f.core.follow_session_link(target, origin, None));
+}

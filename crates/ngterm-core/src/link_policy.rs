@@ -99,6 +99,8 @@ pub enum ClickOrigin {
 /// scheme maps to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
+    /// Select a session in the clicked pane's namespace.
+    SelectSession(Uuid),
     Browser(String),
     /// A session web overlay over `session`, at `size_percent` of it (`None`: full size).
     Overlay {
@@ -135,8 +137,7 @@ pub enum Route {
 }
 
 impl Route {
-    /// The file a local route names, which the reveal chord selects in the file manager instead; `None` for a web
-    /// route and an ignored link (upstream's `localFile`).
+    /// The file that the reveal chord selects. Session links, web routes and ignored links return `None`.
     #[must_use]
     pub fn local_file(&self) -> Option<&std::path::Path> {
         match self {
@@ -145,7 +146,7 @@ impl Route {
             | Self::Document { path, .. }
             | Self::Text { path, .. }
             | Self::Reveal(path) => Some(path),
-            Self::Browser(_) | Self::Overlay { .. } | Self::Ignore => None,
+            Self::SelectSession(_) | Self::Browser(_) | Self::Overlay { .. } | Self::Ignore => None,
         }
     }
 
@@ -334,15 +335,31 @@ fn network_or_device_path(path: &str) -> bool {
     matches!(chars.next(), Some('/' | '\\')) && matches!(chars.next(), Some('/' | '\\'))
 }
 
+/// Read an exact session link without URL normalization.
+#[must_use]
+pub fn session_link(raw: &str, peer: crate::remote::peer::RemotePeer) -> Option<Uuid> {
+    let prefix = crate::remote::peer::session_link_prefix(peer);
+    if raw.len() != prefix.len() + 36 || !raw.get(..prefix.len())?.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    let id = &raw[prefix.len()..];
+    let parsed = Uuid::parse_str(id).ok()?;
+    parsed
+        .hyphenated()
+        .to_string()
+        .eq_ignore_ascii_case(id)
+        .then_some(parsed)
+}
+
 /// [`route_for_hosts`] with this machine's names.
 #[must_use]
 pub fn route(raw: &str, mode: LinkOpenMode, origin: ClickOrigin) -> Route {
     route_for_hosts(raw, mode, origin, local_host_names())
 }
 
-/// The route of a raw link: [`disposition_for_hosts`] decides open, reveal or ignore, then a web link an overlay can
-/// show, clicked in a pane or the scratch terminal, goes to that session's overlay at the mode's size under any mode
-/// but [`LinkOpenMode::Browser`]. Whether the overlay is free right now is the caller's check.
+/// Session links select a row first. Other links use [`disposition_for_hosts`].
+/// A web link from a pane or scratch uses the configured overlay mode.
+/// The caller checks if the overlay is free.
 #[must_use]
 pub fn route_for_hosts<S: BuildHasher>(
     raw: &str,
@@ -350,6 +367,12 @@ pub fn route_for_hosts<S: BuildHasher>(
     origin: ClickOrigin,
     local_hosts: &HashSet<String, S>,
 ) -> Route {
+    if let Some(id) = session_link(raw, crate::remote::peer::RemotePeer::Ngterm) {
+        return match origin {
+            ClickOrigin::Pane(_) | ClickOrigin::RemotePane(_) | ClickOrigin::Scratch(_) => Route::SelectSession(id),
+            ClickOrigin::Hud | ClickOrigin::ProgramOverlay | ClickOrigin::Quick => Route::Ignore,
+        };
+    }
     if matches!(origin, ClickOrigin::RemotePane(_)) && is_bare_path(raw) {
         return Route::Ignore;
     }
@@ -571,6 +594,99 @@ pub(crate) fn percent_decode(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::interrupt::KeyModifiers;
+
+    #[test]
+    fn session_links_select_only_from_shell_origins_in_every_mode() {
+        use crate::remote::peer::RemotePeer;
+        let id = Uuid::parse_str("0F5C1E2A-3B4D-4E6F-8A9B-0C1D2E3F4A5B").unwrap();
+        for raw in [
+            format!("ngterm://session/{id}"),
+            format!("ngterm://session/{}", id.to_string().to_uppercase()),
+            format!("NGTERM://SESSION/{id}"),
+        ] {
+            assert_eq!(session_link(&raw, RemotePeer::Ngterm), Some(id));
+            assert_eq!(disposition_of(&raw), LinkDisposition::Ignore);
+            for mode in [
+                LinkOpenMode::Browser,
+                LinkOpenMode::Overlay,
+                LinkOpenMode::Overlay95,
+                LinkOpenMode::Overlay75,
+                LinkOpenMode::Overlay50,
+            ] {
+                for origin in [
+                    ClickOrigin::Pane(id),
+                    ClickOrigin::RemotePane(id),
+                    ClickOrigin::Scratch(id),
+                ] {
+                    let route = route(&raw, mode, origin);
+                    assert_eq!(route, Route::SelectSession(id));
+                    assert_eq!(route.local_file(), None);
+                    assert!(!route.opens_as_log());
+                    assert!(locations(&raw, origin, Some("/tmp")).is_empty());
+                }
+                for origin in [ClickOrigin::Hud, ClickOrigin::ProgramOverlay, ClickOrigin::Quick] {
+                    assert_eq!(route(&raw, mode, origin), Route::Ignore);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn session_links_refuse_url_normalization_and_extra_characters() {
+        use crate::remote::peer::RemotePeer;
+        let id = "0F5C1E2A-3B4D-4E6F-8A9B-0C1D2E3F4A5B";
+        let valid = format!("ngterm://session/{id}");
+        let mut rejected: Vec<String> = ["/", "?", "#", "?a=1", " ", "\n", "\0"]
+            .map(|suffix| format!("{valid}{suffix}"))
+            .into();
+        rejected.extend(
+            [
+                "ngterm://@session/",
+                "ngterm://u:p@session/",
+                "ngterm://session:80/",
+                "ngterm://session:/",
+                "ngterm://session//",
+                "ngterm://session/x/",
+                "ngterm:///session/",
+                "ngterm:session/",
+                "ngterm://window/",
+                " ngterm://session/",
+                "ñgterm://session/",
+            ]
+            .map(|prefix| format!("{prefix}{id}")),
+        );
+        rejected.extend([
+            format!("ngterm://session/{}", id.replace('-', "")),
+            format!("ngterm://session/{{{id}}}"),
+            format!("ngterm://session/%30{}", &id[1..]),
+            "ngterm://session".into(),
+            "ngterm://session/".into(),
+            "ngterm://session/not-a-uuid".into(),
+        ]);
+        for raw in rejected {
+            assert_eq!(session_link(&raw, RemotePeer::Ngterm), None, "{raw:?}");
+            for origin in [
+                ClickOrigin::Pane(Uuid::nil()),
+                ClickOrigin::RemotePane(Uuid::nil()),
+                ClickOrigin::Scratch(Uuid::nil()),
+                ClickOrigin::Hud,
+                ClickOrigin::ProgramOverlay,
+                ClickOrigin::Quick,
+            ] {
+                assert_eq!(route(&raw, LinkOpenMode::Overlay, origin), Route::Ignore, "{raw:?}");
+            }
+        }
+        let upstream = format!("{}{id}", crate::remote::peer::session_link_prefix(RemotePeer::Agterm));
+        assert_eq!(session_link(&upstream, RemotePeer::Ngterm), None);
+        assert_eq!(
+            session_link(&upstream, RemotePeer::Agterm),
+            Some(Uuid::parse_str(id).unwrap())
+        );
+        assert_eq!(
+            route(&upstream, LinkOpenMode::Browser, ClickOrigin::RemotePane(Uuid::nil())),
+            Route::Ignore
+        );
+    }
 
     /// A fixed set, so host matching does not depend on the machine.
     fn hosts() -> HashSet<String> {

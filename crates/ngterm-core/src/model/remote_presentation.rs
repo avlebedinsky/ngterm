@@ -30,6 +30,8 @@ pub struct RemoteOrigin {
 pub struct RemoteBinding {
     /// The origin's session id, which `live present` names.
     pub remote_session_id: String,
+    /// A row owned by a remote catalog, whose scratch also runs on the origin.
+    pub catalog_owned: bool,
     /// The origin's presentation protocol version, `None` for an origin that predates the stream.
     pub presentation_version: Option<i64>,
     /// `None` for a binding built without one, which can then not be attached again.
@@ -65,6 +67,7 @@ impl RemoteBinding {
             .collect();
         Self {
             remote_session_id: remote_session_id.into(),
+            catalog_owned: false,
             presentation_version,
             origin,
             local_by_remote,

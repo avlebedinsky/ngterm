@@ -101,6 +101,48 @@ pub struct WindowLibrary {
 }
 
 impl WindowLibrary {
+    /// Find one open row in the clicked pane's namespace.
+    #[must_use]
+    pub fn session_link_target(
+        &self,
+        id: Uuid,
+        origin: crate::link_policy::ClickOrigin,
+        pane: Option<Uuid>,
+    ) -> Option<(Uuid, Uuid)> {
+        use crate::link_policy::ClickOrigin;
+        let clicked = match origin {
+            ClickOrigin::Pane(session) | ClickOrigin::RemotePane(session) | ClickOrigin::Scratch(session) => session,
+            ClickOrigin::Hud | ClickOrigin::ProgramOverlay | ClickOrigin::Quick => return None,
+        };
+        let clicked = self.store_for_session(clicked)?.session(clicked)?;
+        let on_origin = if clicked.remote_host().is_none() {
+            false
+        } else if matches!(origin, ClickOrigin::Scratch(_)) {
+            clicked
+                .remote_presentation()
+                .is_some_and(|remote| remote.binding.catalog_owned)
+        } else {
+            clicked.remote_presentation()?.binding.remote_pane(pane?).is_some()
+        };
+        if !on_origin {
+            return self.window_id_for_session(id).map(|window| (window, id));
+        }
+        let endpoint = &clicked.remote_presentation()?.binding.origin.as_ref()?.endpoint;
+        let mut target = None;
+        for window in self.open_ids() {
+            for row in self
+                .store(window)?
+                .sessions()
+                .filter(|row| row.remote_host() == clicked.remote_host() && shows_origin_session(row, id, endpoint))
+            {
+                if target.replace((window, row.id())).is_some() {
+                    return None;
+                }
+            }
+        }
+        target
+    }
+
     /// Apply a default to future sessions only. Existing panes retain their saved profiles. A profile that is not well
     /// formed (a hand-edited settings file) is no default.
     pub fn set_default_shell_profile(&mut self, profile: Option<crate::shell_profiles::ShellProfile>) {
@@ -812,6 +854,16 @@ impl WindowLibrary {
     }
 }
 
+fn shows_origin_session(row: &Session, id: Uuid, endpoint: &ngterm_proto::ControlLiveEndpoint) -> bool {
+    row.remote_presentation().is_some_and(|remote| {
+        Uuid::parse_str(&remote.binding.remote_session_id).ok() == Some(id)
+            && match &remote.binding.origin {
+                Some(origin) => &origin.endpoint == endpoint,
+                None => remote.binding.catalog_owned,
+            }
+    })
+}
+
 /// The parent a session entry's snapshot names: the entry is a lone companion.
 fn companion_parent(item: &RecentClosedItem) -> Option<Uuid> {
     item.session.as_ref().and_then(|recent| recent.snapshot.parent_id)
@@ -836,3 +888,7 @@ fn holds_top_level_session(item: &RecentClosedItem, session: Uuid) -> bool {
         }),
     }
 }
+
+#[cfg(test)]
+#[path = "session_link_tests.rs"]
+mod session_link_tests;

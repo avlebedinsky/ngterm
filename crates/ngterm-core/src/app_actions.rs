@@ -90,6 +90,31 @@ pub enum ActionEffect {
 }
 
 impl Core {
+    /// Select a session link target without a status-pane reveal. Commit afterwards.
+    pub fn follow_session_link(
+        &mut self,
+        id: Uuid,
+        origin: crate::link_policy::ClickOrigin,
+        pane: Option<Uuid>,
+    ) -> bool {
+        let Some((window, session)) = self.library().session_link_target(id, origin, pane) else {
+            return false;
+        };
+        if !self.can_select_attention(window, session) {
+            return false;
+        }
+        if self.library().active_window_id() != Some(window) {
+            self.request_window(crate::WindowRequest::Raise(window));
+            self.take_frontmost(window);
+        }
+        self.note_window_activity(window);
+        if let Some(store) = self.library_mut().store_mut(window) {
+            store.select_session(Some(session));
+        }
+        self.request_pane_focus(session);
+        true
+    }
+
     /// The UI facts of window `window` behind the palette's and the menu's enablement (upstream's
     /// `AppActions.paletteContext`).
     #[must_use]

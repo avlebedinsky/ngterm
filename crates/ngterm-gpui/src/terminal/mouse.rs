@@ -323,7 +323,7 @@ impl TerminalView {
         let held = self.pointer.mods;
         // Shift-click extends the selection a single click made, past the repeat interval; the browser chord's Shift
         // does not
-        let extends = self.chord_mods(pane, held, cx).contains(Mods::SHIFT);
+        let extends = self.pointer.link.is_none() && self.chord_mods(pane, held, cx).contains(Mods::SHIFT);
         if index == 0 && extends && !self.shift_capture() && self.extends_selection(pane) {
             self.drag_selection(pane, (x, y), cx);
             return;

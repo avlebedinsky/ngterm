@@ -2092,3 +2092,32 @@ fn bare_modifiers_are_not_chords_and_the_keypad_enter_is_submit() {
     );
     assert_eq!(input::chord(&enter).unwrap().key, "return");
 }
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn session_links_keep_their_target_with_ctrl_and_ctrl_shift_in_browser_mode(cx: &mut TestAppContext) {
+    let raw = "ngterm://session/0F5C1E2A-3B4D-4E6F-8A9B-0C1D2E3F4A5B";
+    let script = format!("printf 'ready\\r\\nsee \\033]8;;{raw}\\033\\\\here\\033]8;;\\033\\\\'; exec sleep 30");
+    let mut f = fixture(cx, &script, config(""));
+    f.wait_painted("here");
+    link_owner(&mut f, true, LinkOpenMode::Browser);
+    f.click(0, 0, Modifiers::default());
+    f.click(0, 0, Modifiers::default());
+    assert_eq!(f.selection().as_deref(), Some("ready"));
+    std::thread::sleep(Duration::from_millis(600));
+    for chord in [
+        CTRL_SHIFT,
+        Modifiers::control(),
+        Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        },
+        SUPER_SHIFT,
+    ] {
+        f.events.borrow_mut().clear();
+        f.cx.simulate_mouse_move(Fixture::at(5, 1), None, chord);
+        f.click(5, 1, chord);
+        f.cx.run_until_parked();
+        assert_eq!(opened_links(&f), [open_osc8(raw, false)]);
+    }
+}

@@ -58,6 +58,15 @@ pub mod agterm {
     pub const ROLE_TITLE_PREFIX: &str = "zmx-role;";
 }
 
+/// The session link prefix printed by each peer.
+#[must_use]
+pub fn session_link_prefix(peer: RemotePeer) -> &'static str {
+    match peer {
+        RemotePeer::Ngterm => "ngterm://session/",
+        RemotePeer::Agterm => "agterm://session/",
+    }
+}
+
 /// The line the listing prints ahead of an agterm origin's answer, so the viewer knows which app answered.
 pub const AGTERM_ANSWER: &str = "ngterm-peer: agterm";
 

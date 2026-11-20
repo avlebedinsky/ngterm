@@ -79,6 +79,26 @@ impl AppState {
         } else {
             ClickOrigin::Pane(session)
         };
+        let pane = match role {
+            ngterm_core::model::StatusPane::Left => Some(found.pane_identity),
+            ngterm_core::model::StatusPane::Right => found.split_pane_identity,
+            ngterm_core::model::StatusPane::Scratch => None,
+        };
+        let peer = found
+            .remote_presentation()
+            .filter(|remote| {
+                (scratch && remote.binding.catalog_owned)
+                    || pane.is_some_and(|pane| remote.binding.remote_pane(pane).is_some())
+            })
+            .and_then(|_| found.remote_peer());
+        let id = link_policy::session_link(raw, ngterm_core::remote::peer::RemotePeer::Ngterm)
+            .or_else(|| peer.and_then(|peer| link_policy::session_link(raw, peer)));
+        if let Some(id) = id {
+            if intent != ClickIntent::Reveal && self.core.follow_session_link(id, origin, pane) {
+                self.settle();
+            }
+            return;
+        }
         let cwd = (kind == crate::terminal::LinkKind::Url)
             .then(|| {
                 // The raw report, so the control-character guard of `locations` still applies; a scratch that has
@@ -171,6 +191,7 @@ impl AppState {
                 };
                 self.open_document_link(path, session, size_percent, document);
             }
+            Route::SelectSession(_) => {}
             Route::Browser(url) => self.frontend.open_urls.push(url),
             Route::Reveal(path) => self.frontend.reveals.push(path),
             Route::Ignore => tracing::debug!(raw, "link click ignored by the link policy"),
