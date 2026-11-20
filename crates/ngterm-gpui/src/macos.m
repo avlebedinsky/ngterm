@@ -189,9 +189,13 @@ int ngterm_key_event(void *pointer, unsigned *mods, unsigned *plain,
   NSString *unmodified =
       [event charactersByApplyingModifiers:held & ~NSEventModifierFlagOption];
   // A posted Unicode string (text expanders, auto-type) is not what its key
-  // code types on the layout; the event's own characters are the text.
+  // code types on the layout; the event's own characters are the text. A
+  // hardware key has no poster, so a dead key's composition never gets here.
   NSString *own = event.characters;
-  if (held == event.modifierFlags && own.length &&
+  bool posted = event.CGEvent && CGEventGetIntegerValueField(
+                                     event.CGEvent,
+                                     kCGEventSourceUnixProcessID) != 0;
+  if (posted && held == event.modifierFlags && own.length &&
       ![own isEqualToString:typed]) {
     typed = own;
     unmodified = own;
