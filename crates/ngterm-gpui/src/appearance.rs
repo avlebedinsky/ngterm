@@ -19,6 +19,10 @@
 //!   [`Appearance::side`] gives and records it ([`AppState::config_applied`]). The terminals keep their font sizes
 //!   across it (a config change never resets a live size here), and each takes the side as its color scheme
 //!   (`TerminalConfig::color_scheme`).
+//! - **The color scheme report** (upstream's `GhosttyApp.setColorScheme`, #961): every new side reaches every
+//!   terminal, with any theme and with theme sync off, so the color scheme query (`CSI ? 996 n`) answers it and a
+//!   program in mode 2031 gets a report of the flip ([`AppState::take_color_scheme`]). A flip that reloads carries it
+//!   in the reloaded config instead, which reports once.
 //! - **`debug.appearance`** forces a side for good, as the GTK build's forced style-manager scheme did: the desktop
 //!   no longer moves the app, and the flip runs at once.
 
@@ -28,8 +32,10 @@ use std::time::Duration;
 
 use gpui_kit::{App, Subscription, Window};
 use ngterm_core::persist::AppSettings;
+use ngterm_term::ColorScheme as TerminalScheme;
 
 use crate::state::{AppState, Poster};
+use crate::terminal::scheme_of_side;
 
 #[cfg(target_os = "linux")]
 pub mod portal;
@@ -156,6 +162,8 @@ pub struct Appearance {
     forced: Option<bool>,
     /// The side the last config load applied.
     last_applied_dark: bool,
+    /// What the terminals answer color scheme queries with: the last load's side, or a later flip's.
+    scheme: TerminalScheme,
     /// A flip asked for a reload the windows have not run yet.
     reload: bool,
 }
@@ -168,6 +176,7 @@ impl Appearance {
             desktop_dark: dark,
             forced: None,
             last_applied_dark: dark,
+            scheme: scheme_of_side(dark),
             reload: false,
         }
     }
@@ -217,9 +226,19 @@ impl Appearance {
         std::mem::take(&mut self.reload)
     }
 
-    /// A config load applied `dark`.
+    /// A config load applied `dark`, the terminals' color scheme included.
     pub fn applied(&mut self, dark: bool) {
         self.last_applied_dark = dark;
+        self.scheme = scheme_of_side(dark);
+    }
+
+    /// Takes the color scheme the terminals move to, when the side moved away from theirs.
+    pub fn take_scheme(&mut self) -> Option<TerminalScheme> {
+        let scheme = scheme_of_side(self.side());
+        (scheme != self.scheme).then(|| {
+            self.scheme = scheme;
+            scheme
+        })
     }
 }
 
@@ -238,8 +257,8 @@ impl AppState {
         self.core.report_applied_appearance(dark);
     }
 
-    /// The desktop's appearance settled on `dark` (upstream's `SettingsModel.appearanceChanged`): while following with
-    /// both slots set, a new side re-feeds the config.
+    /// The desktop's appearance settled on `dark` (upstream's `SettingsModel.appearanceChanged`): a new side reaches
+    /// the terminals' color scheme with any theme, and while following with both slots set it re-feeds the config.
     pub fn appearance_changed(&mut self, dark: bool) {
         if self.is_quitting() {
             return;
@@ -262,6 +281,13 @@ impl AppState {
             dark: self.appearance.side(),
             asked,
         })
+    }
+
+    /// The color scheme every terminal moves to after [`Self::take_config_reload`], when a flip moved the side
+    /// without a reload (anything but following the system with both theme slots set). The windows' sync after
+    /// each task takes it.
+    pub fn take_color_scheme(&mut self) -> Option<TerminalScheme> {
+        self.appearance.take_scheme()
     }
 
     /// A config load applied `dark`: recorded, and readable through `debug.appearance`.

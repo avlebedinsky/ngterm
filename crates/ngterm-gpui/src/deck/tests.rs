@@ -1842,6 +1842,8 @@ fn many_pages_lay_out_at_the_decks_bounds_and_a_selection_or_resize_keeps_their_
 }
 
 mod ask_form;
+#[cfg(unix)]
+mod color_scheme;
 mod dashboard;
 mod overlay;
 mod overlay_visibility;

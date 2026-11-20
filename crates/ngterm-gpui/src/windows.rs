@@ -142,6 +142,9 @@ impl Windows {
                 state.core.report_config_reload(count);
             }
         }
+        if let Some(scheme) = state.take_color_scheme() {
+            self.set_color_scheme(scheme, cx);
+        }
         // after any reload, so the chrome takes the colors the terminals now render; before the windows render, so a
         // new window's first frame has them
         crate::chrome::sync(&state.core, &self.env.config.borrow(), cx);
@@ -407,6 +410,18 @@ impl Windows {
         crate::html_overlay::refresh_themes(&crate::html_overlay::colors_of(config), cx);
     }
 
+    /// Every terminal, the quick terminal's included, answers color scheme queries with `scheme` from now on and
+    /// reports the change to a program in mode 2031; so does every terminal created from now on.
+    fn set_color_scheme(&self, scheme: ngterm_term::ColorScheme, cx: &App) {
+        self.env.set_color_scheme(scheme);
+        for ui in self.shown.values() {
+            ui.deck.read(cx).set_color_scheme(scheme);
+        }
+        if let Some(shared) = self.quick.shared() {
+            shared.set_color_scheme(scheme);
+        }
+    }
+
     /// Saves every open window's frame, keeping those of the library's `known` windows: the quit, which closes them all
     /// (upstream's windows closing at termination).
     pub fn save_frames(&mut self, known: &[Uuid], cx: &mut App) {
@@ -528,6 +543,32 @@ mod tests {
         let mut ids: Vec<Uuid> = windows.iter().map(|(id, _)| *id).collect();
         ids.sort_unstable();
         ids
+    }
+
+    /// A flip with a plain theme reloads nothing, yet the terminals created after it start on the new side.
+    #[gpui_kit::test]
+    fn a_flip_without_a_reload_moves_the_color_scheme(cx: &mut gpui_kit::TestAppContext) {
+        use ngterm_term::ColorScheme;
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(crate::status_glyph::Motion::default());
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = AppState::new(core_over(ngterm_core::model::WindowLibrary::seeded("/home/u")));
+        state.launched_on(false);
+        let mut windows = registry(dir.path(), crate::state::detached_poster());
+        cx.update(|cx| {
+            let _ = windows.sync(&mut state, cx);
+        });
+        assert_eq!(windows.env().config().color_scheme, ColorScheme::Light);
+        state.appearance_changed(true);
+        cx.update(|cx| {
+            let _ = windows.sync(&mut state, cx);
+        });
+        assert_eq!(windows.env().config().color_scheme, ColorScheme::Dark);
+        assert!(!state.applied_dark(), "no config load ran");
+        cx.update(|cx| windows.teardown_all(cx));
     }
 
     /// Upstream's `TitleProbeView`: a window opens at the frame saved when it last closed, and its close saves the one
