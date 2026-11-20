@@ -108,6 +108,7 @@ const GPUI_SCROLL_FACTOR: f64 = 3.0;
 pub(super) struct PointerState {
     /// The buttons held, as this view saw them: left, middle, right.
     held: [bool; 3],
+    reported: [bool; 3],
     /// The last pointer position, device pixels from the view's top left.
     last: Option<(f32, f32)>,
     /// The modifiers last seen with the pointer.
@@ -305,16 +306,12 @@ impl TerminalView {
         self.pointer.held[index] = true;
         self.pointer.last = Some(position);
         let held = mods(&event.modifiers);
-        let changed = held != self.pointer.mods;
         self.pointer.mods = held;
         let Some(pane) = self.live_pane() else {
             return;
         };
-        if changed {
-            // the click's own modifiers decide the link under it (a modifier released unseen leaves no live link)
-            let inside = bounds.contains(&event.position);
-            self.refresh_link(&pane, inside.then_some(position), cx);
-        }
+        let inside = bounds.contains(&event.position);
+        self.refresh_link(&pane, inside.then_some(position), cx);
         self.press(&pane, index, position, cx);
         cx.notify();
     }
@@ -333,6 +330,7 @@ impl TerminalView {
                 let _ = pane.clear_selection();
             }
             pane.reset_gesture();
+            self.pointer.reported[index] = true;
             self.report(pane, MouseAction::Press, Some(pane_button(index)), (x, y));
             return;
         }
@@ -490,36 +488,38 @@ impl TerminalView {
             // a press this view never saw
             return;
         }
+        let reported = std::mem::take(&mut self.pointer.reported[index]);
         let position = self.surface_position(event.position, bounds);
         self.pointer.last = Some(position);
         self.pointer.mods = mods(&event.modifiers);
         let Some(pane) = self.live_pane() else {
             return;
         };
-        if index == 0 && self.left_release(&pane, position, cx) {
-            cx.notify();
-            return;
+        let inside = bounds.contains(&event.position);
+        if self.tracking(&pane) {
+            self.refresh_link(&pane, inside.then_some(position), cx);
         }
-        if self.reporting(&pane, self.pointer.mods) {
+        if reported {
             self.report(&pane, MouseAction::Release, Some(pane_button(index)), position);
+        } else if index == 0 {
+            self.left_release(&pane, position, cx);
         }
         cx.notify();
     }
 
-    /// The left button went up: the gesture learns it, the selection is copied per `copy-on-select`, a click on a
-    /// live link opens it. Whether the link took the click.
-    fn left_release(&mut self, pane: &Pane, (x, y): (f32, f32), cx: &mut Context<Self>) -> bool {
+    /// The left button released: update the gesture, copy the selection, and open a live link after a click.
+    fn left_release(&mut self, pane: &Pane, (x, y): (f32, f32), cx: &mut Context<Self>) {
         let released = pane.gesture(GestureEvent::Release { x, y });
         self.pointer.autoscroll = None;
         // the selection is copied once the drag ends, not on every move (Ghostty)
         self.shared.copy_on_select();
         let dragged = released.is_ok_and(|gesture| gesture.dragged);
         let Some(link) = self.pointer.link.clone().filter(|_| !dragged) else {
-            return false;
+            return;
         };
         let at = pane.cell_at(x, y);
         if !u16::try_from(at.y).is_ok_and(|row| link.covers(at.x, row)) {
-            return false;
+            return;
         }
         let intent = self.click_intent(pane, self.pointer.mods, cx);
         self.terminal.update(cx, |_, cx| {
@@ -529,7 +529,6 @@ impl TerminalView {
                 kind: link.kind,
             });
         });
-        true
     }
 
     /// The pointer moved anywhere in the window; `hovered`: over this view's grid, not under anything drawn on top.
@@ -555,9 +554,7 @@ impl TerminalView {
         let tracking = self.tracking(&pane);
         let shift_override = self.pointer.mods.contains(Mods::SHIFT) && !self.shift_capture();
         let inside = hovered && bounds.contains(&event.position);
-        if !tracking || shift_override {
-            self.refresh_link(&pane, inside.then_some(position), cx);
-        }
+        self.refresh_link(&pane, inside.then_some(position), cx);
         let button = self.pointer.held.iter().position(|held| *held).map(pane_button);
         // Shift keeps the mouse for selecting while a button is held (Kitty's rule); otherwise the program has it
         if tracking && !(shift_override && button.is_some()) {
@@ -665,7 +662,9 @@ impl TerminalView {
     /// Looks the live link under the pointer up again (`None`: the pointer left the grid) and underlines it.
     fn refresh_link(&mut self, pane: &Pane, position: Option<(f32, f32)>, cx: &mut Context<Self>) {
         let mods = self.pointer.mods;
-        let at = position.map(|(x, y)| pane.cell_at(x, y));
+        let at = position
+            .filter(|_| !self.reporting(pane, mods))
+            .map(|(x, y)| pane.cell_at(x, y));
         let key = at.map(|at| (at, mods));
         if key == self.pointer.link_key && self.pointer.link.is_none() {
             return;

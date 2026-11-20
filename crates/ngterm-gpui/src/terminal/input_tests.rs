@@ -1088,6 +1088,141 @@ fn links_open_with_ctrl_shift_while_the_program_has_the_mouse(cx: &mut TestAppCo
     assert!(!f.painted().contains("^[[M"), "Shift kept the click from the program");
 }
 
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn mouse_capture_blocks_every_link_kind_until_shift(cx: &mut TestAppContext) {
+    let script = "stty raw -echo; printf '\\033[?1000h\\033[?1006hready\\r\\nhttps://example.com/p\\r\\n\\033]8;;https://osc8.test/x\\033\\\\web\\033]8;;\\033\\\\\\r\\n./notes.md\\r\\n\\033]8;;ngterm://session/00000000-0000-0000-0000-000000000007\\033\\\\session\\033]8;;\\033\\\\'; exec cat > mouse-input";
+    let mut f = fixture(cx, script, config(""));
+    f.wait_painted("session");
+    f.focus();
+    let captured = f.dir.path().join("mouse-input");
+    let mut expected = Vec::new();
+    for row in 1..=4 {
+        let chord = if row % 2 == 0 { SUPER_SHIFT } else { CTRL_SHIFT };
+        let plain = Modifiers { shift: false, ..chord };
+        let code = if plain.control { 16 } else { 0 };
+        f.cx.simulate_mouse_move(Fixture::at(2, row), None, Modifiers::default());
+        f.cx.simulate_modifiers_change(plain);
+        assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_none()));
+        f.click(2, row, plain);
+        f.cx.run_until_parked();
+        assert_eq!(opened_links(&f).len(), usize::from(row - 1));
+        expected.extend_from_slice(format!("\x1b[<{code};3;{}M\x1b[<{code};3;{}m", row + 1, row + 1).as_bytes());
+
+        f.cx.simulate_modifiers_change(chord);
+        assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_some()));
+        f.click(2, row, chord);
+        f.cx.run_until_parked();
+        assert_eq!(opened_links(&f).len(), usize::from(row));
+        f.cx.simulate_modifiers_change(plain);
+        assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_none()));
+    }
+    f.type_keys("x");
+    expected.push(b'x');
+    f.settle(|_| std::fs::read(&captured).is_ok_and(|bytes| bytes.ends_with(b"x")));
+    assert_eq!(std::fs::read(captured).unwrap(), expected);
+    assert_eq!(
+        opened_links(&f),
+        [
+            open_url("https://example.com/p", false),
+            open_osc8("https://osc8.test/x", false),
+            open_url("./notes.md", false),
+            open_osc8("ngterm://session/00000000-0000-0000-0000-000000000007", false),
+        ]
+    );
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn mouse_capture_completes_reports_when_shift_changes_before_release(cx: &mut TestAppContext) {
+    let script =
+        "stty raw -echo; printf '\\033[?1000h\\033[?1006hready\\r\\nhttps://example.com/p'; exec cat > mouse-input";
+    let mut f = fixture(cx, script, config(""));
+    f.wait_painted("example.com/p");
+    f.focus();
+    let captured = f.dir.path().join("mouse-input");
+    let mut expected = Vec::new();
+    for (button, code) in [
+        (MouseButton::Left, 0),
+        (MouseButton::Middle, 1),
+        (MouseButton::Right, 2),
+    ] {
+        f.cx.simulate_mouse_move(Fixture::at(2, 1), None, Modifiers::control());
+        f.cx.simulate_mouse_down(Fixture::at(2, 1), button, Modifiers::control());
+        f.cx.simulate_modifiers_change(CTRL_SHIFT);
+        f.cx.simulate_mouse_up(Fixture::at(2, 1), button, CTRL_SHIFT);
+        expected.extend_from_slice(format!("\x1b[<{};3;2M\x1b[<{};3;2m", code + 16, code + 20).as_bytes());
+    }
+    f.type_keys("x");
+    expected.push(b'x');
+    f.settle(|_| std::fs::read(&captured).is_ok_and(|bytes| bytes.ends_with(b"x")));
+    assert_eq!(std::fs::read(captured).unwrap(), expected);
+    assert!(opened_links(&f).is_empty());
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn mouse_capture_clears_a_cached_link_on_move_or_press(cx: &mut TestAppContext) {
+    let script =
+        "stty raw -echo; printf '\\033[?1000h\\033[?1006hready\\r\\nhttps://example.com/p'; exec cat > mouse-input";
+    let mut f = fixture(cx, script, config(""));
+    f.wait_painted("example.com/p");
+    let captured = f.dir.path().join("mouse-input");
+    for move_first in [true, false] {
+        f.pane().set_mouse_reporting(false);
+        f.cx.simulate_mouse_move(Fixture::at(2, 1), None, Modifiers::control());
+        assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_some()));
+        f.pane().set_mouse_reporting(true);
+        if move_first {
+            f.cx.simulate_mouse_move(Fixture::at(2, 1), None, Modifiers::control());
+            assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_none()));
+        }
+        f.click(2, 1, Modifiers::control());
+        f.cx.run_until_parked();
+        assert!(opened_links(&f).is_empty());
+    }
+    f.type_keys("x");
+    f.settle(|_| std::fs::read(&captured).is_ok_and(|bytes| bytes.ends_with(b"x")));
+    assert_eq!(
+        std::fs::read(captured).unwrap(),
+        b"\x1b[<16;3;2M\x1b[<16;3;2m\x1b[<16;3;2M\x1b[<16;3;2mx"
+    );
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn mouse_capture_does_not_report_a_release_for_a_shift_press(cx: &mut TestAppContext) {
+    let script =
+        "stty raw -echo; printf '\\033[?1000h\\033[?1006hready\\r\\nhttps://example.com/p'; exec cat > mouse-input";
+    let mut f = fixture(cx, script, config(""));
+    f.wait_painted("example.com/p");
+    let captured = f.dir.path().join("mouse-input");
+    f.cx.simulate_mouse_down(Fixture::at(2, 1), MouseButton::Left, CTRL_SHIFT);
+    f.cx.simulate_mouse_up(Fixture::at(2, 1), MouseButton::Left, Modifiers::control());
+    f.type_keys("x");
+    f.settle(|_| std::fs::read(&captured).is_ok_and(|bytes| bytes.ends_with(b"x")));
+    assert_eq!(std::fs::read(captured).unwrap(), b"x");
+    assert!(opened_links(&f).is_empty());
+}
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn mouse_capture_keeps_shift_when_the_config_sends_it_to_the_program(cx: &mut TestAppContext) {
+    let script = "stty raw -echo; printf '\\033[?1000h\\033[?1006hready\\r\\n\\033]8;;ngterm://session/00000000-0000-0000-0000-000000000007\\033\\\\session\\033]8;;\\033\\\\'; exec cat > mouse-input";
+    let mut f = fixture(cx, script, config("mouse-shift-capture = true\n"));
+    f.wait_painted("session");
+    f.focus();
+    let captured = f.dir.path().join("mouse-input");
+    f.cx.simulate_mouse_move(Fixture::at(2, 1), None, Modifiers::default());
+    f.cx.simulate_modifiers_change(CTRL_SHIFT);
+    assert!(f.view.read_with(f.cx, |view, _| view.hovered_link().is_none()));
+    f.click(2, 1, CTRL_SHIFT);
+    f.type_keys("x");
+    f.settle(|_| std::fs::read(&captured).is_ok_and(|bytes| bytes.ends_with(b"x")));
+    assert_eq!(std::fs::read(captured).unwrap(), b"\x1b[<20;3;2M\x1b[<20;3;2mx");
+    assert!(opened_links(&f).is_empty());
+}
+
 // the browser chord (upstream's ⌘⇧ link override, `GhosttySurfaceViewInputTests`)
 
 fn intent_of(browser: bool) -> ClickIntent {
