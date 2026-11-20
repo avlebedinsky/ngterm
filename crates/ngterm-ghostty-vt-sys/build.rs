@@ -84,18 +84,18 @@ fn build() -> Result<(), String> {
     if let Some(path) = &libc {
         println!("cargo::rerun-if-changed={}", Path::new(path).display());
     }
-    let sdk = sdk::fingerprint(&target, android_ndk.as_deref());
+    let sdk = sdk::fingerprint(&target, android_ndk.as_deref(), libc.as_deref().map(Path::new));
     let store = match sdk {
         Ok(sdk) => Some(lib_store::path(
             &prefix,
-            &lib_store::key(&prefix, &build, libc.as_deref().map(Path::new), &sdk)?,
+            &lib_store::key(&prefix, &pin, &build, libc.as_deref().map(Path::new), &sdk)?,
         )?),
         Err(err) => {
             println!("cargo::warning=libghostty-vt store disabled: {err}");
             None
         }
     };
-    lib_store::install(&build, store.as_deref(), || {
+    let hit = lib_store::install(&build, store.as_deref(), || {
         check_zig(&stamp)?;
         zig_build::run(&build, libc.as_deref())?;
         if let Some((platform, deployment)) = zig_build::ios_build_version(&target, &build.zig_target) {
@@ -103,7 +103,7 @@ fn build() -> Result<(), String> {
         }
         Ok(())
     })?;
-    if let Some((platform, deployment)) = zig_build::ios_build_version(&target, &build.zig_target) {
+    if hit && let Some((platform, deployment)) = zig_build::ios_build_version(&target, &build.zig_target) {
         check_ios_archive(&build.archive, platform, &deployment)?;
     }
     let name = build.archive.file_name().ok_or("the archive has no file name")?;

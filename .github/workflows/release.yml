@@ -284,11 +284,9 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/ngterm/vendor
-            !~/.cache/ngterm/vendor/zig-cache-*/o/**
-            !~/.cache/ngterm/vendor/zig-cache-*/h/**
-            !~/.cache/ngterm/vendor/zig-cache-*/z/**
-            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+            ~/.cache/ngterm/vendor/*
+            !~/.cache/ngterm/vendor/zig-cache-*
+            ~/.cache/ngterm/vendor/zig-cache-*/p
           key: vendor-ngterm-windows-2025-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - name: libghostty-vt and embedded fonts
         run: |
@@ -676,11 +674,9 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/ngterm/vendor
-            !~/.cache/ngterm/vendor/zig-cache-*/o/**
-            !~/.cache/ngterm/vendor/zig-cache-*/h/**
-            !~/.cache/ngterm/vendor/zig-cache-*/z/**
-            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+            ~/.cache/ngterm/vendor/*
+            !~/.cache/ngterm/vendor/zig-cache-*
+            ~/.cache/ngterm/vendor/zig-cache-*/p
           key: vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - name: libghostty-vt and the iOS toolchain
         run: |
@@ -748,11 +744,9 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/ngterm/vendor
-            !~/.cache/ngterm/vendor/zig-cache-*/o/**
-            !~/.cache/ngterm/vendor/zig-cache-*/h/**
-            !~/.cache/ngterm/vendor/zig-cache-*/z/**
-            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+            ~/.cache/ngterm/vendor/*
+            !~/.cache/ngterm/vendor/zig-cache-*
+            ~/.cache/ngterm/vendor/zig-cache-*/p
           key: vendor-ngterm-android-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:

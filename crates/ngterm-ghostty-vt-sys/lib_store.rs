@@ -7,14 +7,15 @@ use sha2::{Digest, Sha256};
 
 use crate::zig_build::{Build, STAMP};
 
-/// The install key covers the prefix identity, stamp, target, build arguments, libc description and host SDK.
-pub fn key(prefix: &Path, build: &Build, libc: Option<&Path>, sdk: &[u8]) -> Result<String, String> {
+/// The install key covers the pin, prefix identity, stamp, target, build arguments, libc description and host SDK.
+pub fn key(prefix: &Path, pin: &str, build: &Build, libc: Option<&Path>, sdk: &[u8]) -> Result<String, String> {
     let mut hash = Sha256::new();
     let mut add = |bytes: &[u8]| {
         hash.update((bytes.len() as u64).to_le_bytes());
         hash.update(bytes);
     };
-    add(b"ghostty-vt-lib-v1");
+    add(b"ghostty-vt-lib-v2");
+    add(pin.as_bytes());
     add(prefix.file_name().ok_or("the prefix has no name")?.as_encoded_bytes());
     add(&read(&prefix.join(STAMP))?);
     add(build.zig_target.as_bytes());
@@ -114,19 +115,19 @@ fn publish(store: &Path, build: &Build) -> Result<(), String> {
     result.map_err(|err| format!("cannot save {}: {err}", store.display()))
 }
 
-/// Restore a complete install or run the build and publish its result. A hit never calls `compile`.
+/// Restore an install or build and publish it. Return true on a hit, which never calls `compile`.
 pub fn install(
     build: &Build,
     store: Option<&Path>,
     compile: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if let Some(store) = store {
         if restore(store, build)? {
             println!(
                 "cargo::warning=libghostty-vt store hit: {} (Zig skipped)",
                 store.display()
             );
-            return Ok(());
+            return Ok(true);
         }
         println!("cargo::warning=libghostty-vt store miss: {}", store.display());
     }
@@ -145,5 +146,5 @@ pub fn install(
         publish(store, build)?;
         println!("cargo::warning=libghostty-vt store saved: {}", store.display());
     }
-    Ok(())
+    Ok(false)
 }

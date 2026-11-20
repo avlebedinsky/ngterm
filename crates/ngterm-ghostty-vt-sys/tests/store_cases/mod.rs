@@ -17,7 +17,35 @@ fn prefix_at(root: &Path) -> PathBuf {
 }
 
 fn store_key(prefix: &Path, build: &Build) -> String {
-    lib_store::key(prefix, build, None, b"sdk=27\n").unwrap()
+    lib_store::key(prefix, "revision patch-digest", build, None, b"sdk=27\n").unwrap()
+}
+
+#[test]
+fn the_revision_and_patch_pin_change_the_key_at_a_stable_prefix() {
+    let root = tempfile::tempdir().unwrap();
+    let prefix = prefix_at(root.path());
+    let build = fake_build(root.path());
+    let stamp = fs::read_to_string(prefix.join(zig_build::STAMP)).unwrap();
+    let key = |pins: &str| {
+        let pin = zig_build::pin(pins, &stamp).unwrap();
+        lib_store::key(&prefix, &pin, &build, None, b"sdk").unwrap()
+    };
+    let pins = "LIBGHOSTTY_VT_REV=revision-one\n";
+    let old_key = key(pins);
+    let new_key = key("LIBGHOSTTY_VT_REV=revision-two\n");
+    assert_ne!(old_key, new_key);
+    let old_store = lib_store::path(&prefix, &old_key).unwrap();
+    assert!(!lib_store::install(&build, Some(&old_store), || compile_install(&build)).unwrap());
+    let new_store = lib_store::path(&prefix, &new_key).unwrap();
+    assert!(lib_store::install(&build, Some(&new_store), || zig_build::run(&build, None)).is_err());
+    fs::write(prefix.join(zig_build::STAMP), stamp.replace("abc", "def")).unwrap();
+    let changed_stamp = fs::read_to_string(prefix.join(zig_build::STAMP)).unwrap();
+    let changed_pin = zig_build::pin(pins, &changed_stamp).unwrap();
+    fs::write(prefix.join(zig_build::STAMP), &stamp).unwrap();
+    assert_ne!(
+        old_key,
+        lib_store::key(&prefix, &changed_pin, &build, None, b"sdk").unwrap()
+    );
 }
 
 #[test]
@@ -91,14 +119,32 @@ fn libc_contents_change_the_key_and_its_file_name_does_not() {
     let build = plan(root.path(), "x86_64-unknown-linux-gnu", None);
     let libc = root.path().join("libc.txt");
     fs::write(&libc, "include_dir=/sdk/one").unwrap();
-    let base = lib_store::key(&prefix, &build, Some(&libc), b"sdk").unwrap();
-    assert_ne!(base, lib_store::key(&prefix, &build, None, b"sdk").unwrap());
+    let base = lib_store::key(&prefix, "revision patch-digest", &build, Some(&libc), b"sdk").unwrap();
+    assert_ne!(
+        base,
+        lib_store::key(&prefix, "revision patch-digest", &build, None, b"sdk").unwrap()
+    );
     fs::write(&libc, "include_dir=/sdk/two").unwrap();
-    assert_ne!(base, lib_store::key(&prefix, &build, Some(&libc), b"sdk").unwrap());
+    assert_ne!(
+        base,
+        lib_store::key(&prefix, "revision patch-digest", &build, Some(&libc), b"sdk").unwrap()
+    );
     let other = root.path().join("other-libc.txt");
     fs::write(&other, "include_dir=/sdk/one").unwrap();
-    assert_eq!(base, lib_store::key(&prefix, &build, Some(&other), b"sdk").unwrap());
-    assert!(lib_store::key(&prefix, &build, Some(&root.path().join("missing")), b"sdk").is_err());
+    assert_eq!(
+        base,
+        lib_store::key(&prefix, "revision patch-digest", &build, Some(&other), b"sdk").unwrap()
+    );
+    assert!(
+        lib_store::key(
+            &prefix,
+            "revision patch-digest",
+            &build,
+            Some(&root.path().join("missing")),
+            b"sdk"
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -107,12 +153,12 @@ fn each_sdk_version_changes_the_key() {
     let prefix = prefix_at(root.path());
     let build = plan(root.path(), "x86_64-unknown-linux-gnu", None);
     let sdk = "ndk=27.1\napple-version=27.0\napple-build=AAA\nmsvc=14.44\nwindows-sdk=10.0.26100\n";
-    let base = lib_store::key(&prefix, &build, None, sdk.as_bytes()).unwrap();
+    let base = lib_store::key(&prefix, "revision patch-digest", &build, None, sdk.as_bytes()).unwrap();
     for value in ["27.1", "27.0", "AAA", "14.44", "10.0.26100"] {
         let changed = sdk.replace(value, "changed");
         assert_ne!(
             base,
-            lib_store::key(&prefix, &build, None, changed.as_bytes()).unwrap(),
+            lib_store::key(&prefix, "revision patch-digest", &build, None, changed.as_bytes()).unwrap(),
             "{value}"
         );
     }
@@ -123,15 +169,15 @@ fn ndk_properties_change_the_sdk_identity_at_the_same_path() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("source.properties");
     fs::write(&path, "Pkg.Revision = 27.1.12297006").unwrap();
-    let before = sdk::fingerprint("aarch64-linux-android", Some(root.path())).unwrap();
+    let before = sdk::fingerprint("aarch64-linux-android", Some(root.path()), None).unwrap();
     fs::write(&path, "Pkg.Revision = 28.0.13004108").unwrap();
     assert_ne!(
         before,
-        sdk::fingerprint("aarch64-linux-android", Some(root.path())).unwrap()
+        sdk::fingerprint("aarch64-linux-android", Some(root.path()), None).unwrap()
     );
     fs::remove_file(path).unwrap();
-    assert!(sdk::fingerprint("aarch64-linux-android", Some(root.path())).is_err());
-    assert!(sdk::fingerprint("aarch64-linux-android", None).is_err());
+    assert!(sdk::fingerprint("aarch64-linux-android", Some(root.path()), None).is_err());
+    assert!(sdk::fingerprint("aarch64-linux-android", None, None).is_err());
 }
 
 #[test]
@@ -143,7 +189,7 @@ fn the_host_sdk_probe_covers_its_native_build_and_selection_variables() {
     } else {
         "x86_64-unknown-linux-gnu"
     };
-    let sdk = sdk::fingerprint(target, None).unwrap();
+    let sdk = sdk::fingerprint(target, None, None).unwrap();
     assert!(!sdk.is_empty());
     if cfg!(windows) {
         let text = String::from_utf8_lossy(&sdk);
@@ -190,12 +236,12 @@ fn a_complete_store_restores_the_install_without_a_zig_call() {
     let key = store_key(&prefix, &build);
     let store = lib_store::path(&prefix, &key).unwrap();
     assert!(zig_build::run(&build, None).is_err());
-    lib_store::install(&build, Some(&store), || compile_install(&build)).unwrap();
+    assert!(!lib_store::install(&build, Some(&store), || compile_install(&build)).unwrap());
     let install = root.path().join("zig-out");
     fs::remove_dir_all(&install).unwrap();
     let mut fresh = build.clone();
     fresh.archive = root.path().join("fresh/zig-out/lib/libghostty-vt.a");
-    lib_store::install(&fresh, Some(&store), || zig_build::run(&fresh, None)).unwrap();
+    assert!(lib_store::install(&fresh, Some(&store), || zig_build::run(&fresh, None)).unwrap());
     assert_eq!(fs::read(&fresh.archive).unwrap(), b"archive");
     assert_eq!(
         fs::read(root.path().join("fresh/zig-out/include/vt.h")).unwrap(),
@@ -236,7 +282,7 @@ fn a_build_without_an_archive_never_publishes_and_a_disabled_store_builds() {
     assert!(lib_store::install(&build, Some(&store), || Ok(())).is_err());
     assert!(!store.exists());
     assert!(lib_store::install(&build, None, || zig_build::run(&build, None)).is_err());
-    lib_store::install(&build, None, || compile_install(&build)).unwrap();
+    assert!(!lib_store::install(&build, None, || compile_install(&build)).unwrap());
     assert!(!store.exists());
 }
 

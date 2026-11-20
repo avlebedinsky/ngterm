@@ -1,5 +1,6 @@
 //! Host SDK identities for the finished library store. Unknown SDKs disable the store for that build.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Command;
 
@@ -57,16 +58,25 @@ pub fn apple_sdk(target: &str) -> &'static str {
 }
 
 /// Read the NDK revision, Apple SDK settings, or the installed MSVC and Windows SDK versions.
-pub fn fingerprint(target: &str, ndk: Option<&Path>) -> Result<Vec<u8>, String> {
+pub fn fingerprint(target: &str, ndk: Option<&Path>, libc: Option<&Path>) -> Result<Vec<u8>, String> {
+    fingerprint_with_env(target, ndk, libc, |name| std::env::var_os(name))
+}
+
+fn fingerprint_with_env(
+    target: &str,
+    ndk: Option<&Path>,
+    libc: Option<&Path>,
+    mut env: impl FnMut(&str) -> Option<OsString>,
+) -> Result<Vec<u8>, String> {
+    if libc.is_some() {
+        return Err("the SDK identity of an explicit ZIG_LIBC is unknown".into());
+    }
     let mut bytes = Vec::new();
     record(&mut bytes, std::env::consts::OS.as_bytes());
     record(&mut bytes, std::env::consts::ARCH.as_bytes());
     for name in ENV {
         record(&mut bytes, name.as_bytes());
-        record(
-            &mut bytes,
-            std::env::var_os(name).unwrap_or_default().as_encoded_bytes(),
-        );
+        record(&mut bytes, env(name).unwrap_or_default().as_encoded_bytes());
     }
     if target.ends_with("-android") {
         let ndk = ndk.ok_or("the Android NDK path is unknown")?;
@@ -117,6 +127,34 @@ fn apple_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_sdk_selection_value_changes_the_fingerprint() {
+        let fingerprint = |selection: Option<(&str, &str)>| {
+            fingerprint_with_env("x86_64-unknown-linux-gnu", None, None, |name| {
+                selection.filter(|(key, _)| *key == name).map(|(_, value)| value.into())
+            })
+            .unwrap()
+        };
+        let absent = fingerprint(None);
+        assert_eq!(absent, fingerprint(None));
+        for name in ENV {
+            let first = fingerprint(Some((name, "sdk-one")));
+            assert_ne!(absent, first, "{name}");
+            assert_ne!(first, fingerprint(Some((name, "sdk-two"))), "{name}");
+            assert_eq!(absent, fingerprint(Some((name, ""))), "{name}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_libc_disables_the_store_when_its_sdk_identity_is_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let libc = root.path().join("libc.txt");
+        std::fs::write(&libc, "include_dir=/portable-sdk/include\n").unwrap();
+        let result = fingerprint("x86_64-unknown-linux-gnu", None, Some(&libc));
+        assert!(result.unwrap_err().contains("explicit ZIG_LIBC"));
+        assert!(fingerprint("x86_64-unknown-linux-gnu", None, None).is_ok());
+    }
 
     fn apple(path: &Path, version: &str, build: &str) -> Vec<u8> {
         apple_inputs("aarch64-apple-ios-sim", |program, args| {

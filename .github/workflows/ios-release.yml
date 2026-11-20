@@ -138,11 +138,9 @@ jobs:
       - uses: actions/cache/restore@v6
         with:
           path: |
-            ~/.cache/ngterm/vendor
-            !~/.cache/ngterm/vendor/zig-cache-*/o/**
-            !~/.cache/ngterm/vendor/zig-cache-*/h/**
-            !~/.cache/ngterm/vendor/zig-cache-*/z/**
-            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+            ~/.cache/ngterm/vendor/*
+            !~/.cache/ngterm/vendor/zig-cache-*
+            ~/.cache/ngterm/vendor/zig-cache-*/p
           key: vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - name: Zig and the libghostty-vt prefix (build/pins.env)
         run: scripts/build-ghostty-vt.sh

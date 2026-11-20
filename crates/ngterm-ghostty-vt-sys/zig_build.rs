@@ -422,11 +422,10 @@ pub struct Build {
     pub env: Vec<(OsString, OsString)>,
 }
 
-/// The build of `inputs`: `zig build -Demit-lib-vt` over the prefix's tree, installing into `OUT_DIR` (so builds for
-/// different targets or profiles never share an install), with the global cache the stamp names as its local cache
-/// too: Zig's cache is keyed by every input and locked for concurrent builds, so another `OUT_DIR` (a profile, a
-/// feature set, a target dir) with the same inputs reuses the library instead of building it again for minutes, and
-/// CI's vendor cache carries it from one run to the next. `-Doptimize=fast` (Zig 0.17's name for `ReleaseFast`):
+/// Build the prefix's tree into `OUT_DIR`, with the stamp's cache as both the local and global Zig cache.
+/// Zig's object cache supplies reuse inside one CI job and on a developer host.
+/// `lib_store.rs` supplies reuse across CI runs, where restored files have different inodes.
+/// `-Doptimize=fast` is Zig 0.17's name for `ReleaseFast`.
 /// Debug's terminal integrity checks make sustained PTY output unusably slow.
 ///
 /// An Android build passes `--cache-poison`, so Zig runs the configure phase of Ghostty's `build.zig` again in each
@@ -508,8 +507,9 @@ pub fn run(build: &Build, libc: Option<&std::ffi::OsStr>) -> Result<(), String> 
         .args(libc_args(libc))
         .current_dir(&build.source)
         .envs(build.env.iter().map(|(name, value)| (name, value)))
-        // A packaging environment must not move the install or supply its pkg-config wrapper to Zig.
+        // A packaging environment must not move the install.
         .env_remove("DESTDIR")
+        // Zig on Windows cannot execute the workspace's shell wrapper. Libghostty-vt does not use pkg-config.
         .env_remove("PKG_CONFIG")
         .status()
         .map_err(|err| format!("cannot run {}: {err}", build.zig.display()))?;

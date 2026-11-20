@@ -523,9 +523,9 @@ If the fonts are absent, `ngterm-gpui` fails with "run scripts/fetch-fonts.sh".
 `NGTERM_GHOSTTY_VT_PREFIX` names a prepared prefix and skips the script on each OS.
 
 The build script keeps complete Zig installs in `<vendor>/ghostty-vt-lib-<key>/`, beside the prepared prefix.
-The SHA-256 key covers the prefix name, full stamp, Zig target, and build arguments.
+The SHA-256 key covers the Ghostty revision and patch digest, prefix name, full stamp, Zig target, and build arguments.
 It excludes the install path, object cache path, and job count from the arguments.
-It also covers the `ZIG_LIBC` contents and the host SDK identity:
+It also covers the host SDK identity:
 
 - Android: the selected NDK path and its `source.properties`, which records the NDK revision.
 - Apple: the SDK path, version, build version, and `SDKSettings.json` that `xcrun` selects.
@@ -533,6 +533,7 @@ It also covers the `ZIG_LIBC` contents and the host SDK identity:
 
 The key also covers SDK selection variables, such as `DEVELOPER_DIR`, `SDKROOT`, `LIB`, and `INCLUDE`.
 If the script cannot identify a host SDK, it disables the store for that build.
+An explicit `ZIG_LIBC` also disables the store, because its paths do not identify SDK versions.
 Android builds use `ANDROID_NDK_HOME` or cargo-ndk's sysroot to identify the NDK.
 A build that lets Ghostty select an unknown NDK uses Zig each time.
 A non-Apple host uses Zig's bundled headers for an Apple target, so no Apple host SDK enters that key.
@@ -1757,11 +1758,20 @@ its key. Without the script, a runner image with a newer stable gives a second k
 of the same size.
 
 A vendor cache holds the prepared prefixes, pinned Zig, package archives (`zig-cache-*/p/`), and complete library installs.
+The path list selects the vendor children, excludes `zig-cache-*`, then selects `zig-cache-*/p` separately.
+It does not select the vendor root, because tar archives a selected directory recursively.
 It excludes Zig's `o/`, `h/`, `z/`, and `tmp/` directories.
 Zig's object cache helps only inside one job and on a developer host.
 The library store supplies cross-run reuse ([Native dependencies](#native-dependencies)).
+An explicit `ZIG_LIBC` disables the store because its SDK identity is unknown.
+The build still uses that libc file and compiles with Zig.
 The vendor key hashes the store code, SDK probe, build plan, and `.cargo/config.toml`.
 When these inputs change, the first main run saves a new vendor entry with the new library installs.
+The vendor key does not include the host SDK identity.
+If a runner image changes the default Xcode, MSVC, or Windows SDK, the library store correctly misses.
+Actions cannot replace the entry under its existing primary key, so later runs can repeat the Zig build.
+A change to a hashed input gives a new vendor key and restores reuse across runs.
+This limit affects build time, not the correctness of the library.
 A job that reads another job's vendor cache builds its other targets again in each run:
 `cross-platform.yml`'s Ubuntu leg cross-builds aarch64 Linux and x86_64 macOS from the x86_64 Linux entry of `linux`,
 1.5 to 2.5 minutes each. `release.yml`
