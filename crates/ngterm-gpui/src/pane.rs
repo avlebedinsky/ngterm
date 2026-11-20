@@ -269,7 +269,9 @@ pub enum Report {
         intent: ngterm_core::link_policy::ClickIntent,
         kind: LinkKind,
     },
-    /// A key the user pressed in the pane: user activity, and the status glyph it clears.
+    /// A key press or committed text in the pane reports user activity.
+    /// The Badge reset setting controls the unseen badge reset for main and split panes, but not scratch panes.
+    /// The separate Status reset setting controls the status glyph reset when this pane owns the status.
     Keystroke(StatusKeystroke),
     /// OSC 9/777; the focus sample travels beside it (`post_report`'s `focus`).
     Notification {

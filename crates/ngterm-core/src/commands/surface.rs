@@ -68,10 +68,9 @@ impl Core {
         clears
     }
 
-    /// A physical keystroke in the pane carrying `token` (upstream's `keyDown` → `onUserInputClearsStatus` →
-    /// `wireStatusClear`): clears the session's status to idle when that pane owns it and the keystroke clears it under
-    /// the live Status reset setting. The pane is the token's role now, so a promoted survivor clears as the left
-    /// pane. Returns whether it cleared; commit afterwards when it did.
+    /// If this pane owns the status, a keystroke or committed text clears it to idle under the live Status reset setting.
+    /// The pane is the current role for `token`, so a promoted survivor clears as the left pane.
+    /// Returns true if it cleared the status. If it cleared the status, commit afterwards.
     pub fn clear_status_on_keystroke(&mut self, session: Uuid, token: &str, keystroke: StatusKeystroke) -> bool {
         let reset = self.settings().effective_status_reset();
         let Some(store) = self.library_mut().store_for_session_mut(session) else {
