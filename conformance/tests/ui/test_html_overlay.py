@@ -222,6 +222,39 @@ def test_a_text_file_renders_at_its_line_and_the_tree_names_its_source(ctl, ui):
         ctl.request("session.close", sid)
 
 
+def _wrapped(ctl, sid, wrapped):
+    def reached(tree):
+        (page,) = find_session(tree, sid)["htmlOverlays"]
+        assert page["text"].get("wrap") is (True if wrapped else None), page
+        return True
+
+    ctl.wait_tree(reached)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("ui:htmlOverlay.page", "session.overlay.wrap", "field:tree.session.htmlOverlays")
+def test_w_over_a_text_page_wraps_its_long_lines_and_the_control_reads_it(ctl, ui):
+    # `w` reaches the model through the page's bridge, and a control call reaches the page through the model
+    sid = _new(ctl)
+    source = ctl.instance.root / "long.txt"
+    source.write_text("short\n" + "long " * 400 + "\nafter\n", encoding="utf-8")
+    try:
+        assert_ok(ctl.request("session.overlay.open", sid, textFile=str(source), sizePercent=60))
+        _state(ctl, sid, "loaded")
+        # a click on the text puts the keyboard on the page
+        ui.mouse_click("htmlOverlay.page", offset=(0.5, 0.8))
+        ui.press("w")
+        _wrapped(ctl, sid, True)
+        ui.press("w")
+        _wrapped(ctl, sid, False)
+        assert assert_ok(ctl.request("session.overlay.wrap", sid, mode="on")) == {"id": sid, "text": "wrapped"}
+        _wrapped(ctl, sid, True)
+        ui.press("w")
+        _wrapped(ctl, sid, False)
+    finally:
+        ctl.request("session.close", sid)
+
+
 def _search_query(ctl, sid, query, timeout=2.0):
     """Waits for the session-wide text page's search to read back `query`."""
 

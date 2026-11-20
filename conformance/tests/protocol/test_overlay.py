@@ -565,6 +565,15 @@ def test_page_commands_need_a_page(ctl, lines):
         _closed(ctl, sid)
 
 
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap")
+def test_wrap_refuses_a_program_overlay(ctl, lines):
+    sid = _new(ctl)
+    _open(ctl, sid, lines.hold())
+    assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "the overlay is not an html page")
+    _closed(ctl, sid)
+
+
 @pytest.mark.covers("session.overlay.open", "field:tree.session.htmlOverlays", "field:tree.session.overlaySizePercent")
 def test_page_flags_read_back(ctl):
     sid = _new(ctl)
