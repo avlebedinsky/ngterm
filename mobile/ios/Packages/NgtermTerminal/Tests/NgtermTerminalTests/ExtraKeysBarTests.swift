@@ -249,6 +249,25 @@ internal struct ExtraKeysBarTests {
         #expect(Self.sent(rig).count == downs, "the repeat stopped as the touch left the key")
     }
 
+    @Test("a lift past the slop or off the key sends nothing, though the last move was within the slop")
+    internal func liftPastSlop() {
+        let rig = Self.rig()
+        let bar = rig.view.keyboard.bar
+        for key in [ExtraKey.escape, .upArrow, .control, .keyboard] {
+            bar.touch(key)
+            bar.drag(key, travel: ExtraKeysBar.slop / 2, onKey: true)
+            bar.lift(key, travel: ExtraKeysBar.slop + 1, onKey: true)
+            bar.touch(key)
+            bar.lift(key, travel: 1, onKey: false)
+        }
+        #expect(Self.sent(rig).isEmpty, "a short swipe that ended past the slop sent its key: \(Self.sent(rig))")
+        #expect(rig.view.keyboard.control == .off)
+        #expect(!rig.view.softKeyboardWanted)
+        bar.touch(.escape)
+        bar.lift(.escape, travel: ExtraKeysBar.slop, onKey: true)
+        #expect(Self.sent(rig) == ["escape"], "a lift within the slop is a tap")
+    }
+
     @Test("two lines on a phone, light")
     internal func phoneLight() {
         snapshot(Self.bar(width: Self.phone, style: .light), named: "phone-light")

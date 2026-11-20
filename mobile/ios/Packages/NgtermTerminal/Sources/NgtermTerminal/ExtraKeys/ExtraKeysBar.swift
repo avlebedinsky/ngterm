@@ -132,8 +132,13 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
         }
     }
 
-    /// The finger lifts on `key`: the key acts if its touch is still a tap, and its repeat stops.
-    public func lift(_ key: ExtraKey) {
+    /// The finger lifts on `key`, `travel` points from where it went down, on the key or off it (`onKey`): the key
+    /// acts if its touch is still a tap, and its repeat stops.
+    ///
+    /// The lift's point counts as a last ``drag(_:travel:onKey:)``: a touch can end past ``slop`` or off the key with
+    /// no move reported before it.
+    public func lift(_ key: ExtraKey, travel: CGFloat = 0, onKey: Bool = true) {
+        drag(key, travel: travel, onKey: onKey)
         stopRepeat(of: key)
         if armed.remove(key) != nil {
             act(key)
@@ -283,25 +288,29 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
         touch(button.key)
     }
 
-    // UIKit counts a touch as inside a control up to some way off it: the key counts its own bounds
-    @objc
-    private func moved(_ button: ExtraKeyButton, event: UIEvent?) {
+    // how far `event`'s touch on `button` is from where it went down, and whether it is on the key: UIKit counts a
+    // touch as inside a control up to some way off it, so the key counts its own bounds. Nil for an action sent with
+    // no touch.
+    private func track(of event: UIEvent?, on button: ExtraKeyButton) -> (travel: CGFloat, onKey: Bool)? {
         guard let point = Self.location(of: event, in: button) else {
-            return
+            return nil
         }
         let start = starts[button.key] ?? point
-        let travel = hypot(point.x - start.x, point.y - start.y)
-        drag(button.key, travel: travel, onKey: button.bounds.contains(point))
+        return (hypot(point.x - start.x, point.y - start.y), button.bounds.contains(point))
+    }
+
+    @objc
+    private func moved(_ button: ExtraKeyButton, event: UIEvent?) {
+        if let motion = track(of: event, on: button) {
+            drag(button.key, travel: motion.travel, onKey: motion.onKey)
+        }
     }
 
     @objc
     private func up(_ button: ExtraKeyButton, event: UIEvent?) {
+        let motion = track(of: event, on: button) ?? (travel: 0, onKey: true)
         starts[button.key] = nil
-        if let point = Self.location(of: event, in: button), !button.bounds.contains(point) {
-            cancel(button.key)
-        } else {
-            lift(button.key)
-        }
+        lift(button.key, travel: motion.travel, onKey: motion.onKey)
     }
 
     @objc

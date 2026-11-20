@@ -372,8 +372,8 @@ iOS's own: the keyboard's accessory, on the keyboard's own ground, not a Materia
   - **A key acts on a tap, not on a touch** (Android's rule). As the finger goes down, the key shows the system's fill
     and gives the keyboard's click (as the user set it) and a light tap (a selection tick on Ctrl and Alt), so the bar
     answers at once. The key itself goes as the finger lifts on the key. A touch that moves past 10 pt (a swipe, even
-    a short one inside its key), that slides off its key, or that the system takes for a gesture (`touchCancel`) sends
-    nothing: a swipe that starts on Esc can't interrupt a program by accident. The arrows and the page keys also go
+    a short one inside its key, the lift's point included), that slides off its key, or that the system takes for a
+    gesture (`touchCancel`) sends nothing: a swipe that starts on Esc can't interrupt a program by accident. The arrows and the page keys also go
     once held 100 ms within the 10 pt, so a hold needs no lift, and repeat while held (400 ms after the touch, every
     50 ms). Once its first key went, a held key may drift on itself, and stops as the touch leaves it. Esc, Tab and the
     symbols don't repeat. VoiceOver's activation acts at once. The terminal defers no screen edge
