@@ -568,8 +568,8 @@ impl AppSettings {
             .unwrap_or_default()
     }
 
-    /// The directory a new session opens in: home by default, the active session's cwd or the custom directory
-    /// when picked and not blank.
+    /// The directory for a new session: home by default, the supplied source's cwd, or the custom directory.
+    /// An empty directory uses home.
     #[must_use]
     pub fn resolve_new_session_cwd(&self, current_session_cwd: Option<&str>, home: &str) -> String {
         let mode = self

@@ -1068,6 +1068,56 @@ fn after_current_appends_into_a_workspace_without_the_selection() {
 }
 
 #[test]
+fn new_session_directory_source_follows_the_destination_workspace() {
+    let mut store = AppStore::new();
+    let work = store.add_workspace("work");
+    let other = store.add_workspace("other");
+    let unselected = store.add_workspace("unselected");
+    let empty = store.add_workspace("empty");
+    let first = add(&mut store, other, "/x");
+    let recent = add(&mut store, other, "/y");
+    let last = add(&mut store, other, "/z");
+    let never_selected = add_background(&mut store, unselected, "/u");
+    add_background(&mut store, unselected, "/v");
+    let selected = add(&mut store, work, "/1");
+    for session in [first, last, recent, selected] {
+        store.select_session(Some(session));
+    }
+
+    for (workspace, expected) in [
+        (work, selected),
+        (other, recent),
+        (unselected, never_selected),
+        (empty, selected),
+    ] {
+        assert_eq!(
+            store.new_session_directory_source(workspace).map(Session::id),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn new_session_directory_source_handles_no_selection_and_an_unknown_workspace() {
+    let mut store = AppStore::new();
+    let work = store.add_workspace("work");
+    let empty = store.add_workspace("empty");
+    let first = add_background(&mut store, work, "/first");
+    let recent = add_background(&mut store, work, "/recent");
+    assert_eq!(store.new_session_directory_source(work).map(Session::id), Some(first));
+    assert!(store.new_session_directory_source(empty).is_none());
+    assert!(store.new_session_directory_source(Uuid::new_v4()).is_none());
+
+    store.select_session(Some(recent));
+    assert_eq!(
+        store.new_session_directory_source(Uuid::new_v4()).map(Session::id),
+        Some(recent)
+    );
+    store.select_session(None);
+    assert_eq!(store.new_session_directory_source(work).map(Session::id), Some(recent));
+}
+
+#[test]
 fn after_current_appends_with_no_selection() {
     let mut store = AppStore::new();
     let ws = store.add_workspace("work");

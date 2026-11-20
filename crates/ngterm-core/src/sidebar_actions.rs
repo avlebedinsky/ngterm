@@ -290,7 +290,7 @@ impl Core {
             return false;
         };
         let current = store
-            .active_session()
+            .new_session_directory_source(workspace)
             .map(|session| session.local_working_directory(session.focused_cwd(), &home));
         let default = settings
             .default_shell_profile
@@ -907,6 +907,114 @@ mod tests {
         let before = f.order(one).len();
         assert!(f.act(SidebarAction::NewSessionInCurrent));
         assert_eq!(f.order(one).len(), before + 1);
+    }
+
+    #[test]
+    fn new_session_uses_the_destination_workspaces_recent_folder() {
+        let mut f = fixture(AppSettings {
+            new_session_directory: Some("currentSession".into()),
+            ..AppSettings::default()
+        });
+        let [one, two] = f.workspaces;
+        let [first, second, third] = f.sessions;
+        let elsewhere = f
+            .store_mut()
+            .add_session(two, NewSession::at_cwd("/elsewhere"))
+            .unwrap();
+        for session in [first, third, second, elsewhere] {
+            f.store_mut().select_session(Some(session));
+        }
+        assert!(f.act(SidebarAction::NewSession { workspace: one }));
+        assert_eq!(f.store().active_session().unwrap().effective_cwd(), "/srv");
+    }
+
+    #[test]
+    fn new_session_reads_the_destination_in_the_supplied_background_window() {
+        let mut f = fixture(AppSettings {
+            new_session_directory: Some("currentSession".into()),
+            ..AppSettings::default()
+        });
+        let front = f.window;
+        let back = f.core.library_mut().new_window(Some("back"));
+        let store = f.core.library_mut().store_mut(back).unwrap();
+        let workspace = store.workspaces()[0].id();
+        let session = store.active_session().unwrap().id();
+        store.session_mut(session).unwrap().set_current_cwd("/back");
+        let other = store.add_workspace("other");
+        store.add_session(other, NewSession::at_cwd("/back/other")).unwrap();
+        f.core.library_mut().set_frontmost(Some(front));
+
+        assert!(f.core.sidebar_action(back, SidebarAction::NewSession { workspace }));
+        assert_eq!(
+            f.core
+                .library()
+                .store(back)
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .effective_cwd(),
+            "/back"
+        );
+        assert_eq!(f.store().active_session().unwrap().effective_cwd(), "/var");
+    }
+
+    #[test]
+    fn new_session_keeps_the_sources_focused_folder_and_empty_fallback() {
+        let mut f = fixture(AppSettings {
+            new_session_directory: Some("currentSession".into()),
+            ..AppSettings::default()
+        });
+        let [one, _] = f.workspaces;
+        let source = f.sessions[1];
+        f.store_mut().set_split_visibility(source, true, None);
+        let session = f.store_mut().session_mut(source).unwrap();
+        session.split_cwd = Some("/srv/split".into());
+        session
+            .split_surface
+            .replace(Box::new(ngterm_host::fakes::FakeSurface::new("right")));
+        f.store_mut().select_session(Some(source));
+        assert!(f.act(SidebarAction::NewSession { workspace: one }));
+        assert_eq!(f.store().active_session().unwrap().effective_cwd(), "/srv/split");
+
+        let session = f.store_mut().session_mut(source).unwrap();
+        session.split.focused = false;
+        session.set_current_cwd("");
+        f.store_mut().select_session(Some(source));
+        assert!(f.act(SidebarAction::NewSessionInCurrent));
+        assert_eq!(f.store().active_session().unwrap().effective_cwd(), "/home/u");
+    }
+
+    #[test]
+    fn new_session_applies_the_local_folder_rule_to_a_remote_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut f = fixture(AppSettings {
+            new_session_directory: Some("currentSession".into()),
+            ..AppSettings::default()
+        });
+        let [one, two] = f.workspaces;
+        let source = f
+            .store_mut()
+            .add_session(
+                one,
+                NewSession {
+                    remote_host: Some("user@box".into()),
+                    ..NewSession::at_cwd("/remote")
+                },
+            )
+            .unwrap();
+        let elsewhere = f
+            .store_mut()
+            .add_session(two, NewSession::at_cwd("/elsewhere"))
+            .unwrap();
+        let local = directory.path().to_str().unwrap();
+        let remote_only = directory.path().join("only-on-the-remote");
+        for (reported, expected) in [(remote_only.to_str().unwrap(), "/home/u"), (local, local)] {
+            f.store_mut().session_mut(source).unwrap().set_current_cwd(reported);
+            f.store_mut().select_session(Some(source));
+            f.store_mut().select_session(Some(elsewhere));
+            assert!(f.act(SidebarAction::NewSession { workspace: one }));
+            assert_eq!(f.store().active_session().unwrap().effective_cwd(), expected);
+        }
     }
 
     #[test]

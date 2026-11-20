@@ -151,6 +151,27 @@ impl AppStore {
         (location.workspace == workspace).then_some(location.index + 1)
     }
 
+    /// The folder source in `workspace`: its selected session, most recent session, or first session.
+    /// An empty workspace uses the active session.
+    #[must_use]
+    pub fn new_session_directory_source(&self, workspace: Uuid) -> Option<&Session> {
+        let Some(sessions) = self.workspace(workspace).map(|workspace| &workspace.sessions) else {
+            return self.active_session();
+        };
+        if sessions.is_empty() {
+            return self.active_session();
+        }
+        self.active_session()
+            .filter(|active| sessions.iter().any(|session| session.id() == active.id()))
+            .or_else(|| {
+                self.session_recency
+                    .items()
+                    .iter()
+                    .find_map(|id| sessions.iter().find(|session| session.id() == *id))
+            })
+            .or_else(|| sessions.first())
+    }
+
     /// Steps the selection through [`AppStore::navigable_sessions`] in sidebar order, wrapping within that set and
     /// never leaking across the filter. With no selection in the set, `Next`/`Previous` land on the first session.
     /// `Position` selects that place, or is a no-op past the end ([`AppStore::navigation_error`] says why).
