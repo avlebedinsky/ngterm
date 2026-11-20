@@ -445,6 +445,11 @@ fn the_creation_line_needs_both_the_ordinary_shell_and_the_live_one() {
         Some("'/usr/bin/tool' 'a b'")
     );
     assert_eq!(creation_line(ShellDialect::Posix, Some("/usr/bin/nu"), &spaced), None);
+    // the Live shell is an executable path, spaces and all
+    assert_eq!(
+        creation_line(ShellDialect::Posix, Some("/opt/my shells/zsh"), &spaced).as_deref(),
+        Some("'/usr/bin/tool' 'a b'")
+    );
 }
 
 #[test]

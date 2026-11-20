@@ -38,6 +38,10 @@ use super::keycodes::XKB_CODES;
 
 /// What the platform knew about a key event, as far as the terminal cares (the patched platform's `NativeKey`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts the platform reports about one key event"
+)]
 pub struct NativeKey {
     /// The XKB keycode.
     pub keycode: u32,
@@ -60,6 +64,8 @@ pub struct NativeKey {
     pub command: Option<char>,
     pub sides: ngterm_term::ModSides,
     pub without_option: Option<String>,
+    /// The text is the string a process posted with the event, not what the layout types on its key (macOS).
+    pub posted_text: bool,
 }
 
 /// Where a key event came from.
@@ -97,6 +103,7 @@ pub fn current_source(keystroke: &Keystroke) -> Source {
             command: None,
             sides: ngterm_term::ModSides::empty(),
             without_option: None,
+            posted_text: false,
         }),
         Some(gpui_linux::NativeInput::Text) => Source::Text,
         _ => Source::Keystroke,
@@ -129,6 +136,7 @@ pub fn current_source(keystroke: &Keystroke) -> Source {
             command: None,
             sides: ngterm_term::ModSides::empty(),
             without_option: None,
+            posted_text: false,
         }),
         _ => Source::Keystroke,
     }
@@ -145,20 +153,43 @@ pub fn current_source(_keystroke: &Keystroke) -> Source {
 #[cfg(target_os = "macos")]
 #[must_use]
 pub fn current_source(_keystroke: &Keystroke) -> Source {
+    // SAFETY: the adapter only writes into the buffers it is given; called during main-thread input dispatch.
+    read_macos_key(|flags, plain, command, text, without_option, capacity| unsafe {
+        crate::macos::ngterm_key(flags, plain, command, text, without_option, capacity)
+    })
+}
+
+/// The terminal's native key for `event`, an `NSEvent` key event (what [`current_source`] reads from `AppKit`'s
+/// current event).
+///
+/// # Safety
+///
+/// `event` is null or points to a live `NSEvent`, and the call is on the main thread (the layout's input source
+/// services need it).
+#[cfg(target_os = "macos")]
+#[must_use]
+pub unsafe fn event_source(event: *mut std::ffi::c_void) -> Source {
+    // SAFETY: the caller's contract; the adapter only writes into the buffers it is given.
+    read_macos_key(|flags, plain, command, text, without_option, capacity| unsafe {
+        crate::macos::ngterm_key_event(event, flags, plain, command, text, without_option, capacity)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_key(
+    read: impl FnOnce(*mut u32, *mut u32, *mut u32, *mut std::ffi::c_char, *mut std::ffi::c_char, u32) -> i32,
+) -> Source {
     let (mut flags, mut plain, mut command) = (0, 0, 0);
     let mut text = [0i8; 128];
     let mut without_option = [0i8; 128];
-    // SAFETY: writable output buffers; called during main-thread input dispatch.
-    let code = unsafe {
-        crate::macos::ngterm_key(
-            &raw mut flags,
-            &raw mut plain,
-            &raw mut command,
-            text.as_mut_ptr(),
-            without_option.as_mut_ptr(),
-            128,
-        )
-    };
+    let code = read(
+        &raw mut flags,
+        &raw mut plain,
+        &raw mut command,
+        text.as_mut_ptr(),
+        without_option.as_mut_ptr(),
+        128,
+    );
     // SAFETY: the buffer starts zeroed and the adapter only ever writes a NUL-terminated string into it.
     let text = unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) };
     // SAFETY: as above.
@@ -205,7 +236,8 @@ fn decode_macos_key(
         unshifted: char::from_u32(plain).filter(|ch| *ch != '\0'),
         ascii_layout: flags & 2 != 0,
         text,
-        composing: flags & 4 != 0,
+        // a posted string types as posted, so a dead key under it never composes
+        composing: flags & 4 != 0 && flags & 128 == 0,
         repeat: flags & 1 != 0,
         locks,
         command: modifiers
@@ -222,7 +254,110 @@ fn decode_macos_key(
             sides
         },
         without_option: Some(without_option.to_string_lossy().into_owned()),
+        posted_text: flags & 128 != 0,
     })
+}
+
+/// The dead-key composition a macOS terminal keeps itself, as the layout's `UCKeyTranslate` state between keys. The
+/// input context never gets a dead key: it would keep its own state without marked text for a posted key (a remote
+/// desktop's, an automation tool's), and the next keys, typed past it, would get its accent later.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DeadKeys(u32);
+
+/// What a key press does to a [`DeadKeys`] composition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Compose {
+    /// No composition: the key goes on as it is.
+    Pass,
+    /// The key starts a composition, or one the layout cannot join it to: the program gets `committed` (the earlier
+    /// accent), and `accent` shows at the cursor until a later key ends it.
+    Pending { accent: String, committed: String },
+    /// The key ends the composition and types this text, the accent included.
+    Composed(String),
+    /// A key that types no text, holds Control or Command, or types a posted string ends the composition and drops
+    /// its accent; the key goes on.
+    Dropped,
+    /// Backspace or Escape ends the composition and drops its accent; the key goes no further.
+    Cancelled,
+}
+
+impl DeadKeys {
+    /// Whether a dead key waits for the next key.
+    #[must_use]
+    pub fn is_pending(self) -> bool {
+        self.0 != 0
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+
+    /// One press through the composition on the current macOS layout.
+    #[cfg(target_os = "macos")]
+    pub fn compose(&mut self, stroke: &KeyStroke) -> Compose {
+        self.step(stroke, |keycode, shift, option, caps, state| {
+            let Some(code) = crate::macos::KEYCODES
+                .iter()
+                .find(|(_, xkb)| *xkb == keycode)
+                .map(|(mac, _)| *mac)
+            else {
+                return (String::new(), 0);
+            };
+            let mut state = state;
+            let mut text = [0i8; 64];
+            // SAFETY: the adapter writes a NUL-terminated string of at most the capacity it is given.
+            unsafe {
+                crate::macos::ngterm_dead_key(code, shift, option, caps, &raw mut state, text.as_mut_ptr(), 64);
+            }
+            // SAFETY: as above.
+            let text = unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) };
+            (text.to_string_lossy().into_owned(), state)
+        })
+    }
+
+    /// One press through the composition, `translate` the layout's: the XKB keycode, Shift, Option, Caps Lock and the
+    /// state before the key, to the text the key types and the state after it.
+    #[cfg(any(target_os = "macos", test))]
+    pub fn step(
+        &mut self,
+        stroke: &KeyStroke,
+        translate: impl FnOnce(u32, bool, bool, bool, u32) -> (String, u32),
+    ) -> Compose {
+        if stroke.action == KeyAction::Release || (!self.is_pending() && !stroke.composing) {
+            return Compose::Pass;
+        }
+        if self.is_pending() {
+            let types_text = !stroke.text.is_empty() && !stroke.text.chars().any(char::is_control);
+            let chord = stroke.mods.intersects(Mods::CTRL | Mods::SUPER);
+            if !chord && matches!(stroke.key.name(), "backspace" | "escape") {
+                self.clear();
+                return Compose::Cancelled;
+            }
+            if chord || !types_text || stroke.posted_text {
+                self.clear();
+                return Compose::Dropped;
+            }
+        }
+        let option = stroke.mods.contains(Mods::ALT) && !stroke.option_as_alt;
+        let (text, state) = translate(
+            stroke.keycode,
+            stroke.mods.contains(Mods::SHIFT),
+            option,
+            stroke.mods.contains(Mods::CAPS_LOCK),
+            self.0,
+        );
+        self.0 = state;
+        if self.is_pending() {
+            Compose::Pending {
+                accent: stroke.text.clone(),
+                committed: text,
+            }
+        } else if text.is_empty() {
+            Compose::Dropped
+        } else {
+            Compose::Composed(text)
+        }
+    }
 }
 
 /// The scan code the current layout puts virtual key `virtual_key` on (`MapVirtualKeyW`, `MAPVK_VK_TO_VSC_EX`),
@@ -275,6 +410,10 @@ pub fn xkb_keycode_of_scan_code(scan_code: u32) -> Option<u32> {
 
 /// One key event, owned (module docs).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts the platform reports about one key event"
+)]
 pub struct KeyStroke {
     pub action: KeyAction,
     pub key: PhysicalKey,
@@ -294,6 +433,8 @@ pub struct KeyStroke {
     /// What identifies the physical key between its press and its release: the keycode, or GPUI's key name hashed.
     pub identity: u32,
     pub option_as_alt: bool,
+    /// See [`NativeKey::posted_text`].
+    pub posted_text: bool,
 }
 
 impl KeyStroke {
@@ -443,6 +584,7 @@ fn from_native(keystroke: &Keystroke, native: &NativeKey) -> KeyStroke {
         sides: native.sides,
         without_option: native.without_option.clone(),
         option_as_alt: false,
+        posted_text: native.posted_text,
         keycode: native.keycode,
         ascii_layout: native.ascii_layout,
         identity: if native.keycode == 0 {
@@ -466,6 +608,7 @@ fn from_text(keystroke: &Keystroke) -> KeyStroke {
         sides: ngterm_term::ModSides::empty(),
         without_option: None,
         option_as_alt: false,
+        posted_text: false,
         keycode: 0,
         ascii_layout: true,
         identity: identity(&keystroke.key),
@@ -516,6 +659,7 @@ fn from_keystroke(keystroke: &Keystroke) -> KeyStroke {
         sides: ngterm_term::ModSides::empty(),
         without_option: None,
         option_as_alt: false,
+        posted_text: false,
         keycode: 0,
         ascii_layout: true,
         identity: identity(&keystroke.key),

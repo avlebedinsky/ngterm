@@ -134,6 +134,14 @@ fn packed_state_and_right_hand_modifiers_do_not_alias_appkit_flags() {
             "{flags:#x}"
         );
     }
+    assert!(native(128).unwrap().posted_text, "a posted string's bit");
+    assert!(!native(0x1_007f).unwrap().posted_text);
+    let posted_on_a_dead_key = native(4 | 128).unwrap();
+    assert!(posted_on_a_dead_key.posted_text);
+    assert!(
+        !posted_on_a_dead_key.composing,
+        "a posted string types as posted, never composes"
+    );
 }
 
 #[test]

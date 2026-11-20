@@ -1,7 +1,7 @@
 //! What `AppKit` does to the app by itself, on demand: calls that arrive when the system pleases (a menu opening, the
 //! system's `UIIntelligenceSupport` scan simulating every menu's opening, a click on an Edit item), made here at once
 //! against the real menu bar on GPUI's real app delegate. A main thread stuck in one of them fails the run with its
-//! stack and the step it was on, rather than leaving a frozen window to find later. Key equivalents are not driven yet.
+//! stack and the step it was on, rather than leaving a frozen window to find later. Key equivalents are only read.
 //!
 //! No window opens, so this needs neither a Metal device nor an Accessibility grant, and it runs without a harness
 //! because `AppKit` wants the main thread. A new kind of system callback is one more step in [`sweep`].
@@ -173,6 +173,33 @@ mod sweep {
         reached
     }
 
+    /// The key equivalent of the item titled `title` in any of `menus`, and its modifier mask.
+    fn key_equivalent_of(menus: &[(String, Retained<AnyObject>)], title: &str) -> Option<(String, usize)> {
+        let item = menus
+            .iter()
+            .flat_map(|(_, menu)| items_of(menu))
+            .find(|item| title_of(item) == title)?;
+        // SAFETY: main thread; a live `NSMenuItem` answers `keyEquivalent` with a string.
+        let key: Retained<NSString> = unsafe { msg_send![&*item, keyEquivalent] };
+        // SAFETY: as above, and its modifier mask.
+        let mask: usize = unsafe { msg_send![&*item, keyEquivalentModifierMask] };
+        Some((key.to_string(), mask))
+    }
+
+    /// The menu bar shows a chord on Return, as upstream's View menu does for Toggle Terminal Zoom, and ⌘Q and ⌘, on
+    /// Quit and Settings.
+    fn check_key_equivalents(menus: &[(String, Retained<AnyObject>)]) {
+        let zoom = key_equivalent_of(menus, "Toggle Terminal Zoom");
+        assert!(
+            zoom.as_ref().is_some_and(|(key, mask)| key == "\r" && *mask != 0),
+            "Toggle Terminal Zoom's key equivalent is {zoom:?}, not Return with modifiers"
+        );
+        // NSEventModifierFlagCommand
+        let command = 1 << 20;
+        assert_eq!(key_equivalent_of(menus, "Quit"), Some(("q".to_owned(), command)));
+        assert_eq!(key_equivalent_of(menus, "Settings…"), Some((",".to_owned(), command)));
+    }
+
     /// Validates every menu, then sends every action that reaches GPUI's delegate, on the main thread with the app
     /// launched.
     fn sweep() {
@@ -185,6 +212,7 @@ mod sweep {
         let bar: Retained<AnyObject> = unsafe { msg_send![&*app, mainMenu] };
         let mut menus = Vec::new();
         menus_below("the menu bar", bar, &mut menus);
+        check_key_equivalents(&menus);
         for (name, menu) in &menus {
             validate(name, menu);
         }

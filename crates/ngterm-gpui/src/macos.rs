@@ -22,6 +22,26 @@ unsafe extern "C" {
         without_option: *mut c_char,
         capacity: u32,
     ) -> i32;
+    pub fn ngterm_key_event(
+        event: *mut c_void,
+        mods: *mut u32,
+        plain: *mut u32,
+        command: *mut u32,
+        text: *mut c_char,
+        without_option: *mut c_char,
+        capacity: u32,
+    ) -> i32;
+    /// One key of a dead-key composition on the current layout: `state` is the layout's state before the key and
+    /// becomes the state after it; the text the key types goes to `text`.
+    pub fn ngterm_dead_key(
+        code: u32,
+        shift: bool,
+        option: bool,
+        caps: bool,
+        state: *mut u32,
+        text: *mut c_char,
+        capacity: u32,
+    );
     fn ngterm_accessibility_start(changed: extern "C" fn(bool, bool));
 }
 

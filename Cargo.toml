@@ -77,6 +77,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 # The Core Foundation types macOS's Text Input Source Services take and return (ngterm-gpui's keyboard-layout lock,
 # `input_source/macos.rs`), the objc2 project's crate GPUI's macOS backend already links.
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std"] }
+# The Quartz event fields the native key adapter's test sets on the key events it builds (ngterm-gpui's
+# `tests/macos_key_event.rs`), the objc2 project's crate GPUI's macOS backend already links.
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std"] }
 # The UTF-16 strings interprocess takes a named pipe's security descriptor in (ngterm-session, ngterm-server, Windows).
 widestring = "1.2"
 # ngterm-session's server start from inside a Windows job that refuses breakaway: WMI's `Win32_Process.Create`, as
@@ -281,8 +284,8 @@ gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
 # build/patches/gpui-pre-windows.
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 # A menu item whose tag names no action no longer deadlocks the main thread, as ngterm's own AppKit menu bar's Edit items
-# did; a pop-up window without a title bar is a borderless panel, the quick terminal's: vendor/gpui-pre-macos is the
-# verified crates.io source plus build/patches/gpui-pre-macos.
+# did; a pop-up window without a title bar is a borderless panel at the floating level, the quick terminal's:
+# vendor/gpui-pre-macos is the verified crates.io source plus build/patches/gpui-pre-macos.
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 # ngterm-pty's PTY and child: vendor/portable-pty is the verified crates.io source plus build/patches/portable-pty
 # (scripts/vendor-portable-pty.sh): ConPTY from kernel32 only, herdr's Windows environment and PATH fixes, a child

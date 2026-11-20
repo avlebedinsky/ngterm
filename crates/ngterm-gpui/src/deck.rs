@@ -55,6 +55,7 @@ use ngterm_core::model::{Session, StatusPane, WindowLibrary, Workspace};
 use ngterm_core::restore::spawn_plan::LaunchSeed;
 use ngterm_core::zoom::SurfaceId;
 use ngterm_core::{PaneReplacement, PaneSpawn};
+use ngterm_term::ColorScheme;
 use uuid::Uuid;
 
 use crate::ask_dialog::{self, AskDialog, AskOpening, AskOwner};
@@ -184,12 +185,24 @@ impl DeckEnv {
         }
     }
 
-    /// The config a terminal with `overlay` (none: the app's own) takes.
+    /// The config a terminal with `overlay` (none: the app's own) takes, on the app's color scheme.
     #[must_use]
     pub fn config_for(&self, overlay: Option<&str>) -> TerminalConfig {
+        let config = self.config();
         match overlay.filter(|overlay| !overlay.is_empty()) {
-            Some(overlay) => (self.watermarks.config_with)(overlay),
-            None => (*self.config()).clone(),
+            Some(overlay) => TerminalConfig {
+                color_scheme: config.color_scheme,
+                ..(self.watermarks.config_with)(overlay)
+            },
+            None => (*config).clone(),
+        }
+    }
+
+    /// The desktop's appearance moved to `scheme` with no config reload: terminals created from now on start on it.
+    pub fn set_color_scheme(&self, scheme: ColorScheme) {
+        let mut config = self.config.borrow_mut();
+        if config.color_scheme != scheme {
+            Rc::make_mut(&mut config).color_scheme = scheme;
         }
     }
 
@@ -619,6 +632,18 @@ impl Deck {
         }
         let page = self.shown.and_then(|id| self.pages.get(&id))?;
         page.keyboard(cx).map(|(_, handle)| handle)
+    }
+
+    /// Every terminal of the deck, overlays included, answers color scheme queries with `scheme` from now on and
+    /// reports the change to a program in mode 2031.
+    pub fn set_color_scheme(&self, scheme: ColorScheme) {
+        for shared in self
+            .terminals()
+            .map(PaneTerminal::shared)
+            .chain(self.overlay_terminals())
+        {
+            shared.set_color_scheme(scheme);
+        }
     }
 
     /// Every overlay terminal's shared state, for the quit's teardown.

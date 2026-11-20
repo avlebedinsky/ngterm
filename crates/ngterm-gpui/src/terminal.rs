@@ -176,9 +176,15 @@ impl TerminalConfig {
     /// This config on the `dark` side of the desktop's appearance, or the light one.
     #[must_use]
     pub fn on_side(mut self, dark: bool) -> Self {
-        self.color_scheme = if dark { ColorScheme::Dark } else { ColorScheme::Light };
+        self.color_scheme = scheme_of_side(dark);
         self
     }
+}
+
+/// The color scheme of the `dark` side of the desktop's appearance, or the light one.
+#[must_use]
+pub fn scheme_of_side(dark: bool) -> ColorScheme {
+    if dark { ColorScheme::Dark } else { ColorScheme::Light }
 }
 
 impl Default for TerminalConfig {
@@ -397,6 +403,21 @@ impl Shared {
     #[must_use]
     pub fn config(&self) -> Rc<TerminalConfig> {
         Rc::clone(&self.config.borrow())
+    }
+
+    /// The desktop's appearance moved to `scheme` with no config reload (upstream's `GhosttyApp.setColorScheme`): the
+    /// terminal answers color scheme queries with it and reports the change to a program in mode 2031
+    /// ([`Pane::set_color_scheme`]); one not started yet starts on it.
+    pub fn set_color_scheme(&self, scheme: ColorScheme) {
+        {
+            let mut config = self.config.borrow_mut();
+            if config.color_scheme != scheme {
+                Rc::make_mut(&mut config).color_scheme = scheme;
+            }
+        }
+        if let Some(pane) = self.pane() {
+            pane.set_color_scheme(scheme);
+        }
     }
 
     /// The pane, once started and until torn down.

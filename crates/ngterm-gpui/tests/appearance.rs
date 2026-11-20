@@ -1,7 +1,8 @@
 //! Following the desktop's light/dark appearance through the settings portal: the portal client against a fake
-//! `org.freedesktop.portal.Desktop` on a private session bus (a current portal, one before `ReadOne`, none at all), and
-//! the GPUI build launched on the dark side and flipping to the light one when the portal says so. Nothing here
-//! reaches the user's session bus or portal: every bus is the sandbox's own.
+//! `org.freedesktop.portal.Desktop` on a private session bus (a current portal, one before `ReadOne`, none at all), the
+//! GPUI build launched on the dark side and flipping to the light one when the portal says so, and the programs in its
+//! panes told of each flip with a plain theme. Nothing here reaches the user's session bus or portal: every bus is the
+//! sandbox's own.
 //!
 //! Linux only: the settings portal on a private D-Bus session bus, the app on a headless weston.
 
@@ -19,6 +20,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use ngterm_gpui::appearance::{ColorScheme, KEY, NAMESPACE, PORTAL, PORTAL_PATH, Portal, SETTINGS_INTERFACE};
+use serde_json::json;
+use support::live::call;
 use support::{DEADLINE, Sandbox, TestResult, have, lavapipe_icd, wait_for};
 use zbus::blocking::Connection;
 use zbus::zvariant::{OwnedValue, Value};
@@ -211,6 +214,88 @@ fn the_app_starts_on_the_desktops_side_and_follows_a_flip() -> TestResult {
     wait_for(|| applied_side(&sandbox).ok().filter(|side| side == "light"))
         .map_err(|error| format!("{error}\n{}", sandbox.log("primary.log")))?;
     sandbox.wait_log("primary.log", "themes/Paper")?;
+    sandbox.terminate(primary)?;
+    let (status, _) = sandbox.wait_exit(primary, Duration::from_secs(10))?;
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    Ok(())
+}
+
+/// A session running a program that puts its terminal in raw mode, writes `request` to it and keeps every byte the
+/// terminal sends back; the file that holds them.
+fn probe(sandbox: &Sandbox, name: &str, request: &str) -> TestResult<(String, std::path::PathBuf)> {
+    let received = sandbox.path(&format!("{name}.received"));
+    let script = sandbox.path(&format!("{name}.sh"));
+    std::fs::write(
+        &script,
+        format!(
+            "stty raw -echo\nprintf '{request}'\nexec cat > '{}'\n",
+            received.display()
+        ),
+    )?;
+    let command = format!("/bin/sh {}", script.display());
+    let id = call(sandbox, "session.new", None, json!({ "command": command }))?["id"]
+        .as_str()
+        .ok_or("session.new gave no id")?
+        .to_owned();
+    Ok((id, received))
+}
+
+/// Waits until `file` holds exactly `expected`.
+fn wait_received(sandbox: &Sandbox, file: &std::path::Path, expected: &str) -> TestResult {
+    wait_for(|| {
+        std::fs::read_to_string(file)
+            .ok()
+            .filter(|received| received == expected)
+    })
+    .map(drop)
+    .map_err(|error| {
+        let received = std::fs::read_to_string(file).unwrap_or_default();
+        format!(
+            "{error}: {received:?}, expected {expected:?}\n{}",
+            sandbox.log("primary.log")
+        )
+        .into()
+    })
+}
+
+const DARK: &str = "\x1b[?997;1n";
+const LIGHT: &str = "\x1b[?997;2n";
+
+#[test]
+fn with_a_plain_theme_a_flip_reaches_the_programs_in_the_panes() -> TestResult {
+    if !have("weston") {
+        skip!("no weston");
+    }
+    let Some(lavapipe) = lavapipe_icd() else {
+        skip!("no lavapipe ICD (set NGTERM_LAVAPIPE_ICD)");
+    };
+    let mut sandbox = Sandbox::new()?;
+    let scheme = Arc::new(Mutex::new(1));
+    let portal = serve(
+        &sandbox,
+        Settings {
+            scheme: Arc::clone(&scheme),
+        },
+    )?;
+    write_theme(&sandbox, "Paper", "#eeeeee")?;
+    std::fs::write(sandbox.path("state/settings.json"), r#"{"theme": "Paper"}"#)?;
+    sandbox.start_weston()?;
+    sandbox.use_software_rendering(&lavapipe);
+    let primary = sandbox.start_gpui_primary("primary.log")?;
+    // the query's answer shows the terminal took mode 2031 before the flip
+    let (_, reports) = probe(&sandbox, "reports", "\\033[?2031h\\033[?996n")?;
+    wait_received(&sandbox, &reports, DARK)?;
+    *scheme.lock().unwrap() = 2;
+    announce(&portal, 2)?;
+    wait_received(&sandbox, &reports, &format!("{DARK}{LIGHT}"))?;
+    // a pane opened after the flip answers its side, and without mode 2031 hears of no later flip
+    let (quiet, answers) = probe(&sandbox, "answers", "\\033[?996n")?;
+    wait_received(&sandbox, &answers, LIGHT)?;
+    *scheme.lock().unwrap() = 1;
+    announce(&portal, 1)?;
+    wait_received(&sandbox, &reports, &format!("{DARK}{LIGHT}{DARK}"))?;
+    call(&sandbox, "session.type", Some(&quiet), json!({ "text": "typed" }))?;
+    wait_received(&sandbox, &answers, &format!("{LIGHT}typed"))?;
     sandbox.terminate(primary)?;
     let (status, _) = sandbox.wait_exit(primary, Duration::from_secs(10))?;
     assert_eq!(status.code(), Some(0), "{status:?}");

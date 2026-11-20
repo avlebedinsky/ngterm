@@ -15,9 +15,9 @@
 //! plain one; every other platform): undecorated (client decorations, no title bar of ours), on a transparent
 //! background, sized on its display and centered there where the platform lets a client place a window (X11; Wayland
 //! gives a client no position). Its zoom is a maximize, on macOS its screen's visible frame ([`super::zoom`]). On macOS
-//! it is a borderless `NSPanel` with no system title bar, so its content fills its frame, as upstream's. On Windows it
-//! is GPUI's pop-up kind, a topmost tool window (`WS_EX_TOPMOST | WS_EX_TOOLWINDOW`): over other windows as upstream's
-//! panel floats, and out of the taskbar and Alt+Tab, as a panel is.
+//! it is a borderless `NSPanel` with no system title bar, so its content fills its frame, at the floating level, as
+//! upstream's. On Windows it is GPUI's pop-up kind, a topmost tool window (`WS_EX_TOPMOST | WS_EX_TOOLWINDOW`): over
+//! other windows as upstream's panel floats, and out of the taskbar and Alt+Tab, as a panel is.
 
 use gpui_kit::{
     Bounds, DisplayId, Pixels, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowDecorations,

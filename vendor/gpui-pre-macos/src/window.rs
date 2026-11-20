@@ -1236,7 +1236,12 @@ impl MacWindow {
                 WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
                     add_mouse_tracking_area(tracking_view);
 
-                    native_window.setLevel_(NSPopUpWindowLevel);
+                    // A borderless panel floats over normal windows, not over other apps' floating panels.
+                    native_window.setLevel_(if borderless {
+                        NSFloatingWindowLevel
+                    } else {
+                        NSPopUpWindowLevel
+                    });
                     if borderless {
                         // A borderless window has no shadow until it asks for one.
                         let _: () = msg_send![native_window, setHasShadow: YES];

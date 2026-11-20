@@ -80,3 +80,27 @@ fn a_config_reload_joins_a_queued_reply_burst_without_stalling_or_overtaking_it(
         )))
     );
 }
+
+#[test]
+fn a_stream_pane_answers_and_reports_the_appearance_it_is_given() {
+    let (pane, input, output) = Pane::stream(&PaneConfig::new(SIZE)).unwrap();
+    feed(&pane, &input, b"\x1b[?996n", "light");
+    assert_eq!(
+        output.next(Some(WAIT)),
+        Ok(Some(Outgoing::Bytes(b"\x1b[?997;2n".to_vec())))
+    );
+    feed(&pane, &input, b"\x1b[?2031h", "enabled");
+    pane.set_color_scheme(ColorScheme::Dark);
+    assert_eq!(
+        output.next(Some(WAIT)),
+        Ok(Some(Outgoing::Bytes(b"\x1b[?997;1n".to_vec())))
+    );
+    pane.set_color_scheme(ColorScheme::Dark);
+    feed(&pane, &input, b"\x1b[?996n", "dark");
+    assert_eq!(
+        output.next(Some(WAIT)),
+        Ok(Some(Outgoing::Bytes(b"\x1b[?997;1n".to_vec()))),
+        "no report for the same side, and the query answers it"
+    );
+    assert_eq!(output.queued(), 0);
+}

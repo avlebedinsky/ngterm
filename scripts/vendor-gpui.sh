@@ -38,7 +38,7 @@
 #                  hidden system one (0004)
 #   gpui-pre-macos the platform lock released for a menu item whose tag names no action, which deadlocked the main
 #                  thread on ngterm's own AppKit menu bar (0001); a pop-up window without a title bar opened as a
-#                  borderless panel with a shadow, the quick terminal's (0002)
+#                  borderless panel with a shadow, the quick terminal's (0002), at the floating level (0003)
 #
 # Each source is the crates.io archive of GPUI_VERSION, verified against SHA256 below: the release's crates.io
 # checksum (the `cksum` of its version's line in the crates.io index, https://index.crates.io/gp/ui/<crate>, also what

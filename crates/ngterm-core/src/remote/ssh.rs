@@ -1094,6 +1094,35 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn live_attach_preserves_apostrophes_with_marks_in_endpoint_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let executable = home.path().join("session'\u{301}'\u{fe0f}'\u{1f3fb}");
+        ngterm_host::fakes::write_executable(&executable, "#!/bin/sh\nprintf '%s\\0' \"$NGTERM_LIVE_DIR\" \"$@\"\n")
+            .unwrap();
+        let directory = "/tmp/live'\u{301}'\u{fe0f}'\u{1f3fb}";
+        let endpoint = ControlLiveEndpoint {
+            executable: executable.to_string_lossy().into_owned(),
+            socket_directory: directory.into(),
+            peer: None,
+            attach_bridge: None,
+        };
+        let daemon = crate::live::daemon_name(uuid::Uuid::new_v4());
+        let line = attach_command("buildbox", &endpoint, &daemon, None)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let output = Command::new("/bin/sh")
+            .args(["-c", &line])
+            .env_clear()
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let expected = [directory, "attach", &daemon, "/bin/sh", "-c", GONE_GUARD];
+        assert_eq!(output.stdout, format!("{}\0", expected.join("\0")).into_bytes());
+    }
+
     #[test]
     fn control_is_non_interactive_and_ends_in_json() {
         let argv = control_command("buildbox", RemotePeer::Ngterm, &["session", "new"]).unwrap();
@@ -1138,7 +1167,7 @@ mod tests {
             "--command",
             r"tail -f 'my log' a\b \\ end\",
             "--name",
-            "it's",
+            "it'\u{301}s; echo INJECTED",
             "--cwd",
             "",
         ];

@@ -195,3 +195,52 @@ fn a_burst_of_reports_lands_once_with_the_last_side() {
     assert_eq!(reloads, 1, "only the last report lands");
     assert!(state.appearance.side());
 }
+
+#[test]
+fn every_flip_moves_the_color_scheme_and_a_reloading_flip_carries_it_in_the_config() {
+    let plain = following(Some("Ink"), None, None);
+    let one_for_both = following(Some("Ink"), Some("Ink"), Some(true));
+    for settings in [AppSettings::default(), plain, one_for_both.clone()] {
+        let mut state = AppState::new(core(settings.clone()));
+        state.launched_on(false);
+        assert_eq!(state.take_color_scheme(), None, "{settings:?}: the launch side applied");
+        state.appearance_changed(true);
+        match state.take_config_reload() {
+            Some(reload) => {
+                assert!(reload.dark);
+                state.config_applied(reload.dark);
+                assert_eq!(state.take_color_scheme(), None, "{settings:?}: the reload carried it");
+            }
+            None => assert_eq!(state.take_color_scheme(), Some(TerminalScheme::Dark), "{settings:?}"),
+        }
+        assert_eq!(state.take_color_scheme(), None, "{settings:?}: taken once");
+        state.appearance_changed(true);
+        assert_eq!(state.take_color_scheme(), None, "{settings:?}: the side did not move");
+        state.appearance_changed(false);
+        assert_eq!(
+            state.take_config_reload().is_some(),
+            settings == one_for_both,
+            "{settings:?}"
+        );
+        state.config_applied(false);
+        assert_eq!(state.take_color_scheme(), None, "{settings:?}");
+    }
+}
+
+#[test]
+fn a_forced_side_moves_the_color_scheme_and_the_desktop_no_longer_does() {
+    let mut state = AppState::new(core(following(Some("Ink"), None, None)));
+    state.core.set_ui_test_launch(true);
+    state.launched_on(false);
+    assert_eq!(debug_appearance(&mut state, Some("dark")), "dark");
+    assert_eq!(state.take_config_reload(), None, "a plain theme does not reload");
+    assert_eq!(state.take_color_scheme(), Some(TerminalScheme::Dark));
+    assert_eq!(
+        debug_appearance(&mut state, None),
+        "light",
+        "no config load applied the dark side"
+    );
+    state.appearance_changed(false);
+    assert_eq!(state.take_config_reload(), None);
+    assert_eq!(state.take_color_scheme(), None, "forced dark holds");
+}

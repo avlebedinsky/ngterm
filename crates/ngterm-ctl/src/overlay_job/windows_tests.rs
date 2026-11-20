@@ -20,8 +20,7 @@ fn the_console_is_never_handed_over_or_watched() {
     assert!(!hung_up(console));
 }
 
-/// A process that has exited has no thread to resume. Its handle stays open in `child`, so its pid is not reused,
-/// and the wait on it returns only once every thread of it has ended.
+/// A process that has exited has no thread to resume. Its handle stays open in `child`, so its pid is not reused.
 #[test]
 fn a_program_with_no_thread_left_cannot_be_resumed() {
     let mut child = std::process::Command::new("cmd.exe")
@@ -29,11 +28,13 @@ fn a_program_with_no_thread_left_cannot_be_resumed() {
         .spawn()
         .unwrap();
     assert!(child.wait().unwrap().success());
-    let error = resume(child.id()).unwrap_err();
+    let error = resume(&child).unwrap_err();
     assert_eq!(error.to_string(), "the program's thread could not be resumed");
 }
 
 /// An open handle keeps an ended thread's object, so the snapshot can still name it after its process has exited.
+/// The system signals the process before its last thread's object, so the test waits for each thread's own signal
+/// before the walk, which must skip the held threads, ended now.
 #[test]
 fn a_program_whose_ended_thread_is_still_held_cannot_be_resumed() {
     let mut child = std::process::Command::new("cmd.exe")
@@ -42,17 +43,26 @@ fn a_program_whose_ended_thread_is_still_held_cannot_be_resumed() {
         .spawn()
         .unwrap();
     let pid = child.id();
-    let held: Vec<Thread> = listed_threads()
+    let listed: Vec<ListedThread> = listed_threads()
         .unwrap()
         .into_iter()
         .filter(|thread| thread.owner == pid)
-        .filter_map(|thread| Thread::open(thread.id))
         .collect();
+    let held: Vec<Thread> = listed.iter().filter_map(|thread| Thread::open(thread.id)).collect();
     child.kill().unwrap();
     child.wait().unwrap();
     assert!(!held.is_empty());
-    assert!(held.iter().all(OpenedThread::ended));
-    let error = resume(pid).unwrap_err();
+    for thread in &held {
+        assert_eq!(thread.owner(), Some(pid));
+        assert!(
+            signaled(handle(&thread.0), 10_000),
+            "a killed program's thread never ended"
+        );
+    }
+    // a held thread's id is not reused, so it still opens as the same ended thread
+    let walked = resume_listed(pid, false, listed, Thread::open).unwrap_err();
+    assert_eq!(walked.to_string(), "the program's thread could not be resumed");
+    let error = resume(&child).unwrap_err();
     assert_eq!(error.to_string(), "the program's thread could not be resumed");
 }
 

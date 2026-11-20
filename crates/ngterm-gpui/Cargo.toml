@@ -153,6 +153,12 @@ ngterm-update = { workspace = true, features = ["fakes"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
 gpui-pre-wgpu.workspace = true
 
+# the native key adapter's test builds the key events it reads (tests/macos_key_event.rs)
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { workspace = true, features = ["NSEvent", "NSGraphicsContext", "objc2-core-graphics"] }
+objc2-core-graphics = { workspace = true, features = ["CGEvent", "CGEventTypes"] }
+objc2-foundation = { workspace = true, features = ["NSGeometry", "NSString"] }
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # the global hotkey's and the keyboard layout's tests press their keys on a private Xvfb through XTEST
 # (tests/global_hotkey.rs, tests/keyboard_layout.rs); the window test lays monitors out on one through RandR
@@ -194,6 +200,12 @@ required-features = ["html"]
 # The calls AppKit makes when the system pleases, made at once against the real menu bar (tests/macos_appkit_sweep.rs).
 [[test]]
 name = "macos_appkit_sweep"
+harness = false
+
+# The terminal's native key for built `NSEvent`s, on the main thread the input source services want
+# (tests/macos_key_event.rs).
+[[test]]
+name = "macos_key_event"
 harness = false
 
 # Test-only real GPUI surface with nonzero decoration insets, driven by the private AT-SPI probe.

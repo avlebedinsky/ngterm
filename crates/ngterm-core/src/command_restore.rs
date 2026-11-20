@@ -544,6 +544,17 @@ pub fn should_restore<S: AsRef<str>>(argv: &[String], denylist: &[S]) -> bool {
     !denylist.iter().any(|entry| same_program(name, entry.as_ref()))
 }
 
+/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes. `program` is
+/// the shell's executable ([`crate::shell_dialect::shell_program`] reads it off a `/bin/sh` line).
+#[must_use]
+pub fn should_restore_in_program<S: AsRef<str>>(argv: &[String], denylist: &[S], program: Option<&str>) -> bool {
+    should_restore(argv, denylist)
+        && !(program.is_some_and(|program| {
+            let name = shell_name(basename(program.strip_prefix('-').unwrap_or(program)));
+            name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
+        }) && argv.iter().any(|word| word.contains('!')))
+}
+
 /// Whether `value` carries a character a line editor reads as an editing command (C0 or DEL), tab included.
 #[must_use]
 pub fn has_control_character(value: &str) -> bool {
@@ -733,6 +744,15 @@ fn is_unreplayable(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`should_restore_in_program`] for a shell line that `/bin/sh` runs.
+    fn restores_in_shell(argv: &[String], denylist: &[&str], shell: Option<&str>) -> bool {
+        should_restore_in_program(
+            argv,
+            denylist,
+            shell.and_then(crate::shell_dialect::shell_program).as_deref(),
+        )
+    }
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -1573,6 +1593,99 @@ mod tests {
             argv(&["tmux", "screen", "zellij"])
         );
         assert!(!should_restore(&argv(&["zellij"]), &parse_denylist(&crlf)));
+    }
+
+    #[test]
+    fn a_bang_is_refused_only_for_a_csh_receiver() {
+        let none: [&str; 0] = [];
+        for shell in [
+            "/bin/csh",
+            "/bin/tcsh",
+            "tcsh",
+            "csh.exe",
+            "/bin/CSH",
+            "TcSh.ExE",
+            "-tcsh",
+            "/bin/tcsh -l",
+            "/usr/bin/env tcsh",
+            "env -S 'tcsh -l'",
+            "env -i FOO=bar env /bin/csh",
+            "env -u SHELL --chdir /tmp -- tcsh",
+            "env --split-string=tcsh -l",
+            "/usr/bin/env NOTE='use bash' /bin/tcsh",
+            "/usr/bin/env NOTE=\"use bash\" /bin/tcsh",
+            r"env NOTE=use\ bash /bin/tcsh",
+            "env -C '/tmp/use bash' /bin/tcsh",
+            "env --chdir \"/tmp/use bash\" /bin/tcsh",
+            "env -- NOTE='use bash' /bin/tcsh",
+            "env NOTE='use bash' env -u 'use bash' /bin/tcsh",
+            "env -S 'NOTE=\"use bash\" /bin/tcsh -l'",
+            "env --split-string='NOTE=\"use bash\" /bin/tcsh -l'",
+            "env -S '#=x bash' /bin/tcsh",
+            "env --split-string='#=x bash' /bin/tcsh",
+            "env -S 'NOTE=x #=x bash' /bin/tcsh",
+            "env --argv0 'bash' /bin/tcsh",
+            "env --argv0=bash /bin/tcsh",
+            "env -a bash /bin/tcsh",
+            "env -abash /bin/tcsh",
+            "env -ia bash /bin/tcsh",
+            "env --arg bash /bin/tcsh",
+            "env --split='A=1 /bin/tcsh' bash",
+            "env -'a' bash /bin/tcsh",
+            "env -\"a\" bash /bin/tcsh",
+            "env -S\"X=1\"' /bin/tcsh -s' bash",
+            "env -S 'NOTE=x '\"/bin/tcsh\" bash",
+            "env NOTE=1\u{a0}bash /bin/tcsh",
+        ] {
+            for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
+                assert!(!restores_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
+            }
+            assert!(restores_in_shell(&argv(&["grep", "needle"]), &none, Some(shell)));
+        }
+        for shell in [
+            None,
+            Some("/bin/zsh"),
+            Some("/bin/bash"),
+            Some("/usr/bin/fish"),
+            Some("env NOTE='use tcsh' /bin/bash"),
+            Some("env -C '/tmp/use tcsh' /bin/bash"),
+        ] {
+            assert!(restores_in_shell(&argv(&["grep", "!needle"]), &none, shell));
+            assert!(!restores_in_shell(&argv(&["vim", "!x"]), &["vim"], shell));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apostrophes_with_marks_reach_the_program_as_the_same_bytes() {
+        let arguments = [
+            "it's",
+            "it'\u{301}s; echo INJECTED",
+            "x'\u{fe0f}",
+            "y'\u{1f3fb}",
+            "\u{600}'",
+            "'\u{200d}",
+        ];
+        let mut words = vec!["/usr/bin/printf", "%s\\0"];
+        words.extend(arguments);
+        let expected = format!("{}\0", arguments.join("\0")).into_bytes();
+        let home = tempfile::tempdir().unwrap();
+        for shell in ["/bin/sh", "/bin/bash", "/bin/zsh"] {
+            if !std::path::Path::new(shell).is_file() {
+                continue;
+            }
+            let output = std::process::Command::new(shell)
+                .args(["-c", &shell_quoted_line(&words)])
+                .env_clear()
+                .env("HOME", home.path())
+                .env("ZDOTDIR", home.path())
+                .env("XDG_CONFIG_HOME", home.path())
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{shell}: {output:?}");
+            assert_eq!(output.stdout, expected, "{shell}");
+        }
     }
 
     #[test]
