@@ -255,7 +255,22 @@ mod keys {
                 &Compose::Dropped,
             )?;
             expect_eq(&format!("{path}: the posted string's text"), string.text.as_str(), "ж")?;
-            expect_eq(&format!("{path}: nothing pending"), &dead.is_pending(), &false)
+            expect_eq(&format!("{path}: nothing pending"), &dead.is_pending(), &false)?;
+            let keystroke = Keystroke::parse("alt-e").map_err(|err| format!("alt-e: {err}"))?;
+            let event = posted("ж", 14, option)?;
+            let on_a_dead_key = KeyStroke::new(&keystroke, &Source::Native(read(&event)?), false);
+            expect_eq(
+                &format!("{path}: a posted string on Option-e"),
+                &dead.compose(&on_a_dead_key),
+                &Compose::Pass,
+            )?;
+            expect_eq(
+                &format!("{path}: it is no composition"),
+                &on_a_dead_key.composing,
+                &false,
+            )?;
+            expect_eq(&format!("{path}: its text"), on_a_dead_key.text.as_str(), "ж")?;
+            expect_eq(&format!("{path}: still nothing pending"), &dead.is_pending(), &false)
         };
         run(false).and_then(|()| run(true)).err()
     }

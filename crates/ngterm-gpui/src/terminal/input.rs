@@ -236,7 +236,8 @@ fn decode_macos_key(
         unshifted: char::from_u32(plain).filter(|ch| *ch != '\0'),
         ascii_layout: flags & 2 != 0,
         text,
-        composing: flags & 4 != 0,
+        // a posted string types as posted, so a dead key under it never composes
+        composing: flags & 4 != 0 && flags & 128 == 0,
         repeat: flags & 1 != 0,
         locks,
         command: modifiers
@@ -322,7 +323,7 @@ impl DeadKeys {
         stroke: &KeyStroke,
         translate: impl FnOnce(u32, bool, bool, bool, u32) -> (String, u32),
     ) -> Compose {
-        if stroke.action == KeyAction::Release || (!self.is_pending() && (!stroke.composing || stroke.posted_text)) {
+        if stroke.action == KeyAction::Release || (!self.is_pending() && !stroke.composing) {
             return Compose::Pass;
         }
         if self.is_pending() {

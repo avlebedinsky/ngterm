@@ -275,17 +275,17 @@ fn backspace_or_escape_cancels_a_pending_accent_and_goes_no_further() {
 fn a_posted_string_drops_a_pending_accent_and_never_starts_one() {
     use input::{Compose, DeadKeys};
     let seen = std::cell::Cell::new(None);
-    let posted = |text: &str, composing: bool| KeyStroke {
+    let posted = |text: &str| KeyStroke {
         posted_text: true,
-        ..dead_key_press("a", 38, text, composing)
+        ..dead_key_press("a", 38, text, false)
     };
     let mut dead = DeadKeys::default();
     dead.step(&dead_key_press("alt-e", 26, "´", true), us_dead_keys(&seen));
     seen.set(None);
-    assert_eq!(dead.step(&posted("ж", false), us_dead_keys(&seen)), Compose::Dropped);
+    assert_eq!(dead.step(&posted("ж"), us_dead_keys(&seen)), Compose::Dropped);
     assert_eq!(seen.get(), None, "the posted string never reached the layout");
     assert!(!dead.is_pending());
-    assert_eq!(dead.step(&posted("é", true), us_dead_keys(&seen)), Compose::Pass);
+    assert_eq!(dead.step(&posted("é"), us_dead_keys(&seen)), Compose::Pass);
     assert!(!dead.is_pending());
 }
 
