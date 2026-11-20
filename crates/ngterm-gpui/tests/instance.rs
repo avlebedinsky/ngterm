@@ -45,7 +45,15 @@ fn a_second_launch_forwards_its_token_to_the_primary_and_leaves_the_state_alone(
     let mut sandbox = Sandbox::new()?;
     let primary = start_primary(&mut sandbox)?;
     let activations = sandbox.monitor_activations()?;
-    let before = sandbox.settled_state(Duration::from_secs(1))?;
+    // The socket can serve before the primary saves the welcome setting.
+    let settings = ngterm_core::persist::SettingsStore::new(sandbox.path("state"));
+    wait_for(|| (settings.load().welcome_shown == Some(true)).then_some(())).map_err(|error| {
+        format!(
+            "the primary did not save the welcome setting: {error}\n{}",
+            sandbox.log("primary.log")
+        )
+    })?;
+    let before = sandbox.state_snapshot();
     let second = sandbox.spawn_gpui(
         &[("XDG_ACTIVATION_TOKEN", TOKEN), ("DESKTOP_STARTUP_ID", STARTUP_ID)],
         "second.log",

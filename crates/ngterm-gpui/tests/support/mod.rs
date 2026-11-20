@@ -468,26 +468,6 @@ impl Sandbox {
         collect(&self.path("state"), &mut snapshot);
         snapshot
     }
-
-    /// The state dir once the running primary stopped writing it (unchanged for `quiet`): what a forwarding launch
-    /// must leave as it is.
-    pub fn settled_state(&self, quiet: Duration) -> TestResult<BTreeMap<PathBuf, Vec<u8>>> {
-        let started = Instant::now();
-        let mut last = self.state_snapshot();
-        let mut since = Instant::now();
-        while since.elapsed() < quiet {
-            if started.elapsed() > DEADLINE {
-                return Err("the primary kept writing its state".into());
-            }
-            thread::sleep(Duration::from_millis(50));
-            let now = self.state_snapshot();
-            if now != last {
-                last = now;
-                since = Instant::now();
-            }
-        }
-        Ok(last)
-    }
 }
 
 /// The platform data of an `Activate` (`a{sv}` last argument), its string and bytestring values as text.
