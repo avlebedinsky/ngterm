@@ -10,6 +10,7 @@ import json
 import shlex
 import shutil
 import sys
+import time
 
 import pytest
 from agterm_conformance.match import assert_ok, find_session, program_argv, sessions
@@ -24,6 +25,8 @@ pytestmark = [
 
 LIVE_ANY_SHELL = pytest.mark.requires("live-sessions", "live-any-shell", any=True, reason="needs Live panes")
 SHELL_START = 60.0
+# Longer than a macOS exec chain (the python3 shim, then Python.app), whose first images show a transient argv[0].
+SETTLE = 0.5
 SLEEP = ("-c", "import time; time.sleep(600)")
 # A scalar the line editor or the old quoting broke: an apostrophe a combining mark, an emoji presentation selector or
 # a skin-tone modifier follows, as one grapheme with it.
@@ -61,11 +64,21 @@ def _args(pane):
 
 
 def _waited(ctl, sid, argv, pane, start=0):
-    """Waits until the pane runs `argv` from word `start` on, and gives the whole argv the pane runs."""
+    """Waits until the pane runs `argv` from word `start` on and that whole argv stays the same for SETTLE seconds,
+    and gives it."""
+    seen, since = None, 0.0
 
     def runs():
+        nonlocal seen, since
         foreground = _foreground(ctl, sid, pane)
-        return foreground if isinstance(foreground, list) and foreground[start:] == argv[start:] else None
+        if not isinstance(foreground, list) or foreground[start:] != argv[start:]:
+            seen = None
+            return None
+        now = time.monotonic()
+        if foreground != seen:
+            seen, since = foreground, now
+            return None
+        return foreground if now - since >= SETTLE else None
 
     try:
         return wait_until(runs, timeout=SHELL_START)
