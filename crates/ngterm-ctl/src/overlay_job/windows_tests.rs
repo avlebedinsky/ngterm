@@ -1,7 +1,6 @@
 //! The overlay job's Windows platform, below what `overlay_job`'s own tests reach through a run: the console that is
 //! never handed over, the resume of a program with no thread left, and the console's Ctrl handler.
 
-use std::os::windows::process::CommandExt as _;
 use std::sync::mpsc;
 use std::time::Instant;
 
