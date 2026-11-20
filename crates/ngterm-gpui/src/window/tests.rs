@@ -2433,6 +2433,72 @@ fn a_live_leader_that_the_search_chord_does_not_advance_ends_and_the_field_takes
     assert!(crate::keymap_dispatch::take_fired().is_empty());
 }
 
+/// A Windows page reports the search chord before the leader's tail that its script stopped earlier: the tail still
+/// fires against the leader that the chord ended, through the window's real dispatch, and the field that has the
+/// keyboard now does not get it (as text, or as Enter's open).
+#[cfg(all(feature = "html", windows))]
+#[gpui_kit::test]
+fn a_stopped_tail_typed_before_the_search_chord_fires_and_skips_the_field(cx: &mut TestAppContext) {
+    let page_key = |text: &str, code: &str| {
+        let keystroke = gpui_kit::Keystroke::parse(text).unwrap().with_simulated_ime();
+        let keycode = crate::terminal::input::xkb_keycode(code).unwrap();
+        (keystroke, keycode)
+    };
+    let epoch_ms = || {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        u64::try_from(since.as_millis()).unwrap()
+    };
+    for (tail, bound, code) in [("g", "g", "KeyG"), ("enter", "return", "Enter")] {
+        // the previous case's keys are forgotten, as no release reached them
+        crate::keymap_dispatch::keyboard_left();
+        let mut s = shell(cx);
+        s.with_keys();
+        // one `map` line per action: a second one for the same action replaces the first
+        let (keymap, diagnostics) = ngterm_core::keymap::parse_keymap(
+            &format!("map ctrl+x>{bound} toggle_sidebar\n"),
+            &ngterm_core::keymap::linux_defaults(),
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        crate::keymap_dispatch::load_keymap(&keymap);
+        s.cx.simulate_keystrokes("ctrl-x");
+        assert!(crate::keymap_dispatch::sequence_is_live());
+        let _ = crate::keymap_dispatch::take_fired();
+        // the tail goes down after the leader and before the chord; the gaps outlast the millisecond clock's rounding
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let tail_at = epoch_ms();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let (chord, chord_code) = page_key("ctrl-alt-shift-f", "KeyF");
+        assert!(crate::keymap_dispatch::takes(&crate::keymap_dispatch::page_stroke(
+            &chord, chord_code, false
+        )));
+        s.cx.update(|window, cx| {
+            crate::keymap_dispatch::dispatch_page_key(&chord, chord_code, false, window, cx);
+            crate::keymap_dispatch::release_dispatched();
+        });
+        assert!(s.search_field_holds(), "{tail}: the chord gives the field the keyboard");
+        assert!(
+            !crate::keymap_dispatch::sequence_is_live(),
+            "{tail}: the chord ends the leader"
+        );
+        assert!(crate::keymap_dispatch::take_fired().is_empty());
+        let (key, keycode) = page_key(tail, code);
+        let taken = s.cx.update(|window, cx| {
+            let taken = crate::keymap_dispatch::dispatch_stopped_key(&key, keycode, false, tail_at, window, cx);
+            crate::keymap_dispatch::release_dispatched();
+            taken
+        });
+        assert!(taken, "{tail}: the keymap takes the stopped tail");
+        assert_eq!(crate::keymap_dispatch::take_fired().len(), 1, "{tail}: the tail fires");
+        assert!(!crate::keymap_dispatch::sequence_is_live());
+        let text = s.view.read_with(s.cx, |view, cx| view.search_field().read(cx).text(cx));
+        assert_eq!(text, "", "{tail}: the field does not get the tail");
+        s.settle();
+        assert_eq!(s.sidebar_search(), "");
+    }
+}
+
 #[gpui_kit::test]
 fn a_sync_before_the_typed_text_lands_does_not_rewind_the_field(cx: &mut TestAppContext) {
     let mut s = shell(cx);

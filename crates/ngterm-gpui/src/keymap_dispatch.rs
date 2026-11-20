@@ -39,6 +39,7 @@
 //! | Character typed after a leader, reported after an in-flight autorepeat | Ends the leader |
 //! | Windows: a leader's typing tail (letter, Enter, Backspace), stopped by the page's script | Fires, and the page never has it |
 //! | Windows: a key the page's script stopped that the keymap no longer takes | Goes back into the page |
+//! | Windows: a stopped tail pressed before a later key that ended its sequence (the sidebar search's chord) | Fires against that sequence; a field that took the keyboard since never has it |
 //!
 //! A page's callback runs ahead of the reports still waiting for the pump, in the order the keys came: it answers for
 //! the matcher as those reports will leave it, and a press the page keeps ends the sequence only behind them
@@ -584,16 +585,23 @@ fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     let stroke = KeyStroke::new(&event.keystroke, &source, false);
     #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
     let stroke = ROUTER.with_borrow_mut(|router| router.dispatched_stroke(stroke));
+    // a stopped press that acts against the sequence a later key ended ([`Router::takes_stopped`]) went down before
+    // that key: a field or a dialog that took the keyboard since does not get it, only the keymap does
+    #[cfg(all(feature = "html", windows))]
+    let replay = ROUTER.with_borrow(|router| router.replaying_interruption);
+    #[cfg(not(all(feature = "html", windows)))]
+    let replay = false;
     // the window's own keys first: Ctrl+Tab's switcher, the picker's, palette's and search bar's fields; their release
     // is theirs too (the switcher's walk leaves the terminal the keyboard, so its key-up listener must not report it)
-    if crate::window::intercept_key(&stroke, window, cx)
-        || crate::ask_dialog::intercept_key(&event.keystroke, &stroke, window, cx)
+    if !replay
+        && (crate::window::intercept_key(&stroke, window, cx)
+            || crate::ask_dialog::intercept_key(&event.keystroke, &stroke, window, cx))
     {
         ROUTER.with_borrow_mut(|router| router.consume(stroke.identity));
         cx.stop_propagation();
         return;
     }
-    if keeps_keys(event) {
+    if !replay && keeps_keys(event) {
         ROUTER.with_borrow_mut(Router::reset_if_live);
         return;
     }
