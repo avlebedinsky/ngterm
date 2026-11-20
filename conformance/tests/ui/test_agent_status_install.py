@@ -172,10 +172,14 @@ def test_agent_payloads_reach_the_tree_and_sidebar(cli, ctl, ui, tmp_path, parse
     _run(cli, [str(installer), "--install-agent-hooks", "--opencode-version", "v2"], env, home)
     tools = tmp_path / "bin"
     tools.mkdir()
-    for name in ("bash", "sh", "ps", "dirname", "cat", "awk", "sed", "tr", "tail", "rm", parser):
+    for name in ("bash", "sh", "dirname", "cat", "awk", "sed", "tr", "tail", "rm", parser):
         executable = shutil.which(name)
         assert executable, name
         (tools / name).symlink_to(executable)
+    # The hooks walk their ancestors with ps and stay silent under a second agent. Here the ancestors are the runner
+    # of the suite, so a ps that fails stops the walk at once, as crates/ngterm-ctl/tests/agent_hook.rs does.
+    (tools / "ps").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (tools / "ps").chmod(0o755)
     sid = assert_ok(ctl.request("session.new"))["id"]
     try:
         ctl.wait_mounted(sid, "left")
