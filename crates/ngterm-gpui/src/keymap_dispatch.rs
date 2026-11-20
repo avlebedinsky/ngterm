@@ -14,7 +14,9 @@
 //! (`crate::html_overlay`). A key either takes stops there: GPUI's binding matcher and
 //! pending-keystroke buffering never see it, and the platform's input handler does not type it again. A focused text
 //! field (an element in an `Input` key context), an open prompt, an alert (`crate::modal`) or the Settings popup
-//! (`crate::settings`) keeps every key, as the GTK build's text fields and dialogs did.
+//! (`crate::settings`) keeps every key, as the GTK build's text fields and dialogs did. The exception is a key that a
+//! Windows page's script stopped and the keymap took ([`dispatch_stopped_key`]): it goes to the keymap alone, not to
+//! the window's own keys, a field or a dialog.
 //!
 //! A chord is the key's physical identity resolved per layout (`terminal::input::chord`). A consumed key's next press
 //! reads as its autorepeat until its release, which reaches [`key_up`] from the window's (and the terminal's) key-up
@@ -39,7 +41,8 @@
 //! | Character typed after a leader, reported after an in-flight autorepeat | Ends the leader |
 //! | Windows: a leader's typing tail (letter, Enter, Backspace), stopped by the page's script | Fires, and the page never has it |
 //! | Windows: a key the page's script stopped that the keymap no longer takes | Goes back into the page |
-//! | Windows: a stopped tail pressed before a later key that ended its sequence (the sidebar search's chord) | Fires against that sequence; a field that took the keyboard since never has it |
+//! | Windows: a stopped tail pressed before a later key that ended its sequence (the sidebar search's chord) | Fires against that sequence; a field, a dialog or the window's own keys that took the keyboard since never have it |
+//! | Windows: a late stopped autorepeat of a tail the keymap took | Consumed; a field, a dialog or the window's own keys that took the keyboard since never have it |
 //!
 //! A page's callback runs ahead of the reports still waiting for the pump, in the order the keys came: it answers for
 //! the matcher as those reports will leave it, and a press the page keeps ends the sequence only behind them
@@ -139,6 +142,10 @@ struct Router {
     ending_matcher: Option<InterruptedMatcher>,
     #[cfg(all(feature = "html", windows))]
     replaying_interruption: bool,
+    /// A press or autorepeat that a page's script stopped and the keymap took is in its dispatch
+    /// ([`dispatch_stopped_key`]): it went down while the page had the keyboard, so only the keymap gets it.
+    #[cfg(all(feature = "html", windows))]
+    dispatching_stopped: bool,
 }
 
 #[cfg(all(feature = "html", windows))]
@@ -362,8 +369,10 @@ pub fn dispatch_stopped_key(
     if !taken {
         return false;
     }
+    ROUTER.with_borrow_mut(|router| router.dispatching_stopped = true);
     window.dispatch_keystroke(keystroke.clone(), cx);
     ROUTER.with_borrow_mut(|router| {
+        router.dispatching_stopped = false;
         let owned = router.owns(identity);
         router.end_report(false);
         owned
@@ -585,10 +594,11 @@ fn intercept(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     let stroke = KeyStroke::new(&event.keystroke, &source, false);
     #[cfg(all(feature = "html", any(windows, target_os = "macos")))]
     let stroke = ROUTER.with_borrow_mut(|router| router.dispatched_stroke(stroke));
-    // a stopped press that acts against the sequence a later key ended ([`Router::takes_stopped`]) went down before
-    // that key: a field or a dialog that took the keyboard since does not get it, only the keymap does
+    // a stopped key the keymap took ([`dispatch_stopped_key`]) went down while the page had the keyboard, also a
+    // press that acts against the sequence a later key ended and that press's own autorepeat: a field or a dialog that
+    // took the keyboard since does not get it, only the keymap does
     #[cfg(all(feature = "html", windows))]
-    let replay = ROUTER.with_borrow(|router| router.replaying_interruption);
+    let replay = ROUTER.with_borrow(|router| router.dispatching_stopped);
     #[cfg(not(all(feature = "html", windows)))]
     let replay = false;
     // the window's own keys first: Ctrl+Tab's switcher, the picker's, palette's and search bar's fields; their release
