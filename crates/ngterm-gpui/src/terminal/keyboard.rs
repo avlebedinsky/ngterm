@@ -419,6 +419,10 @@ impl TerminalView {
                 self.shared.set_preedit(None);
                 Some(std::borrow::Cow::Borrowed(stroke))
             }
+            Compose::Cancelled => {
+                self.shared.set_preedit(None);
+                None
+            }
             Compose::Pending { accent, committed } => {
                 self.send_text(&committed);
                 self.shared.set_preedit(Some(accent));

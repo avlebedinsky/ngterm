@@ -245,6 +245,51 @@ fn a_key_with_no_text_or_with_control_drops_a_pending_accent() {
 }
 
 #[test]
+fn backspace_or_escape_cancels_a_pending_accent_and_goes_no_further() {
+    use input::{Compose, DeadKeys};
+    let seen = std::cell::Cell::new(None);
+    let alt_e = dead_key_press("alt-e", 26, "´", true);
+    for next in [
+        dead_key_press("backspace", 22, "\u{7f}", false),
+        dead_key_press("escape", 9, "\u{1b}", false),
+    ] {
+        let mut dead = DeadKeys::default();
+        dead.step(&alt_e, us_dead_keys(&seen));
+        seen.set(None);
+        assert_eq!(dead.step(&next, us_dead_keys(&seen)), Compose::Cancelled, "{next:?}");
+        assert_eq!(seen.get(), None, "{next:?} never reached the layout");
+        assert!(!dead.is_pending());
+        assert_eq!(
+            dead.step(&next, us_dead_keys(&seen)),
+            Compose::Pass,
+            "{next:?} with nothing pending"
+        );
+    }
+    let mut dead = DeadKeys::default();
+    dead.step(&alt_e, us_dead_keys(&seen));
+    let ctrl_backspace = dead_key_press("ctrl-backspace", 22, "\u{7f}", false);
+    assert_eq!(dead.step(&ctrl_backspace, us_dead_keys(&seen)), Compose::Dropped);
+}
+
+#[test]
+fn a_posted_string_drops_a_pending_accent_and_never_starts_one() {
+    use input::{Compose, DeadKeys};
+    let seen = std::cell::Cell::new(None);
+    let posted = |text: &str, composing: bool| KeyStroke {
+        posted_text: true,
+        ..dead_key_press("a", 38, text, composing)
+    };
+    let mut dead = DeadKeys::default();
+    dead.step(&dead_key_press("alt-e", 26, "´", true), us_dead_keys(&seen));
+    seen.set(None);
+    assert_eq!(dead.step(&posted("ж", false), us_dead_keys(&seen)), Compose::Dropped);
+    assert_eq!(seen.get(), None, "the posted string never reached the layout");
+    assert!(!dead.is_pending());
+    assert_eq!(dead.step(&posted("é", true), us_dead_keys(&seen)), Compose::Pass);
+    assert!(!dead.is_pending());
+}
+
+#[test]
 fn a_release_or_a_plain_key_passes_and_option_as_alt_composes_without_option() {
     use input::{Compose, DeadKeys};
     let seen = std::cell::Cell::new(None);

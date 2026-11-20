@@ -2,7 +2,8 @@
 //! the event's Unicode string on a key that does not type it (text expanders, password managers' auto-type, the
 //! conformance ax driver's `type_text`: key code 0, the A key), a hardware key whose characters differ from the layout's
 //! (a dead key's composition), a Control chord on the same key, and the U.S. layout's Option dead keys composed with the
-//! next key, from the keyboard and posted alike, with nothing left pending. It runs without a harness because the
+//! next key, from the keyboard and posted alike, with nothing left pending; Backspace and Escape cancel such an accent,
+//! and a posted string ends it and types as posted. It runs without a harness because the
 //! layout's input source services want the main thread.
 #[cfg(not(target_os = "macos"))]
 fn main() {}
@@ -21,6 +22,7 @@ fn main() {
         keys::a_hardware_key_types_the_layouts_text_whatever_its_characters(),
         keys::a_control_chord_keeps_the_layouts_text_for_its_key(),
         keys::option_dead_keys_compose_with_the_next_key_and_leave_nothing_pending(),
+        keys::backspace_or_escape_cancels_a_dead_key_and_a_posted_string_ends_it(),
     ]
     .into_iter()
     .flatten()
@@ -31,7 +33,7 @@ fn main() {
     if !failures.is_empty() {
         std::process::exit(1);
     }
-    println!("macos_key_event: 4 passed");
+    println!("macos_key_event: 5 passed");
 }
 
 #[cfg(target_os = "macos")]
@@ -113,6 +115,7 @@ mod keys {
                     &Some(text),
                 )?;
                 expect_eq("the key's position", &key.keycode, &KEY_A)?;
+                expect_eq(&format!("{text:?} is a posted string"), &key.posted_text, &true)?;
             }
             let key = native("ж", 0, NSEventModifierFlags::Shift)?;
             expect_eq("the text with Shift", key.text.as_str(), "ж")?;
@@ -127,6 +130,7 @@ mod keys {
             let key = read(&event)?;
             let plain = key.unshifted.ok_or("the A key types no character")?.to_string();
             expect_eq("the text of the key", key.text.as_str(), plain.as_str())?;
+            expect_eq("a keyboard key is no posted string", &key.posted_text, &false)?;
             expect_eq(
                 "the Option-free text of the key",
                 &key.without_option.as_deref(),
@@ -161,6 +165,8 @@ mod keys {
             32 => "u",
             45 => "n",
             49 => " ",
+            51 => "\u{7f}",
+            53 => "\u{1b}",
             _ => return Err(format!("no plain text for key code {code}")),
         };
         let event = if posted_by_us {
@@ -209,11 +215,47 @@ mod keys {
                 )?;
                 let second = press(next_key.0, next_key.1, none, posted_by_us)?;
                 expect_eq(&what, &dead.compose(&second), &Compose::Composed(composed.to_owned()))?;
+                expect_eq(
+                    &format!("{what}, a key code is no posted string"),
+                    &second.posted_text,
+                    &false,
+                )?;
                 let after = press("1", 18, none, posted_by_us)?;
                 expect_eq(&format!("{what}, the key after"), &dead.compose(&after), &Compose::Pass)?;
                 expect_eq(&format!("{what}, its text"), after.text.as_str(), "1")?;
             }
             Ok(())
+        };
+        run(false).and_then(|()| run(true)).err()
+    }
+
+    pub fn backspace_or_escape_cancels_a_dead_key_and_a_posted_string_ends_it() -> Option<String> {
+        let option = NSEventModifierFlags::Option;
+        let none = NSEventModifierFlags::empty();
+        let run = |posted_by_us: bool| -> Result<(), String> {
+            let path = if posted_by_us { "posted" } else { "keyboard" };
+            let mut dead = DeadKeys::default();
+            for (name, code) in [("backspace", 51), ("escape", 53)] {
+                dead.compose(&press("alt-e", 14, option, posted_by_us)?);
+                let cancel = press(name, code, none, posted_by_us)?;
+                expect_eq(
+                    &format!("{path}: Option-e then {name}"),
+                    &dead.compose(&cancel),
+                    &Compose::Cancelled,
+                )?;
+                expect_eq(&format!("{path}: {name} again"), &dead.compose(&cancel), &Compose::Pass)?;
+            }
+            dead.compose(&press("alt-e", 14, option, posted_by_us)?);
+            let keystroke = Keystroke::parse("a").map_err(|err| format!("a: {err}"))?;
+            let event = posted("ж", 0, none)?;
+            let string = KeyStroke::new(&keystroke, &Source::Native(read(&event)?), false);
+            expect_eq(
+                &format!("{path}: Option-e then a posted string"),
+                &dead.compose(&string),
+                &Compose::Dropped,
+            )?;
+            expect_eq(&format!("{path}: the posted string's text"), string.text.as_str(), "ж")?;
+            expect_eq(&format!("{path}: nothing pending"), &dead.is_pending(), &false)
         };
         run(false).and_then(|()| run(true)).err()
     }

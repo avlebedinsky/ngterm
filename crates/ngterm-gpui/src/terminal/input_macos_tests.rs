@@ -134,6 +134,8 @@ fn packed_state_and_right_hand_modifiers_do_not_alias_appkit_flags() {
             "{flags:#x}"
         );
     }
+    assert!(native(128).unwrap().posted_text, "a posted string's bit");
+    assert!(!native(0x1_007f).unwrap().posted_text);
 }
 
 #[test]

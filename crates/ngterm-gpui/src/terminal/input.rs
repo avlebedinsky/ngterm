@@ -38,6 +38,10 @@ use super::keycodes::XKB_CODES;
 
 /// What the platform knew about a key event, as far as the terminal cares (the patched platform's `NativeKey`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts the platform reports about one key event"
+)]
 pub struct NativeKey {
     /// The XKB keycode.
     pub keycode: u32,
@@ -60,6 +64,8 @@ pub struct NativeKey {
     pub command: Option<char>,
     pub sides: ngterm_term::ModSides,
     pub without_option: Option<String>,
+    /// The text is the string a process posted with the event, not what the layout types on its key (macOS).
+    pub posted_text: bool,
 }
 
 /// Where a key event came from.
@@ -97,6 +103,7 @@ pub fn current_source(keystroke: &Keystroke) -> Source {
             command: None,
             sides: ngterm_term::ModSides::empty(),
             without_option: None,
+            posted_text: false,
         }),
         Some(gpui_linux::NativeInput::Text) => Source::Text,
         _ => Source::Keystroke,
@@ -129,6 +136,7 @@ pub fn current_source(keystroke: &Keystroke) -> Source {
             command: None,
             sides: ngterm_term::ModSides::empty(),
             without_option: None,
+            posted_text: false,
         }),
         _ => Source::Keystroke,
     }
@@ -245,6 +253,7 @@ fn decode_macos_key(
             sides
         },
         without_option: Some(without_option.to_string_lossy().into_owned()),
+        posted_text: flags & 128 != 0,
     })
 }
 
@@ -264,8 +273,11 @@ pub enum Compose {
     Pending { accent: String, committed: String },
     /// The key ends the composition and types this text, the accent included.
     Composed(String),
-    /// A key that types no text, or holds Control or Command, ends the composition and drops its accent.
+    /// A key that types no text, holds Control or Command, or types a posted string ends the composition and drops
+    /// its accent; the key goes on.
     Dropped,
+    /// Backspace or Escape ends the composition and drops its accent; the key goes no further.
+    Cancelled,
 }
 
 impl DeadKeys {
@@ -310,13 +322,20 @@ impl DeadKeys {
         stroke: &KeyStroke,
         translate: impl FnOnce(u32, bool, bool, bool, u32) -> (String, u32),
     ) -> Compose {
-        if stroke.action == KeyAction::Release || (!self.is_pending() && !stroke.composing) {
+        if stroke.action == KeyAction::Release || (!self.is_pending() && (!stroke.composing || stroke.posted_text)) {
             return Compose::Pass;
         }
-        let types_text = !stroke.text.is_empty() && !stroke.text.chars().any(char::is_control);
-        if self.is_pending() && (stroke.mods.intersects(Mods::CTRL | Mods::SUPER) || !types_text) {
-            self.clear();
-            return Compose::Dropped;
+        if self.is_pending() {
+            let types_text = !stroke.text.is_empty() && !stroke.text.chars().any(char::is_control);
+            let chord = stroke.mods.intersects(Mods::CTRL | Mods::SUPER);
+            if !chord && matches!(stroke.key.name(), "backspace" | "escape") {
+                self.clear();
+                return Compose::Cancelled;
+            }
+            if chord || !types_text || stroke.posted_text {
+                self.clear();
+                return Compose::Dropped;
+            }
         }
         let option = stroke.mods.contains(Mods::ALT) && !stroke.option_as_alt;
         let (text, state) = translate(
@@ -390,6 +409,10 @@ pub fn xkb_keycode_of_scan_code(scan_code: u32) -> Option<u32> {
 
 /// One key event, owned (module docs).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts the platform reports about one key event"
+)]
 pub struct KeyStroke {
     pub action: KeyAction,
     pub key: PhysicalKey,
@@ -409,6 +432,8 @@ pub struct KeyStroke {
     /// What identifies the physical key between its press and its release: the keycode, or GPUI's key name hashed.
     pub identity: u32,
     pub option_as_alt: bool,
+    /// See [`NativeKey::posted_text`].
+    pub posted_text: bool,
 }
 
 impl KeyStroke {
@@ -558,6 +583,7 @@ fn from_native(keystroke: &Keystroke, native: &NativeKey) -> KeyStroke {
         sides: native.sides,
         without_option: native.without_option.clone(),
         option_as_alt: false,
+        posted_text: native.posted_text,
         keycode: native.keycode,
         ascii_layout: native.ascii_layout,
         identity: if native.keycode == 0 {
@@ -581,6 +607,7 @@ fn from_text(keystroke: &Keystroke) -> KeyStroke {
         sides: ngterm_term::ModSides::empty(),
         without_option: None,
         option_as_alt: false,
+        posted_text: false,
         keycode: 0,
         ascii_layout: true,
         identity: identity(&keystroke.key),
@@ -631,6 +658,7 @@ fn from_keystroke(keystroke: &Keystroke) -> KeyStroke {
         sides: ngterm_term::ModSides::empty(),
         without_option: None,
         option_as_alt: false,
+        posted_text: false,
         keycode: 0,
         ascii_layout: true,
         identity: identity(&keystroke.key),

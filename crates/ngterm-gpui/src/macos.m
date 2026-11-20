@@ -234,6 +234,7 @@ int ngterm_key_event(void *pointer, unsigned *mods, unsigned *plain,
         ![own isEqualToString:base]) {
       typed = own;
       unmodified = own;
+      *mods |= 128;
     }
   }
   if (![typed getCString:text maxLength:capacity encoding:NSUTF8StringEncoding])
