@@ -175,3 +175,17 @@ def test_session_lifecycle_events(ctl):
     ctl.wait_event(cursor, "session.selected", {"session": first, "payload": {"previous": sid}})
     assert_ok(ctl.request("session.close", sid))
     ctl.wait_event(cursor, "session.closed", {**where, "payload": {"name": name}})
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("tree", "events.read", "event:session.created")
+def test_local_rows_and_events_omit_the_remote_session_id(ctl):
+    cursor = ctl.events_baseline()
+    sid = assert_ok(ctl.request("session.new"))["id"]
+    try:
+        node = find_session(ctl.tree(), sid)
+        assert "remoteSessionID" not in node
+        event = ctl.wait_event(cursor, "session.created", {"session": sid})
+        assert "remoteSessionID" not in event["payload"]
+    finally:
+        assert_ok(ctl.request("session.close", sid))

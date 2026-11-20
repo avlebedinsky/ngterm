@@ -224,6 +224,7 @@ pub struct Session {
     pub last_selected_at: Option<SystemTime>,
     auto_follow: FollowMark,
     remote_host: Option<String>,
+    remote_session_id: Option<String>,
     /// Membership of the flagged working set, the sidebar's cross-workspace flagged view. Persisted.
     pub flagged: bool,
     /// The sidebar row's tint (`session.tint`). Persisted for a local session, never copied by a duplicate.
@@ -315,6 +316,8 @@ pub struct SessionSeed {
     pub split_pane_identity: Option<Uuid>,
     /// The host a session attached from another machine lives on; `None` for a local one.
     pub remote_host: Option<String>,
+    /// The origin session id, set before `remote.opened`.
+    pub remote_session_id: Option<String>,
     /// The parent of a companion; `None` for a top-level session.
     pub parent_id: Option<Uuid>,
     /// What the session shows, fixed at construction as the remote host is.
@@ -342,6 +345,7 @@ impl Session {
             last_selected_at: None,
             auto_follow: FollowMark::Fresh,
             remote_host: seed.remote_host,
+            remote_session_id: seed.remote_session_id,
             flagged: false,
             tint: None,
             companion: CompanionState {
@@ -428,6 +432,12 @@ impl Session {
     #[must_use]
     pub fn remote_host(&self) -> Option<&str> {
         self.remote_host.as_deref()
+    }
+
+    /// The origin session id, fixed before row creation emits `remote.opened`.
+    #[must_use]
+    pub fn remote_session_id(&self) -> Option<&str> {
+        self.remote_session_id.as_deref()
     }
 
     /// The app this remote row's origin runs, from its binding's endpoint; `None` for a local row or one not bound.

@@ -334,3 +334,64 @@ fn a_stranded_pane_overlay_dropped_at_the_commit_invalidates_the_tree() {
             .is_none()
     );
 }
+
+#[test]
+fn remote_row_edges_keep_the_origin_id_before_binding_and_after_undo() {
+    use crate::model::{NewSession, SessionContent};
+
+    for content in [SessionContent::Terminal, SessionContent::Page] {
+        let mut fixture = fixture(0);
+        let workspace = fixture.workspace;
+        let store = fixture.store_mut().unwrap();
+        let local = store.add_session(workspace, NewSession::at_cwd("/tmp")).unwrap();
+        let remote = store
+            .add_session(
+                workspace,
+                NewSession {
+                    name: Some("far".to_owned()),
+                    remote_host: Some("buildbox".to_owned()),
+                    remote_session_id: Some("r1".to_owned()),
+                    content,
+                    ..NewSession::at_cwd("/tmp")
+                },
+            )
+            .unwrap();
+        assert!(store.session(remote).unwrap().remote_presentation().is_none());
+        assert!(store.soft_close_session(remote));
+        assert!(store.undo_pending_close(None));
+        store.close_session(remote);
+        store.close_session(local);
+        let _ = fixture.core.commit();
+        let response = read(&mut fixture, from(0));
+        let events = events_of(&response)["items"].as_array().unwrap();
+        let edges: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event["kind"].as_str(), Some("remote.opened" | "remote.closed")))
+            .collect();
+        assert_eq!(
+            edges.iter().map(|e| e["kind"].as_str().unwrap()).collect::<Vec<_>>(),
+            ["remote.opened", "remote.closed", "remote.opened", "remote.closed"]
+        );
+        for edge in edges {
+            assert_eq!(edge["session"], wire(remote));
+            assert_eq!(edge["workspace"], wire(workspace));
+            assert_eq!(
+                edge["payload"],
+                json!({"name":"far", "host":"buildbox", "remoteSessionID":"r1"})
+            );
+            let before = events
+                .iter()
+                .find(|event| event["seq"].as_u64().unwrap() + 1 == edge["seq"].as_u64().unwrap())
+                .unwrap();
+            assert_eq!(before["session"], edge["session"]);
+            assert_eq!(
+                before["kind"],
+                if edge["kind"] == "remote.opened" {
+                    "session.created"
+                } else {
+                    "session.closed"
+                }
+            );
+        }
+    }
+}

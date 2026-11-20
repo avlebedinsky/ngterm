@@ -649,6 +649,18 @@ mod tests {
     }
 
     #[test]
+    fn remote_session_ids_round_trip_and_local_rows_omit_them() {
+        let mut node = ControlSessionNode::new("local".to_owned(), "shell".to_owned(), "/tmp".to_owned());
+        assert!(serde_json::to_value(&node).unwrap().get("remoteSessionID").is_none());
+        node.remote_host = Some("buildbox".to_owned());
+        node.remote_session_id = Some("r1".to_owned());
+        let wire = serde_json::to_value(&node).unwrap();
+        assert_eq!(wire["remoteSessionID"], "r1");
+        let decoded: ControlSessionNode = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.remote_session_id.as_deref(), Some("r1"));
+    }
+
+    #[test]
     fn a_bare_session_carries_only_its_required_fields_in_wire_order() {
         let node = ControlSessionNode::new("S".to_owned(), "zsh".to_owned(), "/h".to_owned());
         let value = serde_json::to_value(&node).unwrap();

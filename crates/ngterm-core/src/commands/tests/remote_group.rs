@@ -558,3 +558,71 @@ fn individual_terminal_companion_joins_only_one_matching_parent_in_its_window() 
         );
     }
 }
+
+#[test]
+fn every_attached_group_row_reports_its_origin_id_in_the_tree_and_events() {
+    use ngterm_proto::Command;
+    use ngterm_proto::command::{EventsCmd, SessionCmd};
+
+    let mut group = Group::new(vec![
+        tree(&[parent(Some(&["c1", "pg"])), terminal("c1", Some("P")), page()]),
+        page_attach(),
+    ]);
+    let anchor = group
+        .fixture
+        .send(Command::Events(EventsCmd::Read), None, Args::default());
+    let anchor = anchor.result.unwrap()["events"].clone();
+    assert!(group.attach().ok);
+    let parent = group.parent();
+    let ids: Vec<_> = std::iter::once(parent)
+        .chain(group.fixture.store().companions(parent).iter().map(|s| s.id()))
+        .collect();
+    let tree = group.fixture.send(Command::Tree, None, Args::default());
+    let tree = tree.result.unwrap()["tree"].clone();
+    let nodes: Vec<_> = tree["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|w| w["sessions"].as_array().unwrap())
+        .collect();
+    for (id, origin) in ids.iter().zip(["P", "c1", "pg"]) {
+        assert_eq!(
+            nodes.iter().find(|s| s["id"] == wire(*id)).unwrap()["remoteSessionID"],
+            origin
+        );
+    }
+    assert!(
+        nodes
+            .iter()
+            .filter(|s| s.get("remoteHost").is_none())
+            .all(|s| s.get("remoteSessionID").is_none())
+    );
+    assert!(
+        group
+            .fixture
+            .session(SessionCmd::Close, Some(&wire(ids[1])), Args::default())
+            .ok
+    );
+    let _ = group.fixture.core.commit();
+    let events = group.fixture.send(
+        Command::Events(EventsCmd::Read),
+        None,
+        args(|a| {
+            a.run = Some(anchor["run"].as_str().unwrap().to_owned());
+            a.after = Some(anchor["next"].to_string());
+            a.kinds = Some(vec!["remote.opened,remote.closed".to_owned()]);
+        }),
+    );
+    let events = events.result.unwrap()["events"]["items"].as_array().unwrap().clone();
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e["payload"]["remoteSessionID"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["P", "c1", "pg", "c1"]
+    );
+    assert_eq!(
+        events.iter().map(|e| e["kind"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["remote.opened", "remote.opened", "remote.opened", "remote.closed"]
+    );
+}

@@ -158,6 +158,7 @@ pub fn session_node(session: &Session, active: bool) -> ControlSessionNode {
         node.info_hide_after = Some(info.hide_after);
     }
     node.remote_host = session.remote_host().map(str::to_owned);
+    node.remote_session_id = session.remote_session_id().map(str::to_owned);
     node.presentation = session.remote_presentation().map(RemotePresentationState::node);
     node.unseen = (session.unseen_count > 0).then(|| i64::try_from(session.unseen_count).unwrap_or(i64::MAX));
     node.command_wait = session.launch.holds().then_some(true);

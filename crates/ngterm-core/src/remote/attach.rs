@@ -260,6 +260,7 @@ impl Core {
                     name: Some(remote.name.clone()),
                     wait: true,
                     remote_host: Some(host.to_owned()),
+                    remote_session_id: Some(remote.id.clone()),
                     at: placement.at,
                     select: placement.select,
                     parent: placement.parent,

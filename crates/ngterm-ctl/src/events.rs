@@ -427,8 +427,9 @@ fn format_human(event: &ControlEvent, zone: Zone) -> String {
         ),
         EventKind::RemoteOpened | EventKind::RemoteClosed => {
             format!(
-                "{time} {kind} {name} host={}",
-                payload.host.as_deref().unwrap_or_default()
+                "{time} {kind} {name} host={} remote-session-id={}",
+                payload.host.as_deref().unwrap_or_default(),
+                payload.remote_session_id.as_deref().unwrap_or("-")
             )
         }
     }
@@ -831,12 +832,12 @@ mod tests {
                 "00:00:00 status api blocked previous=active pane=left",
             ),
             (
-                json!({"kind": "remote.opened", "payload": {"name": "far", "host": "buildbox"}}),
-                "00:00:00 remote.opened far host=buildbox",
+                json!({"kind": "remote.opened", "payload": {"name": "far", "host": "buildbox", "remoteSessionID": "r1"}}),
+                "00:00:00 remote.opened far host=buildbox remote-session-id=r1",
             ),
             (
                 json!({"kind": "remote.closed", "payload": {"name": "far", "host": "buildbox"}}),
-                "00:00:00 remote.closed far host=buildbox",
+                "00:00:00 remote.closed far host=buildbox remote-session-id=-",
             ),
             (
                 json!({"kind": "session.selected", "payload": {"name": "api", "previous": "before"}}),

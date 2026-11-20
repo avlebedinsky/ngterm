@@ -111,6 +111,9 @@ pub struct EventPayload {
     pub from: Option<String>,
     #[serde(default, rename = "messageID")]
     pub message_id: Option<String>,
+    /// `remote.opened`/`remote.closed`: the origin session id.
+    #[serde(default, rename = "remoteSessionID")]
+    pub remote_session_id: Option<String>,
 }
 
 /// One immutable ring entry (upstream's `ControlEvent`). The identities are upper-case UUIDs, absent when the event
@@ -161,6 +164,20 @@ mod tests {
                 .unwrap()
                 .contains(r#""ts":1791864251.0450583"#)
         );
+    }
+
+    #[test]
+    fn remote_events_keep_the_origin_session_id() {
+        for kind in [EventKind::RemoteOpened, EventKind::RemoteClosed] {
+            let wire = json!({"seq": 9, "ts": 9.5, "kind": kind.wire_name(),
+                "payload": {"name": "far", "host": "buildbox", "remoteSessionID": "r1"}});
+            let event: ControlEvent = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(event.payload.remote_session_id.as_deref(), Some("r1"));
+            assert_eq!(serde_json::to_value(event).unwrap(), wire);
+        }
+        let old: EventPayload = serde_json::from_value(json!({"host": "buildbox"})).unwrap();
+        assert_eq!(old.remote_session_id, None);
+        assert_eq!(serde_json::to_value(old).unwrap(), json!({"host": "buildbox"}));
     }
 
     #[test]

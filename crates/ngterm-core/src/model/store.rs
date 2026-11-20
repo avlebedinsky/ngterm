@@ -135,6 +135,8 @@ pub struct NewSession {
     pub select: bool,
     /// The host of a session attached from another machine.
     pub remote_host: Option<String>,
+    /// The origin session id, set before the first row event.
+    pub remote_session_id: Option<String>,
     /// The creation tint (`session.new --tint`), set before the first save.
     pub tint: Option<SidebarTint>,
     /// The parent of a companion, which lands inside the parent's group; `None` for a top-level session, which lands
@@ -157,6 +159,7 @@ impl NewSession {
             at: None,
             select: true,
             remote_host: None,
+            remote_session_id: None,
             tint: None,
             parent: None,
             content: SessionContent::Terminal,
@@ -486,10 +489,11 @@ impl AppStore {
         self.schedule_tree_changed();
     }
 
-    /// The `remote.opened`/`remote.closed` payload of an attached row: its name and host; `None` for a local one.
+    /// The remote row event payload: its name, host and origin session id. A local row has none.
     fn remote_visibility(session: &Session) -> Option<EventPayload> {
         session.remote_host().map(|host| EventPayload {
             host: Some(host.to_owned()),
+            remote_session_id: session.remote_session_id().map(str::to_owned),
             ..Self::named(session)
         })
     }
@@ -965,6 +969,7 @@ impl AppStore {
             initial_cwd: sanitized(&spec.cwd),
             custom_name: spec.name.as_deref().map(sanitized).as_deref().and_then(trimmed_or_none),
             remote_host: spec.remote_host,
+            remote_session_id: spec.remote_session_id,
             parent_id: spec.parent,
             content: spec.content,
             ..SessionSeed::default()

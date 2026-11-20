@@ -36,7 +36,7 @@ use crate::Core;
 use crate::dispatch::Dispatched;
 use crate::error::ControlError;
 use crate::html::{self, HtmlOverlay, HtmlPageFlags, HtmlSource};
-use crate::model::{CompanionOptions, RemoteBinding, ReplicaPageRefusal, SessionContent, SidebarTint};
+use crate::model::{CompanionOptions, RemoteBinding, ReplicaPageRefusal, ReplicaPageSeed, SessionContent, SidebarTint};
 use crate::pane_env::uuid_string;
 use crate::resolve::Resolver;
 
@@ -649,8 +649,11 @@ impl Core {
         let row = store
             .add_replica_page_companion(
                 attach.parent,
-                overlay,
-                page.background_color.clone(),
+                ReplicaPageSeed {
+                    overlay,
+                    background_color: page.background_color.clone(),
+                    remote_session_id: Some(attach.origin_session.clone()),
+                },
                 attach.select,
                 &home,
             )

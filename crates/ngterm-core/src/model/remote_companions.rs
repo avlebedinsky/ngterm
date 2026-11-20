@@ -16,6 +16,13 @@ pub struct RemoteCompanionPlace {
     pub index: usize,
 }
 
+/// A remote page and its origin session id, fixed before row creation.
+pub struct ReplicaPageSeed {
+    pub overlay: HtmlOverlay,
+    pub background_color: Option<String>,
+    pub remote_session_id: Option<String>,
+}
+
 /// Why another machine's page companion was not shown here (upstream's `ReplicaPageRefusal` messages).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplicaPageRefusal {
@@ -42,7 +49,7 @@ impl AppStore {
         })
     }
 
-    /// Shows another machine's page companion `overlay` (its `replica_of` set) as a companion of `parent`, a row
+    /// Shows another machine's page companion (`page.overlay.replica_of` set) as a companion of `parent`, a row
     /// attached from that machine (upstream's `addReplicaPageCompanion`): the row carries the parent's host, the page is
     /// its own full-size slot, and the page stays the other machine's, so closing the row here ends nothing there. The
     /// caller registers the page's outcome.
@@ -53,8 +60,7 @@ impl AppStore {
     pub fn add_replica_page_companion(
         &mut self,
         parent: Uuid,
-        overlay: HtmlOverlay,
-        background_color: Option<String>,
+        page: ReplicaPageSeed,
         select: bool,
         home: &str,
     ) -> Result<Uuid, ReplicaPageRefusal> {
@@ -69,6 +75,7 @@ impl AppStore {
             at: Some(place.index),
             select,
             remote_host: host,
+            remote_session_id: page.remote_session_id,
             parent: Some(parent),
             content: SessionContent::Page,
             ..NewSession::at_cwd(home)
@@ -76,8 +83,11 @@ impl AppStore {
         let row = self
             .add_session(place.workspace, spec)
             .ok_or(ReplicaPageRefusal::ParentGone)?;
-        let overlay = HtmlOverlay { row: true, ..overlay };
-        if let Err(failure) = self.open_html_overlay(row, None, overlay, None, background_color) {
+        let overlay = HtmlOverlay {
+            row: true,
+            ..page.overlay
+        };
+        if let Err(failure) = self.open_html_overlay(row, None, overlay, None, page.background_color) {
             self.close_session(row);
             return Err(ReplicaPageRefusal::NotOpened(failure));
         }
@@ -90,14 +100,18 @@ mod tests {
     use super::*;
     use crate::html::{HtmlPageFlags, HtmlSource};
 
-    fn page() -> HtmlOverlay {
+    fn page() -> ReplicaPageSeed {
         let source = HtmlSource::Replica {
             path: "/srv/report.html".to_owned(),
             content: crate::html::ReplicaContent::Html,
         };
         let mut overlay = HtmlOverlay::new(source, HtmlPageFlags::default());
         overlay.replica_of = Some(Uuid::new_v4());
-        overlay
+        ReplicaPageSeed {
+            overlay,
+            background_color: None,
+            remote_session_id: None,
+        }
     }
 
     fn store_with(remote: bool) -> (AppStore, Uuid) {
@@ -116,7 +130,7 @@ mod tests {
     fn a_replica_page_companion_closes_once_with_its_page() {
         let (mut store, parent) = store_with(true);
         let row = store
-            .add_replica_page_companion(parent, page(), None, false, "/home/u")
+            .add_replica_page_companion(parent, page(), false, "/home/u")
             .unwrap();
         let found = store.session(row).unwrap();
         assert_eq!(found.parent_id(), Some(parent));
@@ -134,16 +148,16 @@ mod tests {
     fn only_a_top_level_remote_row_takes_another_machines_page_companion() {
         let (mut local, parent) = store_with(false);
         assert_eq!(
-            local.add_replica_page_companion(parent, page(), None, true, "/home/u"),
+            local.add_replica_page_companion(parent, page(), true, "/home/u"),
             Err(ReplicaPageRefusal::ParentGone)
         );
         let (mut store, parent) = store_with(true);
         let row = store
-            .add_replica_page_companion(parent, page(), None, true, "/home/u")
+            .add_replica_page_companion(parent, page(), true, "/home/u")
             .unwrap();
         assert_eq!(store.selected_session_id(), Some(row));
         assert_eq!(
-            store.add_replica_page_companion(row, page(), None, true, "/home/u"),
+            store.add_replica_page_companion(row, page(), true, "/home/u"),
             Err(ReplicaPageRefusal::ParentGone),
             "a companion has no companions of its own"
         );
