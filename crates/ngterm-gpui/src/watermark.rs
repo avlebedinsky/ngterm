@@ -28,6 +28,11 @@ use ngterm_core::watermark::{self, is_supported_image, is_valid_image_path, is_v
 
 use crate::terminal::Shared;
 
+mod text;
+pub(crate) use text::TextImage;
+#[cfg(test)]
+pub(crate) use text::tests::PausedWorker;
+
 /// The pixel size a text watermark is rasterized at; `background-image-fit` scales the image to the terminal.
 pub const TEXT_FONT_PX: f32 = 256.0;
 /// The widest or tallest text image: past it the text is drawn smaller (wgpu's default texture limit is 8192).

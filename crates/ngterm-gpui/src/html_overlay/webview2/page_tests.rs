@@ -657,7 +657,7 @@ fn a_load_is_reported_from_start_to_finish_with_the_page_it_shows(cx: &mut TestA
         },
         cx,
     );
-    assert_eq!(driven.model.pending(), 0, "the same state is not reported again");
+    assert_eq!(driven.load(), (HtmlLoadState::Loading, None));
     driven.report(Report::Source(NEXT.to_owned()), cx);
     driven.report(Report::Title("Next".to_owned()), cx);
     driven.report(
@@ -683,6 +683,42 @@ fn a_load_is_reported_from_start_to_finish_with_the_page_it_shows(cx: &mut TestA
     assert_eq!(shown.title.as_deref(), Some("Next"));
     assert!(shown.can_go_back && !shown.can_go_forward);
     assert_eq!(driven.page.browser_url().unwrap().as_str(), NEXT);
+}
+
+#[gpui_kit::test]
+fn a_fast_reload_reports_its_end_before_the_model_applies_its_start(cx: &mut TestAppContext) {
+    let mut driven = realized(&url_overlay());
+    driven.report(
+        Report::Completed {
+            id: 1,
+            success: true,
+            status: 0,
+            http: 200,
+        },
+        cx,
+    );
+    assert_eq!(driven.load().0, HtmlLoadState::Loaded);
+    driven.overlay = driven.model.overlay().clone();
+    cx.update(|cx| driven.show(cx));
+
+    driven.report(
+        Report::Navigation {
+            navigation: navigation(NEXT, true, false, false, 2),
+            allowed: true,
+        },
+        cx,
+    );
+    driven.report(Report::Committed, cx);
+    driven.report(
+        Report::Completed {
+            id: 2,
+            success: true,
+            status: 0,
+            http: 200,
+        },
+        cx,
+    );
+    assert_eq!(driven.load(), (HtmlLoadState::Loaded, None));
 }
 
 #[gpui_kit::test]

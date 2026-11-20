@@ -243,6 +243,7 @@ pub struct PaneTerminal {
     exit_claim: ExitClaim,
     /// The terminal's own config overlay (its background), loaded over the app's config.
     overlay: RefCell<Option<String>>,
+    text_image: RefCell<Option<Rc<watermark::TextImage>>>,
     /// The background a program set with OSC 11 while it shows, and the window opacity its overlay lifts the
     /// terminal's `background-opacity` to (upstream's `oscBackgroundColorHex` and `applyOSCBackground`): under window
     /// translucency the terminals render transparent, which would hide it.
@@ -1586,6 +1587,7 @@ fn mount_with(
         exit_held: Rc::new(Cell::new(false)),
         exit_claim: ExitClaim::default(),
         overlay: RefCell::new(None),
+        text_image: RefCell::new(None),
         osc_background: RefCell::new(None),
         _subscriptions: vec![events, focus],
     }
@@ -1612,6 +1614,14 @@ fn sync_watermarks(env: &DeckEnv, page: &Page, session: &Session, opacity: f64, 
             continue;
         };
         let desired = watermark::desired(session, role, foreground, state_dir, opacity);
+        if pane
+            .text_image
+            .borrow()
+            .as_ref()
+            .is_some_and(|image| !image.matches(&desired))
+        {
+            pane.text_image.borrow_mut().take();
+        }
         let Some(stale) = watermark::change(&pane.shared, &desired) else {
             let lifted = pane.osc_background.borrow().as_ref().map(|(_, lifted)| *lifted);
             if lifted.is_some_and(|lifted| (lifted - opacity).abs() > f64::EPSILON) {
@@ -1623,7 +1633,19 @@ fn sync_watermarks(env: &DeckEnv, page: &Page, session: &Session, opacity: f64, 
             }
             continue;
         };
-        let resolved = watermark::materialize(&desired, state_dir);
+        let resolved = if desired.text_file.is_some() {
+            let Some(image) = watermark::TextImage::request(&desired, env.poster.clone(), cx) else {
+                continue;
+            };
+            let resolved = image.resolve();
+            *pane.text_image.borrow_mut() = Some(image);
+            let std::task::Poll::Ready(resolved) = resolved else {
+                continue;
+            };
+            resolved
+        } else {
+            watermark::materialize(&desired, state_dir)
+        };
         let overlay = Some(watermark::overlay(&desired, resolved.as_deref())).filter(|overlay| !overlay.is_empty());
         let config = env.config_for(overlay.as_deref());
         *pane.overlay.borrow_mut() = overlay;

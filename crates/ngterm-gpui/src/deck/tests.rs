@@ -1166,8 +1166,16 @@ fn a_session_background_reaches_its_terminals_and_a_pane_override_wins(cx: &mut 
         color_hex: None,
         ..color("#000000")
     });
-    h.turn();
+    let image = |h: &mut Harness<'_>, token: &str| {
+        h.shared(session, token)
+            .config()
+            .background_image
+            .path
+            .as_ref()
+            .map(|path| path.path.clone())
+    };
     let file = ngterm_core::watermark::rendered_text_path(h.state_dir.path(), session, None);
+    h.until("the text image", |h| image(h, &left).as_deref() == Some(file.as_path()));
     assert!(
         file.is_file(),
         "the left pane's inherited text is drawn to {}",
@@ -1178,14 +1186,6 @@ fn a_session_background_reaches_its_terminals_and_a_pane_override_wins(cx: &mut 
         default,
         "an image leaves the background color alone"
     );
-    let image = |h: &mut Harness<'_>, token: &str| {
-        h.shared(session, token)
-            .config()
-            .background_image
-            .path
-            .as_ref()
-            .map(|path| path.path.clone())
-    };
     assert_eq!(
         image(&mut h, &left).as_deref(),
         Some(file.as_path()),
@@ -1212,6 +1212,50 @@ fn a_session_background_reaches_its_terminals_and_a_pane_override_wins(cx: &mut 
     assert_eq!(background(&mut h, &left), default);
     assert_eq!(background(&mut h, &right), default);
     assert!(!file.exists(), "the stale text image is removed");
+}
+
+#[gpui_kit::test]
+fn a_text_render_leaves_the_ui_free_and_a_clear_cancels_its_result(cx: &mut TestAppContext) {
+    use ngterm_core::model::{BackgroundWatermark, WatermarkKind};
+    let worker = watermark::PausedWorker::new();
+    let (library, window, ids) = three_sessions();
+    let mut h = harness(cx, core_of(library), window);
+    h.until("the panes to start", |h| {
+        h.realized(ids[0], StatusPane::Left) && h.realized(ids[1], StatusPane::Left)
+    });
+    let first = h.token(ids[0], StatusPane::Left);
+    let second = h.token(ids[1], StatusPane::Left);
+    let mark = BackgroundWatermark {
+        kind: WatermarkKind::Text,
+        text: Some("NOTES".into()),
+        image_path: None,
+        color_hex: None,
+        opacity: None,
+        fit: None,
+        position: None,
+        repeats: None,
+    };
+    h.store().session_mut(ids[0]).unwrap().background_watermark = Some(mark.clone());
+    h.turn();
+    let file = ngterm_core::watermark::rendered_text_path(h.state_dir.path(), ids[0], None);
+    assert!(!file.exists(), "a text render waits for its worker");
+    assert!(h.shared(ids[0], &first).config().background_image.path.is_none());
+
+    h.store().session_mut(ids[1]).unwrap().background_watermark = Some(BackgroundWatermark {
+        kind: WatermarkKind::Color,
+        color_hex: Some("#102030".into()),
+        ..mark
+    });
+    h.turn();
+    let color = h.shared(ids[1], &second).config().theme.background;
+    assert_eq!((color.r, color.g, color.b), (0x10, 0x20, 0x30));
+
+    h.store().session_mut(ids[0]).unwrap().background_watermark = None;
+    h.turn();
+    worker.complete_next();
+    h.turn();
+    assert!(!file.exists(), "a clear cancels the old text image");
+    assert!(h.shared(ids[0], &first).config().background_image.path.is_none());
 }
 
 /// Upstream's `applyOSCBackground` under window translucency: the terminals render no background of their own then,

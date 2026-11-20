@@ -603,14 +603,23 @@ impl Page {
     }
 
     fn report_load(&self, load: HtmlLoadState, error: Option<String>) {
-        {
-            let state = self.state.borrow();
-            if state.overlay.load_state == load && state.overlay.load_error == error {
-                return;
-            }
-        }
         let id = self.id;
         post(&self.poster, move |state: &mut AppState| {
+            let unchanged = state
+                .core
+                .html_overlay_slot(id)
+                .and_then(|slot| {
+                    state
+                        .core
+                        .library()
+                        .store(slot.window)?
+                        .html_overlay(slot.session, slot.pane)
+                        .ok()
+                })
+                .is_some_and(|page| page.load_state == load && page.load_error == error);
+            if unchanged {
+                return;
+            }
             if state.core.set_html_load_state(id, load, error) {
                 state.settle();
             }
@@ -1225,6 +1234,23 @@ mod tests {
         cx.update(|cx| page.event(&Event::Page { view, page: engine }, cx));
         model.drain();
         assert_eq!(model.overlay().current.as_ref().unwrap().title.as_deref(), Some("Next"));
+    }
+
+    #[gpui_kit::test]
+    fn a_fast_reload_reports_its_end_before_the_model_applies_its_start(cx: &mut TestAppContext) {
+        let (page, _, mut model) = model_page(&url_overlay());
+        cx.update(|cx| progress(&page, ngterm_wpe_client::LoadEvent::Finished, cx));
+        model.drain();
+        let overlay = model.overlay().clone();
+        cx.update(|cx| page.apply(&overlay, true, cx));
+
+        cx.update(|cx| {
+            progress(&page, ngterm_wpe_client::LoadEvent::Started, cx);
+            progress(&page, ngterm_wpe_client::LoadEvent::Committed, cx);
+            progress(&page, ngterm_wpe_client::LoadEvent::Finished, cx);
+        });
+        model.drain();
+        assert_eq!(model.overlay().load_state, HtmlLoadState::Loaded);
     }
 
     #[gpui_kit::test]
