@@ -17,8 +17,16 @@ ITEMS = (
     ("previous_session", ("Navigate", "Previous Session")),
     ("next_session", ("Navigate", "Next Session")),
 )
-# AppKit's key equivalent characters (NSCarriageReturnCharacter, the NSUpArrowFunctionKey family)
-KEYS = {"return": "\r", "tab": "\t", "space": " ", "delete": "\x7f", "up": "", "down": ""}
+# AppKit's key equivalent characters (NSCarriageReturnCharacter, the NSUpArrowFunctionKey family). Delete is
+# NSDeleteCharacter (0x7F) or SwiftUI's `.delete` (0x08); upstream's `namedKey(forKeyEquivalent:)` reads both.
+KEYS = {
+    "return": ("\r",),
+    "tab": ("\t",),
+    "space": (" ",),
+    "delete": ("\x7f", "\x08"),
+    "up": ("\uf700",),
+    "down": ("\uf701",),
+}
 # kAXMenuItemModifier*: Command is held unless the no-command bit is set
 SHIFT, OPTION, CONTROL, NO_COMMAND = 1, 2, 4, 8
 MODIFIERS = {"shift": SHIFT, "opt": OPTION, "ctrl": CONTROL}
@@ -30,7 +38,7 @@ def _chords(ctl):
 
 
 def _expected(chord):
-    """The AX character and modifier mask of a chord such as `cmd+shift+return`."""
+    """The AX characters that can show a chord such as `cmd+shift+return`, and its modifier mask."""
     *mods, key = chord.split("+")
     mask = 0 if "cmd" in mods else NO_COMMAND
     for mod in mods:
@@ -65,8 +73,10 @@ def test_menu_items_on_named_keys_show_their_chord(ctl, ui):
         want = _expected(chord)
 
         def shown(path=path, want=want, chord=chord):
-            got = _shown(ui, path)
-            assert got == want, f"{' ▸ '.join(path)} shows {got!r}, its chord {chord} is {want!r}"
+            char, mask = _shown(ui, path)
+            assert char in want[0] and mask == want[1], (
+                f"{' ▸ '.join(path)} shows {(char, mask)!r}, its chord {chord} is one of {want[0]!r} with {want[1]!r}"
+            )
             return True
 
         shown.__qualname__ = f"{' ▸ '.join(path)} shows {chord}"

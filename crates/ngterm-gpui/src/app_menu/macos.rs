@@ -69,7 +69,9 @@ fn item(item: &MenuItem, id: Uuid, actions: &mut Vec<(Uuid, MenuAction)>) -> Val
 }
 /// The `NSMenuItem` key equivalent of a chord (upstream's `toShortcut`): `AppKit`'s character for a named key
 /// (`NSCarriageReturnCharacter`, `NSTabCharacter`, `NSDeleteCharacter`, the `NSUpArrowFunctionKey` and
-/// `NSF1FunctionKey` families), else the key itself, uppercase when the chord holds Shift.
+/// `NSF1FunctionKey` families), else the key itself, uppercase when the chord holds Shift. Delete is
+/// `NSDeleteCharacter` (0x7F), the character the Delete key types, not `SwiftUI`'s `.delete` (0x08): `AppKit` shows
+/// both as ⌫, and upstream's `namedKey(forKeyEquivalent:)` reads both as "delete".
 fn key_equivalent(chord: &Chord) -> String {
     let named = match chord.key.as_str() {
         "return" => Some('\r'),
