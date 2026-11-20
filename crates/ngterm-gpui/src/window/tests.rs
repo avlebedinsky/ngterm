@@ -2205,8 +2205,8 @@ impl Shell<'_> {
 
 #[gpui_kit::test]
 fn the_field_shows_its_text_whole_at_the_default_and_the_narrowest_sidebar(cx: &mut TestAppContext) {
-    // the box's border and insets, the magnifier, the clear button's room and the gaps between them
-    const CHROME: f32 = 2. + 7. + 3. + 13. + 18. + 2. * 4.;
+    // the box's border and insets, the magnifier and its trailing space, the clear button's room and the gaps
+    const CHROME: f32 = 2. + 7. + 3. + 13. + 2. + 18. + 2. * 4.;
     // the room the input keeps after its caret before it scrolls the text left
     const CARET_ROOM: f32 = 10.;
     let mut s = shell(cx);

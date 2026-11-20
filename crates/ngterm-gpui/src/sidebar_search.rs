@@ -241,7 +241,12 @@ impl Render for SearchField {
             ))
             .text_size(px(TEXT_SIZE))
             .text_color(ink)
-            .child(crate::picker::glyph(IconName::Search, soft, px(13.)))
+            .child(
+                div()
+                    .flex_none()
+                    .pr(px(2.))
+                    .child(crate::picker::glyph(IconName::Search, soft, px(13.))),
+            )
             .child(
                 div().flex_1().min_w(px(0.)).child(
                     Input::new(&self.input)
