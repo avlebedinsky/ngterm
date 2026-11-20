@@ -19,8 +19,8 @@ MAX_DEPTH = 40
 # `QuickTerminalMetrics`' built-in size: a share of the visible frame, at most this size
 DEFAULT_SHARE = 0.9
 DEFAULT_MAX_SIZE = (1100.0, 700.0)
-# AppKit puts upstream's frame on whole points, so a computed edge is at most half a point off
-SLACK = 0.5
+# both builds round the panel's size and its origin to whole points: an edge is up to one point off the unrounded frame
+SLACK = 1.0
 
 
 def _holds_quick(ui, handle, depth=0):
