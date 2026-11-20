@@ -3,10 +3,10 @@
 //! The prefix comes from `NGTERM_GHOSTTY_VT_PREFIX` when set, else from `scripts/build-ghostty-vt.sh --print-prefix`,
 //! the one place that knows how it is keyed, run with bash (Git Bash on Windows, found explicitly, with the printed
 //! MSYS path converted by `cygpath -m`: `script.rs`). The script prepares it (the pinned, patched source tree with
-//! its Zig packages, the headers, Ghostty's resources and a stamp naming the pinned zig); this script runs `zig build
-//! -Demit-lib-vt` over that tree (`zig_build.rs`, ported from herdr's build script), installing into `OUT_DIR` and
-//! caching in the stamp's Zig cache, and never reaches the network. A missing prefix fails the build with a pointer to
-//! the script.
+//! its Zig packages, headers, resources and stamp). A complete install from `lib_store` supplies `OUT_DIR` on a hit.
+//! On a miss, this script runs `zig build -Demit-lib-vt` over that tree (`zig_build.rs`, from herdr's build script).
+//! It installs into `OUT_DIR` and uses the stamp's Zig cache. It never reaches the network.
+//! If the prefix is absent, the build fails with a pointer to the script.
 //!
 //! The archive needs no system library beyond the C runtime Rust links anyway: on Linux and macOS
 //! (`libghostty-vt-static.pc` lists no `Libs.private` at `LIBGHOSTTY_VT_REV`) and on Windows MSVC, where
@@ -17,7 +17,9 @@
 //! through cargo-ndk) the archive is built for cargo-ndk's API level, at least 24, against the NDK cargo-ndk links
 //! with: Ghostty's build writes Zig's libc file for that NDK's bionic sysroot, configured again in each build.
 
+mod lib_store;
 mod script;
+mod sdk;
 mod zig_build;
 
 use std::path::{Path, PathBuf};
@@ -41,13 +43,12 @@ fn build() -> Result<(), String> {
     for input in zig_build::RERUN_FILES {
         println!("cargo::rerun-if-changed={}", root.join(input).display());
     }
-    for name in zig_build::RERUN_ENV {
+    for name in zig_build::RERUN_ENV.iter().chain(sdk::ENV) {
         println!("cargo::rerun-if-env-changed={name}");
     }
     let prefix = script::prefix(&root)?;
     println!("cargo::rerun-if-changed={}", prefix.join(zig_build::STAMP).display());
     let stamp = zig_build::prepared(&prefix)?;
-    check_zig(&stamp)?;
     let read =
         |path: &Path| std::fs::read_to_string(path).map_err(|err| format!("cannot read {}: {err}", path.display()));
     let pin = zig_build::pin(
@@ -83,31 +84,25 @@ fn build() -> Result<(), String> {
     if let Some(path) = &libc {
         println!("cargo::rerun-if-changed={}", Path::new(path).display());
     }
-    let status = Command::new(&build.zig)
-        .args(&build.args)
-        .args(zig_build::libc_args(libc.as_deref()))
-        .current_dir(&build.source)
-        .envs(build.env.iter().map(|(name, value)| (name, value)))
-        // an install never goes below a staging root a packaging environment may have exported
-        .env_remove("DESTDIR")
-        // the workspace's pkg-config wrapper (`.cargo/config.toml`, a shell script for WPE WebKit) is not for Zig,
-        // which runs PKG_CONFIG for its system-library lookups: on Windows it cannot run a script at all
-        // (`error: InvalidExe`), and libghostty-vt links no system library through pkg-config anywhere
-        .env_remove("PKG_CONFIG")
-        .status()
-        .map_err(|err| format!("cannot run {}: {err}", build.zig.display()))?;
-    if !status.success() {
-        return Err(format!(
-            "zig build of libghostty-vt in {} failed ({status}); its output is above",
-            build.source.display()
-        ));
-    }
-    if !build.archive.is_file() {
-        return Err(format!(
-            "the libghostty-vt build did not produce {}",
-            build.archive.display()
-        ));
-    }
+    let sdk = sdk::fingerprint(&target, android_ndk.as_deref());
+    let store = match sdk {
+        Ok(sdk) => Some(lib_store::path(
+            &prefix,
+            &lib_store::key(&prefix, &build, libc.as_deref().map(Path::new), &sdk)?,
+        )?),
+        Err(err) => {
+            println!("cargo::warning=libghostty-vt store disabled: {err}");
+            None
+        }
+    };
+    lib_store::install(&build, store.as_deref(), || {
+        check_zig(&stamp)?;
+        zig_build::run(&build, libc.as_deref())?;
+        if let Some((platform, deployment)) = zig_build::ios_build_version(&target, &build.zig_target) {
+            check_ios_archive(&build.archive, platform, &deployment)?;
+        }
+        Ok(())
+    })?;
     if let Some((platform, deployment)) = zig_build::ios_build_version(&target, &build.zig_target) {
         check_ios_archive(&build.archive, platform, &deployment)?;
     }

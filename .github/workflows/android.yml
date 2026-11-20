@@ -88,13 +88,17 @@ jobs:
         with:
           shared-key: android
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # the libghostty-vt prefix, Zig's global cache and the library's builds for the two ABIs and the host; keyed like
-      # the prefix and by what the library's build passes zig, so a new build is saved
+      # Save the source prefix, Zig packages, and complete installs for both ABIs and the host. Exclude Zig object files.
       - uses: actions/cache@v6
         if: github.ref == 'refs/heads/main'
         with: &vendor-android
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-android-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          path: |
+            ~/.cache/ngterm/vendor
+            !~/.cache/ngterm/vendor/zig-cache-*/o/**
+            !~/.cache/ngterm/vendor/zig-cache-*/h/**
+            !~/.cache/ngterm/vendor/zig-cache-*/z/**
+            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+          key: vendor-ngterm-android-ubuntu-26.04-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: github.ref != 'refs/heads/main'
         with: *vendor-android

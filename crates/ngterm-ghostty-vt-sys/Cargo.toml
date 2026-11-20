@@ -17,5 +17,10 @@ non_camel_case_types = "allow"
 non_upper_case_globals = "allow"
 non_snake_case = "allow"
 
+[build-dependencies]
+sha2.workspace = true
+tempfile.workspace = true
+
 [dev-dependencies]
+sha2.workspace = true
 tempfile.workspace = true

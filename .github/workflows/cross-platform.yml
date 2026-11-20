@@ -101,14 +101,17 @@ jobs:
         with:
           shared-key: ${{ matrix.rust-cache }}
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.save-caches }}
-      # The libghostty-vt prefix, the pinned Zig it was prepared with and Zig's global cache with the library builds
-      # in it; keyed like the prefix (its pins and patches, native.sh holding its layout) and by what the library's
-      # build passes zig (zig_build.rs, the deployment targets in .cargo/config.toml), so a new build is saved.
+      # Save the source prefix, pinned Zig, packages, and complete library installs. Exclude Zig object files.
       - uses: actions/cache@v6
         if: github.ref == 'refs/heads/main' && matrix.save-caches
         with: &vendor-crates
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          path: |
+            ~/.cache/ngterm/vendor
+            !~/.cache/ngterm/vendor/zig-cache-*/o/**
+            !~/.cache/ngterm/vendor/zig-cache-*/h/**
+            !~/.cache/ngterm/vendor/zig-cache-*/z/**
+            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+          key: vendor-ngterm-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - uses: actions/cache/restore@v6
         if: github.ref != 'refs/heads/main' || !matrix.save-caches
         with: *vendor-crates
@@ -242,8 +245,13 @@ jobs:
       # the vendor root the crates job's Windows leg saves on the same image, read only
       - uses: actions/cache/restore@v6
         with:
-          path: ~/.cache/ngterm/vendor
-          key: vendor-ngterm-windows-2025-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          path: |
+            ~/.cache/ngterm/vendor
+            !~/.cache/ngterm/vendor/zig-cache-*/o/**
+            !~/.cache/ngterm/vendor/zig-cache-*/h/**
+            !~/.cache/ngterm/vendor/zig-cache-*/z/**
+            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+          key: vendor-ngterm-windows-2025-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
       - name: libghostty-vt prefix
         run: scripts/build-ghostty-vt.sh
       - name: terminal fonts

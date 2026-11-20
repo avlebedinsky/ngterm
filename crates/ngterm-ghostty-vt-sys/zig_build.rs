@@ -1,5 +1,5 @@
 //! The `zig build` of libghostty-vt for one cargo target, as functions of the build script's inputs: `build.rs` runs
-//! what they return, and `tests/zig_build.rs` checks them without running zig.
+//! what they return, and `tests/zig_build.rs` checks the plans and the store with a fake Zig.
 //!
 //! herdr: `crates/ghostty-vt/build.rs` at `HERDR_REV` (`build/pins.env`), licensed under the Apache License 2.0,
 //! modified. Kept: the target map, the arguments (`--prefix` under `OUT_DIR`, `-Demit-lib-vt`, the optimize mode,
@@ -12,6 +12,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The prefix's stamp, relative to the prefix: its inputs as `name=value` lines (`scripts/build-ghostty-vt.sh`).
 pub const STAMP: &str = "share/ngterm/ghostty-vt-STAMP";
@@ -55,7 +56,7 @@ pub const GLIBC_FLOOR: &str = "2.39";
 /// The repository files whose change reruns the build script, relative to the repository root: a pin or patch change
 /// moves the prefix (its key hashes them), so the rerun finds the new prefix, or fails naming the script when it is
 /// not prepared yet, and builds the new tree.
-pub const RERUN_FILES: [&str; 7] = [
+pub const RERUN_FILES: [&str; 10] = [
     "build/pins.env",
     "build/patches/ghostty-vt",
     "scripts/build-ghostty-vt.sh",
@@ -63,6 +64,9 @@ pub const RERUN_FILES: [&str; 7] = [
     "crates/ngterm-ghostty-vt-sys/build.rs",
     "crates/ngterm-ghostty-vt-sys/zig_build.rs",
     "crates/ngterm-ghostty-vt-sys/script.rs",
+    "crates/ngterm-ghostty-vt-sys/lib_store.rs",
+    "crates/ngterm-ghostty-vt-sys/sdk.rs",
+    "crates/ngterm-ghostty-vt-sys/windows_sdk.ps1",
 ];
 
 /// The environment whose change reruns the build script: the prefix override (`NGTERM_GHOSTTY_VT_PREFIX`,
@@ -495,4 +499,26 @@ pub fn plan(inputs: &Inputs<'_>) -> Result<Build, String> {
         .collect(),
         zig_target: target,
     })
+}
+
+/// Run Zig with the plan and the explicit libc description.
+pub fn run(build: &Build, libc: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    let status = Command::new(&build.zig)
+        .args(&build.args)
+        .args(libc_args(libc))
+        .current_dir(&build.source)
+        .envs(build.env.iter().map(|(name, value)| (name, value)))
+        // A packaging environment must not move the install or supply its pkg-config wrapper to Zig.
+        .env_remove("DESTDIR")
+        .env_remove("PKG_CONFIG")
+        .status()
+        .map_err(|err| format!("cannot run {}: {err}", build.zig.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "zig build of libghostty-vt in {} failed ({status}); its output is above",
+            build.source.display()
+        ))
+    }
 }

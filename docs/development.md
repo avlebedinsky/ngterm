@@ -517,15 +517,37 @@ libdisplay-info it needs as subprojects) into the vendored prefix; `run-linux.sh
 the weston on PATH has no `--fake-seat`, and the process tests take the first weston on PATH that has it (put the
 prefix's `bin/` first, as CI does).
 
-Each script also takes `--print-prefix` and `--verify`. No cargo build reaches the network: `ngterm-ghostty-vt-sys`'s
-build script runs `zig build -Demit-lib-vt` over the libghostty-vt prefix's tree for cargo's target (as herdr's does),
-with the pinned zig the prefix's stamp names, installing under its `OUT_DIR` and caching in Zig's global cache in the
-vendor root (`zig-cache-<version>`), and fails with "run scripts/build-ghostty-vt.sh" when the prefix is
-missing; `ngterm-gpui` fails with "run scripts/fetch-fonts.sh". Zig keys that cache by every input of the build: the
-first build for a target takes a few minutes, and a fresh `OUT_DIR` (another profile, feature set, target dir or
-worktree) with the same inputs takes the library from it in seconds. The cache keeps the builds of each pin.
+Each script also takes `--print-prefix` and `--verify`. No cargo build reaches the network.
+If the prefix is absent, `ngterm-ghostty-vt-sys` fails with "run scripts/build-ghostty-vt.sh".
+If the fonts are absent, `ngterm-gpui` fails with "run scripts/fetch-fonts.sh".
+`NGTERM_GHOSTTY_VT_PREFIX` names a prepared prefix and skips the script on each OS.
+
+The build script keeps complete Zig installs in `<vendor>/ghostty-vt-lib-<key>/`, beside the prepared prefix.
+The SHA-256 key covers the prefix name, full stamp, Zig target, and build arguments.
+It excludes the install path, object cache path, and job count from the arguments.
+It also covers the `ZIG_LIBC` contents and the host SDK identity:
+
+- Android: the selected NDK path and its `source.properties`, which records the NDK revision.
+- Apple: the SDK path, version, build version, and `SDKSettings.json` that `xcrun` selects.
+- Windows: the installed MSVC versions, default tool versions, and Windows SDK versions.
+
+The key also covers SDK selection variables, such as `DEVELOPER_DIR`, `SDKROOT`, `LIB`, and `INCLUDE`.
+If the script cannot identify a host SDK, it disables the store for that build.
+Android builds use `ANDROID_NDK_HOME` or cargo-ndk's sysroot to identify the NDK.
+A build that lets Ghostty select an unknown NDK uses Zig each time.
+A non-Apple host uses Zig's bundled headers for an Apple target, so no Apple host SDK enters that key.
+
+On a store hit, the script copies the complete install into `OUT_DIR/zig-out` and runs no Zig command.
+The log says `libghostty-vt store hit: ... (Zig skipped)`.
+On a miss, it checks the pinned Zig version and runs `zig build -Demit-lib-vt` over the prepared source tree.
+It copies the install into a temporary directory, writes the completion marker, then atomically renames the directory into the store.
+A partial store never supplies a library.
+The log says `libghostty-vt store miss: ...`, then `libghostty-vt store saved: ...` after a successful build.
+
+Zig's object cache remains in `<vendor>/zig-cache-<version>` for repeated builds inside one job and on a developer host.
+Zig 0.17 hashes file inodes, so its object cache misses after an Actions restore creates new inodes.
+The finished install store supplies the library across CI runs and across fresh Cargo output directories.
 libghostty-vt builds the same way on macOS and Windows ([macOS and Windows](#macos-and-windows)).
-`NGTERM_GHOSTTY_VT_PREFIX` names a prepared prefix and skips the script on any OS.
 The patches `scripts/build-ghostty-vt.sh` applies to the pinned source (`build/patches/ghostty-vt/`, in name order,
 with no fuzz) are recorded in [that directory's README](../build/patches/ghostty-vt/README.md): one exposes data the
 library stores as C API the app needs, the others change its logic for a fix or a parity behavior Rust cannot reach
@@ -1703,34 +1725,44 @@ already holds changes no file, so the path-filtered workflows don't start on it.
 
 The repository has 10 GB of Actions cache. Above that, GitHub removes the entries used least recently, and a job
 whose cargo cache is gone builds its dependencies again, 5 to 15 minutes more. All the caches one main push uses must
-fit at once, so one job saves each cache and only these save (sizes of November 2026):
+fit at once, so one job saves each cache. The table uses November 2026 measurements for Cargo and Gradle.
+The vendor sizes estimate the budget after the Zig object files leave the cache:
 
 | cache | saved by | read by | size |
 |---|---|---|---|
-| cargo `linux` | `linux.yml` `linux` | `cross-platform.yml`'s Ubuntu leg | 1.6 GB |
-| cargo `crates` | `cross-platform.yml` `crates`, macOS and Windows | | 1.4 and 1.6 GB |
+| cargo `linux` | `linux.yml` `linux` | `cross-platform.yml`'s Ubuntu leg | 1.7 GB |
+| cargo `crates` | `cross-platform.yml` `crates`, macOS and Windows | | 1.5 and 1.65 GB |
 | cargo `conformance-windows` | `cross-platform.yml` `windows build (release)` | `release.yml`'s Windows build | 0.7 GB |
 | cargo `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.7 GB |
 | cargo `ios` | `ios.yml` `core` | `core-tests`, `ios-release.yml`, `release.yml`'s iOS build | 0.6 GB |
-| vendor `ubuntu-26.04` | `linux.yml` `linux` | `headless-e2e`, `cross-platform.yml`'s Ubuntu leg | 0.25 GB |
-| vendor `arch` | `linux.yml` `wpe` | the other jobs in its container | 0.25 GB |
-| vendor `windows-2025` | `cross-platform.yml` `crates` | `windows build`, `release.yml`'s Windows build | 0.3 GB |
-| vendor `macos-26` | `cross-platform.yml` `crates` | | 0.25 GB |
-| vendor `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.4 GB |
-| vendor `xcode-27` | `ios.yml` `core` | the other `ios.yml` jobs, `ios-release.yml`, `release.yml` | 0.3 GB |
-| Gradle | `android.yml` `app` (setup-gradle) | `emulator`, `release.yml`'s Android build | 0.7 GB |
+| vendor `ubuntu-26.04` | `linux.yml` `linux` | `headless-e2e`, `cross-platform.yml`'s Ubuntu leg | about 0.17 GB |
+| vendor `arch` | `linux.yml` `wpe` | the other jobs in its container | about 0.17 GB |
+| vendor `windows-2025` | `cross-platform.yml` `crates` | `windows build`, `release.yml`'s Windows build | about 0.18 GB |
+| vendor `macos-26` | `cross-platform.yml` `crates` | | about 0.15 GB |
+| vendor `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | about 0.23 GB |
+| vendor `xcode-27` | `ios.yml` `core` | the other `ios.yml` jobs, `ios-release.yml`, `release.yml` | about 0.20 GB |
+| Gradle | `android.yml` `app` (setup-gradle) | `emulator`, `release.yml`'s Android build | 0.15 GB |
 | the upstream reference | `reference-macos.yml` run by hand on main | its PR runs | one upstream release |
 | the iOS core | `ios.yml` `core` | | 0.05 GB for each |
 
-That is about 9 GB. The saved cargo caches are those that save the most time on each workflow's longest path; the other
+The new budget is about 8.3 GB, including the finished libraries.
+The exclusions remove about 0.5 GB of Zig object files.
+The first main run supplies the measured vendor sizes.
+
+The saved cargo caches are those that save the most time on each workflow's longest path; the other
 jobs build their dependencies in each run (`conformance build (release)` then takes about as long as the `linux` job its
 shards also wait for). Each job that uses a cargo cache runs `scripts/ci-rust-toolchain.sh` before it. The script
 keeps only the toolchain that `rust-toolchain.toml` pins: rust-cache puts the rustc of each installed toolchain into
 its key. Without the script, a runner image with a newer stable gives a second key, a cache miss, and a second entry
-of the same size. A vendor cache also holds Zig's global cache with the libghostty-vt builds of the job that saved
-it ([Native dependencies](#native-dependencies)), so its key hashes `zig_build.rs` and `.cargo/config.toml` too: when
-what the build passes zig changes, a new entry is saved, and later runs do not build the library again for the targets
-that job built. A job that reads another job's vendor cache builds its other targets again in each run:
+of the same size.
+
+A vendor cache holds the prepared prefixes, pinned Zig, package archives (`zig-cache-*/p/`), and complete library installs.
+It excludes Zig's `o/`, `h/`, `z/`, and `tmp/` directories.
+Zig's object cache helps only inside one job and on a developer host.
+The library store supplies cross-run reuse ([Native dependencies](#native-dependencies)).
+The vendor key hashes the store code, SDK probe, build plan, and `.cargo/config.toml`.
+When these inputs change, the first main run saves a new vendor entry with the new library installs.
+A job that reads another job's vendor cache builds its other targets again in each run:
 `cross-platform.yml`'s Ubuntu leg cross-builds aarch64 Linux and x86_64 macOS from the x86_64 Linux entry of `linux`,
 1.5 to 2.5 minutes each. `release.yml`
 and `ios-release.yml` save no cache: a tag's caches serve only that tag. Before a job saves another cache, make sure

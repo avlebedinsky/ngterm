@@ -167,8 +167,13 @@ jobs:
         if: steps.built.outputs.cache-hit == 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: &vendor-path ~/.cache/ngterm/vendor
-          key: &vendor-key vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', '.cargo/config.toml') }}
+          path: &vendor-path |
+            ~/.cache/ngterm/vendor
+            !~/.cache/ngterm/vendor/zig-cache-*/o/**
+            !~/.cache/ngterm/vendor/zig-cache-*/h/**
+            !~/.cache/ngterm/vendor/zig-cache-*/z/**
+            !~/.cache/ngterm/vendor/zig-cache-*/tmp/**
+          key: &vendor-key vendor-ngterm-xcode-27-${{ runner.arch }}-${{ hashFiles('build/pins.env', 'build/patches/ghostty-vt/**', 'scripts/lib/native.sh', 'scripts/setup-ios.sh', 'crates/ngterm-ghostty-vt-sys/zig_build.rs', 'crates/ngterm-ghostty-vt-sys/build.rs', 'crates/ngterm-ghostty-vt-sys/lib_store.rs', 'crates/ngterm-ghostty-vt-sys/sdk.rs', 'crates/ngterm-ghostty-vt-sys/windows_sdk.ps1', '.cargo/config.toml') }}
           lookup-only: true
       - name: whether this job builds the core
         id: build
