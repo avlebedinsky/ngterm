@@ -107,18 +107,18 @@ class AppLogsPagesE2eTest {
 
         compose.onAllNodesWithText(text(R.string.nav_settings))[0].performClick()
         openLogs()
-        awaitNewestIsTheLogsPage("first")
+        awaitNewestIsTheLogsPage("first", opens = 1)
 
         // Back to Settings, then Logs again
         compose.onAllNodesWithContentDescription(text(R.string.action_back))[0].performClick()
         openLogs()
-        awaitNewestIsTheLogsPage("again")
+        awaitNewestIsTheLogsPage("again", opens = 2)
 
         // a rotation each way makes the activity again, and the page comes back
         device.setOrientationLeft()
-        awaitNewestIsTheLogsPage("landscape")
+        awaitNewestIsTheLogsPage("landscape", opens = 3)
         device.setOrientationNatural()
-        awaitNewestIsTheLogsPage("portrait")
+        awaitNewestIsTheLogsPage("portrait", opens = 4)
 
         // Copy takes the lines shown, the page's own line the newest of them
         compose.onNodeWithText(text(R.string.logs_copy)).performClick()
@@ -158,21 +158,32 @@ class AppLogsPagesE2eTest {
         awaitText(text(R.string.logs_never))
     }
 
-    // the newest line is the first one on the plate, under the day's date
-    private fun awaitNewestIsTheLogsPage(shot: String) {
+    // the newest line is the first one on the plate, under the day's date; the page keeps its model, so until the read
+    // of this open is done it shows the earlier open's line: count the page's lines to know which read shows
+    private fun awaitNewestIsTheLogsPage(
+        shot: String,
+        opens: Int,
+    ) {
         var newest: String? = null
+        var shown = 0
         try {
             compose.waitUntil(NEWEST_WAIT_MS) {
                 newest = newestShownLine()
-                newest?.endsWith(LOGS_LINE) == true
+                shown = logsLinesShown()
+                newest?.endsWith(LOGS_LINE) == true && shown == opens
             }
         } catch (e: ComposeTimeoutException) {
-            throw AssertionError("the newest line shown ($shot) is \"$newest\", not \"$LOGS_LINE\"", e)
+            throw AssertionError(
+                "the newest line shown ($shot) is \"$newest\" with $shown \"$LOGS_LINE\" lines, not $opens",
+                e,
+            )
         }
         screenshot(shot)
     }
 
     private fun newestShownLine(): String? = shownLog()?.lines()?.firstOrNull { it.isNotBlank() && !DAY.matches(it) }
+
+    private fun logsLinesShown(): Int = shownLog()?.lines()?.count { it.endsWith(LOGS_LINE) } ?: 0
 
     private fun foregroundLinesShown(): Int = shownLog()?.lines()?.count { FOREGROUND_LINE in it } ?: 0
 
