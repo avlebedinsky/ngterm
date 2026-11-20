@@ -2,6 +2,7 @@ package com.nickalie.ngterm.android.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Looper
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivityResultRegistryOwner
@@ -21,17 +22,20 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.core.app.ActivityOptionsCompat
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nickalie.ngterm.android.FAKE_FINGERPRINT
 import com.nickalie.ngterm.android.FakeDeviceAuth
 import com.nickalie.ngterm.android.FakeKeyExports
 import com.nickalie.ngterm.android.TestGraph
+import com.nickalie.ngterm.android.awaitStore
 import com.nickalie.ngterm.android.awaitText
 import com.nickalie.ngterm.android.fakeExport
 import com.nickalie.ngterm.android.platform.AuthResult
 import com.nickalie.ngterm.android.ui.theme.NgtermTheme
 import com.nickalie.ngterm.core.ffi.ExportProtection
+import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -76,12 +80,18 @@ class ExportKeyRouteTest {
     // whether Settings is the destination shown: the navigation bar's other destinations take it off the screen
     private var onSettings by mutableStateOf(true)
 
-    private fun show(): ExportKeyViewModel {
+    private fun show(settings: SettingsViewModel? = null): ExportKeyViewModel {
         val model = ExportKeyViewModel(test.graph.keys, exports)
         compose.setContent {
             CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
                 NgtermTheme {
-                    if (onSettings) SettingsRoute(test.graph, "settings-test", auth = auth, exports = model)
+                    if (onSettings) {
+                        if (settings == null) {
+                            SettingsRoute(test.graph, "settings-test", auth = auth, exports = model)
+                        } else {
+                            SettingsRoute(test.graph, "settings-test", model = settings, auth = auth, exports = model)
+                        }
+                    }
                 }
             }
         }
@@ -147,6 +157,31 @@ class ExportKeyRouteTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.awaitText("core settings-test")
         compose.onNodeWithText("Save to a file").assertDoesNotExist()
+    }
+
+    @Test
+    fun aKeyMadeWhileTheExportShowsLogsNoPageTheScreenDoesNotShow() {
+        val settings = SettingsViewModel(test.graph)
+        try {
+            show(settings)
+            tap("Export private key")
+            compose.awaitText(FAKE_FINGERPRINT)
+
+            // the new key's page opens under the export, which stays on the screen
+            compose.runOnIdle { settings.rotate() }
+            compose.awaitStore {
+                shadowOf(Looper.getMainLooper()).idle()
+                !settings.keyWork.value.rotating && settings.newKey.value == null
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("Save to a file").assertExists()
+            assertEquals(
+                listOf("I nav: settings page=home", "I nav: settings page=export"),
+                test.logs.lines.filter { "settings page=" in it },
+            )
+        } finally {
+            settings.viewModelScope.cancel()
+        }
     }
 
     @Test

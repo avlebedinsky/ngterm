@@ -64,8 +64,7 @@ fun SettingsRoute(
     auth: DeviceAuth = rememberDeviceAuth(),
     exports: ExportKeyViewModel = rememberExportKeyViewModel(graph),
 ) {
-    val pages = rememberSettingsPage(HOME)
-    var page by pages
+    var page by rememberSaveable { mutableStateOf(HOME) }
     val state by model.state.collectAsStateWithLifecycle()
     val work by model.keyWork.collectAsStateWithLifecycle()
     val export by exports.work.collectAsStateWithLifecycle()
@@ -78,7 +77,10 @@ fun SettingsRoute(
     val shown = page.takeIf { it.startsWith(KEY) }?.removePrefix(KEY)
     val item = state.keyItem(shown)
     val exported = state.keyItem(export.keyId)
-    PageEffects(pages, keyShown = item != null, exporting = exported != null, onBack = exports::close)
+    PageEffects(page, keyShown = item != null, exporting = exported != null) {
+        exports.close()
+        page = HOME
+    }
     when {
         exported != null -> {
             EndUnlockOnLeave(exports::close)
@@ -137,25 +139,22 @@ private fun OpenFreshKey(
     LaunchedEffect(fresh) { fresh?.let(open) }
 }
 
-// back from a page Settings opened ([onBack] first) returns to Settings; the page shown is logged here as it composes,
-// before the page itself composes (the Logs page then reads its own line), also when Settings opens or comes back
-// after a rotation or a restore, and for the export's page; a page set by a tap is logged as it is set
+// back from a page Settings opened ([onBack]) returns to Settings; the page shown is logged here as it composes,
+// before the page itself composes (the Logs page then reads its own line): when a tap sets it, when Settings opens
+// or comes back after a rotation or a restore, and for the export's page
 @Composable
 private fun PageEffects(
-    pages: SettingsPage,
+    page: String,
     keyShown: Boolean,
     exporting: Boolean,
     onBack: () -> Unit,
 ) {
-    var page by pages
-    BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting) {
-        onBack()
-        page = HOME
-    }
+    BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting, onBack = onBack)
     val shown = if (exporting) "export" else page.substringBefore(':')
-    // in the composition, not in an effect: an effect runs after the page reads the log, and an effect that a newer
-    // page replaced before it ran writes a stale page
-    pages.note(shown)
+    // only here, in the composition: an effect runs after the page reads the log, and an effect that a newer page
+    // replaced before it ran writes a stale page; a second writer (where the page is set) logs a page that the export
+    // hides, which this one then logs over
+    rememberSettingsPageLog().note(shown)
 }
 
 /**
