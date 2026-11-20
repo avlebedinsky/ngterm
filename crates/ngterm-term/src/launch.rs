@@ -42,11 +42,12 @@
 //! injects nothing), Flatpak's host spawning and `GHOSTTY_SURFACE_ID`; the config's `command` is the frontend's
 //! (what a pane without one runs).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ngterm_core::command_restore::{PaneInput, should_restore_in_shell};
+use ngterm_core::command_restore::{PaneInput, should_restore_in_program};
 use ngterm_core::ghostty_config::{
     GhosttyConfig, InputSource, ShellIntegration, ShellIntegrationFeatures, WorkingDirectory,
 };
@@ -54,7 +55,7 @@ use ngterm_core::live::shell_integration::{self, Inherited, LoginShell};
 use ngterm_core::live::support::LiveAttach;
 use ngterm_core::paths::{self, Env, ProcessEnv};
 use ngterm_core::restore::spawn_plan::LaunchSeed;
-use ngterm_core::shell_dialect::ShellDialect;
+use ngterm_core::shell_dialect::{ShellDialect, shell_program};
 use ngterm_host::command_line::{self, ShellCommand};
 use ngterm_session::launch::Runtime;
 
@@ -198,10 +199,14 @@ impl Host {
             .command
             .clone()
             .unwrap_or_else(|| profile.map_or_else(|| self.shell.clone(), |profile| profile.executable.clone()));
-        let typed = launch
-            .initial_input
-            .as_ref()
-            .and_then(|input| typed_input(input, &line));
+        let typed = launch.initial_input.as_ref().and_then(|input| {
+            // a profile's executable runs as it is, not as a shell value
+            let program = profile.map_or_else(
+                || shell_program(&line),
+                |profile| Some(Cow::Borrowed(profile.executable.as_str())),
+            );
+            typed_input(input, program.as_deref())
+        });
         let integration = self.integrate(launch, profile, &mut line, env, &mut vars);
         for (key, value) in &self.env {
             vars.set(key, value.clone());
@@ -393,12 +398,12 @@ fn program(line: &str, _shell: bool, _cwd: Option<&Path>, _env: &dyn Env) -> (Pa
     pane_command(&ShellCommand::posix(line))
 }
 
-/// `input` as typed into `shell`, with a pane profile before the host shell. Refuse a capture with `!` for csh/tcsh.
-/// The current host decides at pane start, so a config reload cannot leave a stale shell check.
-fn typed_input(input: &PaneInput, shell: &str) -> Option<String> {
-    let dialect = ShellDialect::of_shell(shell);
+/// `input` as typed into the shell `program`, a pane profile's before the host's. Refuse a capture with `!` for
+/// csh/tcsh. The current host decides at pane start, so a config reload cannot leave a stale shell check.
+fn typed_input(input: &PaneInput, program: Option<&str>) -> Option<String> {
+    let dialect = program.map_or(ShellDialect::Unknown, ShellDialect::of_program);
     let text = match input {
-        PaneInput::Replay(argv) if !should_restore_in_shell(argv, &[] as &[&str], Some(shell)) => None,
+        PaneInput::Replay(argv) if !should_restore_in_program(argv, &[] as &[&str], program) => None,
         _ => input.text(dialect),
     };
     if text.is_none()
@@ -1120,7 +1125,12 @@ mod tests {
     fn the_profile_selects_the_actual_receiver_before_the_current_host() {
         use ngterm_core::shell_profiles::ShellProfile;
 
-        for (profile, shell, replay) in [("/bin/tcsh", "/bin/bash", false), ("/bin/bash", "/bin/tcsh", true)] {
+        for (profile, shell, replay) in [
+            ("/bin/tcsh", "/bin/bash", false),
+            ("/bin/bash", "/bin/tcsh", true),
+            ("/opt/my shells/tcsh", "/bin/bash", false),
+            ("/opt/tcsh tools/bash", "/bin/tcsh", true),
+        ] {
             let receiver = Host {
                 shell: shell.into(),
                 ..host(None)

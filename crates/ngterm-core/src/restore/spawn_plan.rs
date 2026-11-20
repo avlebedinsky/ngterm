@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::command_restore::{PaneInput, RestoreInputs, restore_plan, should_restore_in_shell};
+use crate::command_restore::{PaneInput, RestoreInputs, restore_plan, should_restore_in_program};
 use crate::live::support::{Configuration, Creation, LiveAttach, attach_line, live_attach, settled};
 use crate::model::{PaneLaunch, Session, StatusPane};
 use crate::shell_dialect::ShellDialect;
@@ -109,7 +109,7 @@ impl LaunchSeedPolicy {
     fn restore_initial_input(&self, argv: Option<&[String]>, shell: Option<&str>) -> Option<PaneInput> {
         let argv = argv.filter(|_| self.restore_enabled)?;
         let denylist: Vec<&str> = self.denylist.iter().map(String::as_str).collect();
-        should_restore_in_shell(argv, &denylist, shell).then(|| PaneInput::Replay(argv.to_vec()))
+        should_restore_in_program(argv, &denylist, shell).then(|| PaneInput::Replay(argv.to_vec()))
     }
 }
 
@@ -263,7 +263,7 @@ fn live_creation_command(session: &Session, pane: StatusPane, configuration: &Co
         // no login shell: the attach runs no creation payload at all
         return launch.command.clone();
     };
-    let dialect = profile_dialect(configuration.direct_profile.as_deref(), ShellDialect::of_shell(shell));
+    let dialect = profile_dialect(configuration.direct_profile.as_deref(), ShellDialect::of_program(shell));
     creation_command(launch, dialect, configuration.direct_profile.as_deref()).unwrap_or_else(|Uncarried| {
         warn_uncarried(session, pane, dialect);
         None
@@ -346,7 +346,12 @@ mod tests {
 
     #[test]
     fn the_pane_profile_selects_the_receiver_and_a_pin_stays_explicit() {
-        for (profile, replay) in [("/bin/tcsh", false), ("/bin/zsh", true)] {
+        for (profile, replay) in [
+            ("/bin/tcsh", false),
+            ("/bin/zsh", true),
+            ("/opt/my shells/tcsh", false),
+            ("/opt/tcsh tools/zsh", true),
+        ] {
             let mut restored = session(Some("stale-command"), false, true);
             restored.shell_profile = Some(crate::shell_profiles::ShellProfile::new(
                 "test",
@@ -596,6 +601,18 @@ mod tests {
             live_creation_command(&copy, StatusPane::Left, &fish).as_deref(),
             Some(r"'/usr/bin/tool' 'it\'s' 'a b'")
         );
+        // Live runs its `SHELL` directly: spaces and brackets are part of the path, not words of a /bin/sh line
+        for (shell, line) in [
+            ("/opt/my shells/zsh", posix),
+            ("/opt/fish tools/zsh", posix),
+            ("/opt/tools (x64)/fish", r"'/usr/bin/tool' 'it\'s' 'a b'"),
+        ] {
+            assert_eq!(
+                live_creation_command(&copy, StatusPane::Left, &wrapped_in(shell)).as_deref(),
+                Some(line),
+                "{shell}"
+            );
+        }
         let pwsh = live_creation_command(&copy, StatusPane::Left, &wrapped_in("/usr/bin/pwsh"));
         assert!(
             pwsh.as_deref().is_some_and(|line| line.contains("& '/usr/bin/tool'")),

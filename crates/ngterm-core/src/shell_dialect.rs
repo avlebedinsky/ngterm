@@ -271,7 +271,9 @@ impl Lexer {
 type Characters<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
 /// The next word of `text` with its quotes removed, and the text after it; `None` at the end of the line, at a shell
-/// comment that only blank text follows, or at an `env -S` comment; [`Refused`] when another command could follow.
+/// comment that only blank text follows, or at an `env -S` comment; [`Refused`] when the lexer cannot read the word
+/// with certainty (an expansion that `lexer` refuses, an unterminated quote, a line continuation) or another command
+/// could follow.
 fn next_word(text: &str, lexer: Lexer) -> Result<Option<(String, &str)>, Refused> {
     let text =
         text.trim_start_matches(|character| lexer.ends_word(character) && (lexer == Lexer::Split || character != '\n'));
@@ -383,13 +385,14 @@ impl ShellDialect {
 
     /// The dialect of a pane's shell as its config names it: a program and its arguments (`pwsh -NoLogo`,
     /// `/usr/bin/fish -l`). Outside Windows, `/bin/sh` runs the value, so the program is its first word as `/bin/sh`
-    /// reads it (`'/opt/my tools/fish' -l`); [`Self::Unknown`] when an expansion could change that word, or when
-    /// `/bin/sh` could run another command after it (`;`, `|`, `&`, a newline, `$(…)`: `bash -c : ; tcsh`). A shell's
-    /// own `-c` command is taken as that shell's. Windows runs the value directly, so there the program is the value's
-    /// shortest run of leading words that names a known shell or `env`: a path with spaces is read whole
-    /// (`C:\Program Files\PowerShell\7\pwsh.exe`) and a shell's argument never stands for it
-    /// (`pwsh -File C:\scripts\bash`). A program `env` is the program it runs ([`env_program`]: `/usr/bin/env zsh`,
-    /// `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
+    /// reads it (`'/opt/my tools/fish' -l`), past the variable assignments before it (`X=1 fish`); [`Self::Unknown`]
+    /// when an expansion could change that word, or when `/bin/sh` could run another command after it (`;`, `|`, `&`,
+    /// a newline, `$(…)`: `bash -c : ; tcsh`). A shell's own `-c` command is taken as that shell's. A shell that runs
+    /// directly, not through `/bin/sh` (a profile's executable, Live's `SHELL`), is [`Self::of_program`]'s. Windows
+    /// runs the value directly, so there the program is the value's shortest run of leading words that names a known
+    /// shell or `env`: a path with spaces is read whole (`C:\Program Files\PowerShell\7\pwsh.exe`) and a shell's
+    /// argument never stands for it (`pwsh -File C:\scripts\bash`). A program `env` is the program it runs
+    /// ([`env_program`]: `/usr/bin/env zsh`, `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
     #[must_use]
     pub fn of_shell(shell: &str) -> Self {
         shell_program(shell).map_or(Self::Unknown, |program| Self::of_program(&program))
@@ -431,21 +434,37 @@ impl ShellDialect {
 }
 
 /// The shell program after the same path and `env` rules as [`ShellDialect::of_shell`].
-pub(crate) fn shell_program(shell: &str) -> Option<Cow<'_, str>> {
-    let shell = shell.trim_start_matches(BLANKS);
+#[must_use]
+pub fn shell_program(shell: &str) -> Option<Cow<'_, str>> {
+    let mut rest = shell.trim_start_matches(BLANKS);
     if cfg!(windows) {
-        return windows_shell_program(shell);
+        return windows_shell_program(rest);
     }
-    // A `~/` prefix expands to the home directory and keeps the program's name.
-    let shell = shell
-        .strip_prefix('~')
-        .filter(|path| path.starts_with('/'))
-        .unwrap_or(shell);
-    let (program, rest) = next_word(shell, Lexer::Before).ok()??;
+    let (program, rest) = loop {
+        let text = rest.trim_start_matches([' ', '\t']);
+        // A `~/` prefix expands to the home directory and keeps the program's name.
+        let text = text
+            .strip_prefix('~')
+            .filter(|path| path.starts_with('/'))
+            .unwrap_or(text);
+        let (word, after) = next_word(text, Lexer::Before).ok()??;
+        if !is_assignment(text) {
+            break (word, after);
+        }
+        rest = after;
+    };
     if is_env(&program) {
         return env_program(rest).map(Cow::Owned);
     }
     (ShellDialect::of_program(&program) != ShellDialect::Unknown && ends_plainly(rest)).then_some(Cow::Owned(program))
+}
+
+/// Whether `text` starts with a word that `/bin/sh` reads as a variable assignment (`NAME=value`) before the program.
+fn is_assignment(text: &str) -> bool {
+    let name = text
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(text.len());
+    name > 0 && !text.starts_with(|character: char| character.is_ascii_digit()) && text[name..].starts_with('=')
 }
 
 /// `/bin/sh` splits words only at these, not at other Unicode white space.

@@ -302,7 +302,7 @@ fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
         "/bin/tcsh; /bin/bash",
         "exec fish || /bin/bash",
         "tcsh;/usr/bin/env bash",
-        "fish&bash",
+        "fish&/bin/bash",
     ] {
         let program = shell_program(shell);
         if cfg!(windows) {
@@ -318,6 +318,45 @@ fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
     }
     for shell in ["bash -l 2>/dev/null", "fish -C 'source x; y' # z", "zsh -l\n"] {
         assert_ne!(ShellDialect::of_shell(shell), ShellDialect::Unknown, "{shell}");
+    }
+}
+
+/// `/bin/sh` runs the word after the variable assignments that come before it, and hands them to that program.
+#[cfg(not(windows))]
+#[test]
+fn the_shell_is_the_word_after_its_assignments() {
+    use crate::command_restore::should_restore_in_shell;
+
+    for (shell, program) in [
+        ("X=/bin/bash tcsh", "tcsh"),
+        ("FOO=/bin/bash fish", "fish"),
+        ("X=/usr/bin/fish bash -l", "bash"),
+        ("A=1 _b2='x y' ~/bin/zsh", "/bin/zsh"),
+        ("X=1 env fish", "fish"),
+    ] {
+        assert_eq!(shell_program(shell).as_deref(), Some(program), "{shell}");
+    }
+    assert_eq!(ShellDialect::of_shell("FOO=/bin/bash fish"), ShellDialect::Fish);
+    let history = ["grep".to_owned(), "!needle".to_owned()];
+    assert!(!should_restore_in_shell(
+        &history,
+        &[] as &[&str],
+        Some("X=/bin/bash tcsh")
+    ));
+    for shell in ["X=1", "X=$(tcsh) bash", "X=1;tcsh bash", "X=1 Y=2"] {
+        assert_eq!(shell_program(shell), None, "{shell}");
+    }
+}
+
+/// A shell run directly, not through `/bin/sh`, is its executable's path whole.
+#[test]
+fn a_shell_path_run_directly_keeps_its_spaces_and_brackets() {
+    for (path, dialect) in [
+        ("/opt/my shells/zsh", ShellDialect::Posix),
+        ("/opt/fish tools/zsh", ShellDialect::Posix),
+        ("/opt/tools (x64)/fish", ShellDialect::Fish),
+    ] {
+        assert_eq!(ShellDialect::of_program(path), dialect, "{path}");
     }
 }
 

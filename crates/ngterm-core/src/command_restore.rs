@@ -544,17 +544,25 @@ pub fn should_restore<S: AsRef<str>>(argv: &[String], denylist: &[S]) -> bool {
     !denylist.iter().any(|entry| same_program(name, entry.as_ref()))
 }
 
-/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes.
+/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes. `shell` is a
+/// shell value as [`crate::shell_dialect::ShellDialect::of_shell`] reads it.
 #[must_use]
 pub fn should_restore_in_shell<S: AsRef<str>>(argv: &[String], denylist: &[S], shell: Option<&str>) -> bool {
+    should_restore_in_program(
+        argv,
+        denylist,
+        shell.and_then(crate::shell_dialect::shell_program).as_deref(),
+    )
+}
+
+/// [`should_restore_in_shell`] for a shell that runs directly: `program` is its executable, not a `/bin/sh` line.
+#[must_use]
+pub fn should_restore_in_program<S: AsRef<str>>(argv: &[String], denylist: &[S], program: Option<&str>) -> bool {
     should_restore(argv, denylist)
-        && !(shell
-            .and_then(crate::shell_dialect::shell_program)
-            .is_some_and(|shell| {
-                let name = shell_name(basename(shell.strip_prefix('-').unwrap_or(&shell)));
-                name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
-            })
-            && argv.iter().any(|word| word.contains('!')))
+        && !(program.is_some_and(|program| {
+            let name = shell_name(basename(program.strip_prefix('-').unwrap_or(program)));
+            name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
+        }) && argv.iter().any(|word| word.contains('!')))
 }
 
 /// Whether `value` carries a character a line editor reads as an editing command (C0 or DEL), tab included.
