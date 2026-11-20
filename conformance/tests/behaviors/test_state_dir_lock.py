@@ -2,8 +2,12 @@
 app id and a control socket of its own so nothing forwards or refuses it earlier, exits 1 at launch before it reads or
 writes the directory, and the owner's lock goes with the owner's process."""
 
+import os
+import signal
+import sys
 import time
 from pathlib import Path
+from shlex import quote
 
 import pytest
 from agterm_conformance.match import assert_ok, session_ids, window_ids, workspace_ids
@@ -78,3 +82,49 @@ def test_the_lock_is_released_at_exit(launch, adapter):
     ctl = launch.relaunch(ctl)
     assert_ok(ctl.request("window.list"))
     assert lock.is_file()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="The child descriptor check uses /proc on Linux.")
+@pytest.mark.requires("live-sessions", "live-any-shell", any=True, reason="The child must survive the app exit.")
+@pytest.mark.covers("behavior:app.state-dir-owned", "behavior:restore.live-session-survives-relaunch")
+def test_the_locks_are_released_at_exit_with_a_live_background_child(launch, adapter):
+    ctl = launch(settings={"restoreMode": "live"}, pane_shell="/bin/bash")
+    owner = ctl.instance
+    sid = assert_ok(ctl.request("session.new", name="child-keeps-descriptor"))["id"]
+    ctl.wait_mounted(sid, "left")
+    pid_file = owner.root / "child.pid"
+    descriptor_file = owner.root / "child-descriptor"
+    locks = [owner.state_dir / f"{adapter.app_dir_name}.lock", Path(f"{owner.socket}.lock")]
+    inodes = [path.stat().st_ino for path in locks]
+    command = (
+        f"sleep 600 9>{quote(str(descriptor_file))} </dev/null >/dev/null 2>&1 & "
+        f"child=$!; disown \"$child\"; printf '%s\\n' \"$child\" >{quote(str(pid_file))}\n"
+    )
+    child = None
+    try:
+        assert_ok(ctl.request("session.type", sid, text=command))
+        wait_until(lambda: pid_file.is_file() and pid_file.read_text().strip())
+        child = int(pid_file.read_text())
+        descriptor = Path(f"/proc/{child}/fd/9")
+        wait_until(lambda: descriptor.exists() and descriptor.samefile(descriptor_file))
+
+        ctl = launch.relaunch(ctl)
+
+        assert ctl.instance.process.pid != owner.process.pid
+        assert ctl.instance.state_dir == owner.state_dir
+        assert ctl.instance.socket == owner.socket
+        assert_ok(ctl.request("window.list"))
+        assert descriptor.samefile(descriptor_file)
+        assert [path.stat().st_ino for path in locks] == inodes
+        second = adapter.launch_beside(ctl.instance, timeout=REFUSAL_TIMEOUT)
+        assert second.returncode == 1, second.stderr
+        assert "another instance is already running" in second.stderr
+    finally:
+        if child is None and pid_file.is_file() and pid_file.read_text().strip():
+            child = int(pid_file.read_text())
+        if child is not None:
+            try:
+                os.kill(child, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            wait_until(lambda: not Path(f"/proc/{child}/fd/9").exists())
