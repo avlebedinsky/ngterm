@@ -290,7 +290,7 @@ struct Static {
     text: RefCell<Option<String>>,
     /// Bumped by every document build and by [`TextPage::stop`], so a slow build cannot replace a newer one.
     load: Cell<u64>,
-    /// From a build until its renderer reports ready; the ready report delivers the latest search.
+    /// From a build until its renderer reports ready; the ready report delivers the latest search and the wrap.
     pending: Cell<bool>,
     /// A diff page's current change as it last reported it, from 1 and 0 for none: a rebuild from the same text reopens
     /// on it, and a fresh read starts over.
@@ -364,7 +364,8 @@ impl TextPage {
     }
 
     /// Builds the page's document from a fresh read, or from what it shows when `fresh` is false (a theme change); the
-    /// search rides the document, so a rebuild keeps the query and the current match (upstream's `loadDocument`).
+    /// search and the wrap ride the document, so a rebuild keeps the query, the current match and the wrap (upstream's
+    /// `loadDocument`).
     pub(super) fn load_document(&self, fresh: bool) {
         let Some(follower) = &self.follower else {
             return self.load_static(fresh);
@@ -520,7 +521,7 @@ impl TextPage {
         }
     }
 
-    /// The document built as `load` can take updates: the latest search goes to it, and a log page's state.
+    /// The document built as `load` can take updates: the latest search and the wrap go to it, and a log page's state.
     fn renderer_ready(&self, load: u64) {
         match &self.follower {
             Some(follower) => {
