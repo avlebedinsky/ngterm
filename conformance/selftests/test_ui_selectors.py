@@ -4,7 +4,7 @@ import runpy
 from pathlib import Path
 
 import pytest
-from agterm_conformance.drivers.base import Element
+from agterm_conformance.drivers.base import Element, _describe
 from agterm_conformance.wait import WaitTimeout
 
 palette_hint = runpy.run_path(str(Path(__file__).parents[1] / "tests/ui/conftest.py"))["palette_hint"]
@@ -18,6 +18,9 @@ class Ui:
 
     def all(self, ui_id):
         return [element for element in self.elements if element.ui_id == ui_id]
+
+    def tree_dump(self):
+        return "\n".join(_describe(element) for element in self.elements)
 
     def text(self, element):
         return element.value or element.name or ""
@@ -43,3 +46,26 @@ def test_palette_hint_does_not_hide_changed_dedicated_hint_text():
 def test_palette_hint_rejects_missing_hint_fields_and_result_rows(elements):
     with pytest.raises(WaitTimeout):
         palette_hint.__wrapped__(Ui(elements))()
+
+
+where_badge = runpy.run_path(str(Path(__file__).parents[1] / "tests/ui/test_keymap_commands.py"))["_where_badge"]
+
+
+@pytest.mark.parametrize("elements", [
+    [Element("palette-badge", "text", value="custom")],
+    [Element("palette-item-custom-example", "text", value=value) for value in ("where", "custom", "ctrl+alt+k")],
+])
+def test_custom_command_badge_accepts_dedicated_and_inherited_ids(elements):
+    assert where_badge(Ui(elements))
+
+
+@pytest.mark.parametrize("elements", [
+    [],
+    [Element("palette-badge", "text", value="changed")],
+    [Element("palette-item-custom-example", "text", value=value) for value in ("where", "changed", "ctrl+alt+k")],
+    [Element("palette-item-custom-example", "text", value=value) for value in ("elsewhere", "custom", "ctrl+alt+k")],
+    [Element("command-palette", "text-field", value="custom")],
+    [Element("palette-item-example", "text", value=value) for value in ("where", "custom", "ctrl+alt+k")],
+])
+def test_custom_command_badge_rejects_changed_text_and_other_rows(elements):
+    assert not where_badge(Ui(elements))

@@ -103,13 +103,17 @@ def test_the_origins_sshd_listens_on_loopback_alone_and_takes_the_viewers_key_al
     assert argv[:3] == ["-D", "-f", str(origin.machine.directory / "sshd_config")]
 
 
-def test_a_login_gets_the_origins_home_and_state_dir_and_its_cli_on_the_path_ssh_adds(origin, adapter):
+def test_a_login_gets_the_origins_home_and_state_dir_and_its_cli_before_other_installs(origin, adapter, tmp_path):
     instance = origin.instance
     assert origin.machine.home == instance.home
     link = instance.home / ".local" / "bin" / adapter.ctl_name
     assert link.resolve() == adapter.ctl_path.resolve()
-    # the viewer's lines put `$HOME/.local/bin` on PATH themselves (crates/ngterm-core/src/remote/ssh.rs)
-    command = """'/bin/sh' '-c' 'echo "$HOME"; PATH="$PATH:$HOME/.local/bin" && agtermctl version'"""
+    other = tmp_path / "other-install"
+    other.mkdir()
+    cli = other / adapter.ctl_name
+    cli.write_text("#!/bin/sh\necho wrong-cli\n")
+    cli.chmod(0o755)
+    command = f"""'/bin/sh' '-c' 'echo "$HOME"; PATH="$PATH:{other}:$HOME/.local/bin" && agtermctl version'"""
     result = subprocess.run(
         [origin.machine.directory / "force-command"],
         env={"SSH_ORIGINAL_COMMAND": command, "AGTERM_STATE_DIR": "/leaked", "LLVM_PROFILE_FILE": "/leaked"},
@@ -129,6 +133,7 @@ def test_a_coverage_runs_profile_destination_reaches_the_login(
         started.start()
         assert started.login_env() == {
             "AGTERM_STATE_DIR": str(started.instance.state_dir),
+            "PATH": f"{started.instance.home / '.local' / 'bin'}:{remote_origin.LOGIN_PATH}",
             "LLVM_PROFILE_FILE": str(tmp_path / "profiles" / "conformance-%4m.profraw"),
         }
     finally:

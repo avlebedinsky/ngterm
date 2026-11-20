@@ -300,7 +300,7 @@ def test_run_keeps_the_primary_context_while_the_scratch_has_its_own_directory(c
     sid = _new(ctl, cwd=os.fspath(primary))
     try:
         report = f"printf '\\033]7;file://localhost%s\\007' {_quoted(scratch)}; exec cat"
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command=report))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="sh -c " + shlex.quote(report)))
         ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == os.fspath(scratch))
         assert assert_ok(ctl.request("keymap.run", sid, name="where")) == {"id": sid}
         pwd, host, pane, cwd = _written(marker).split("|")

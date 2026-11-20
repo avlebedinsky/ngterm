@@ -99,6 +99,18 @@ def _show_scratch(ctl, ui, sid):
     ctl.wait_text(sid, re.compile(r"^scratch-has-keys$", re.MULTILINE), pane="scratch")
 
 
+def _where_badge(ui):
+    badges = [ui.text(badge) for badge in ui.all("palette-badge")]
+    if badges:
+        return badges == ["custom"]
+    # SwiftUI gives the badge its custom row's id on the reference.
+    rows = re.findall(r"^(palette-item-custom-[^(]+)\(text(?: |\))", ui.tree_dump(), re.MULTILINE)
+    return any(
+        [ui.text(item) for item in ui.all(row) if item.role == "text"] == ["where", "custom", "ctrl+alt+k"]
+        for row in set(rows)
+    )
+
+
 @pytest.mark.since("0.42.1")
 @pytest.mark.requires("posix-command-line", reason="the scratch shell is /bin/sh and reports its directory with printf")
 @pytest.mark.covers("keymap.reload", "session.scratch", "ui:scratch-toggle", "ui:command-palette", "ui:palette-badge")
@@ -126,8 +138,7 @@ def test_a_chord_in_the_scratch_gets_its_directory_and_the_palette_keeps_the_pri
 
     ui.menu("Navigate", "Command Palette")
     ui.set_text(ui.find("command-palette", role="text-field"), "where")
-    # the filter leaves the custom command, badged `custom`, as the row Return runs
-    wait_until(lambda: [ui.text(badge) for badge in ui.all("palette-badge")] == ["custom"], timeout=ui.timeout)
+    wait_until(lambda: _where_badge(ui), timeout=ui.timeout)
     ui.press("enter")
     ui.absent("command-palette")
     assert _ran_for(marker) == (os.fspath(primary), "", "left")

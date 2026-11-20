@@ -26,7 +26,13 @@ def test_attached_rows_and_events_report_the_origin_session_id(remote_origin, re
     cursor = remote_viewer.events_baseline()
     try:
         origin.wait_mounted(sid, "left")
-        local = assert_ok(remote_viewer.request("live.attach", sid, host=remote_origin.host))["id"]
+        origin.wait_response(
+            origin.vocabulary.command("live.tree"), None,
+            lambda response: any(row["id"] == sid for row in assert_ok(response)["remote"]["sessions"]),
+        )
+        local = assert_ok(
+            remote_viewer.request(remote_viewer.vocabulary.command("live.attach"), sid, host=remote_origin.host)
+        )["id"]
         node = find_session(remote_viewer.tree(), local)
         assert local != sid
         assert node["remoteSessionID"] == sid
@@ -54,12 +60,20 @@ def test_page_companion_rows_and_human_events_report_the_origin_id(remote_origin
     local = None
     try:
         origin.wait_mounted(parent, "left")
-        local = assert_ok(remote_viewer.request("live.attach", parent, host=remote_origin.host))["id"]
+        origin.wait_response(
+            origin.vocabulary.command("live.tree"), None,
+            lambda response: any(row["id"] == parent for row in assert_ok(response)["remote"]["sessions"]),
+        )
+        local = assert_ok(
+            remote_viewer.request(remote_viewer.vocabulary.command("live.attach"), parent, host=remote_origin.host)
+        )["id"]
         path = origin.instance.root / "origin-id.html"
         path.write_text("<!doctype html><title>Origin ID</title><p>Origin page companion</p>")
         page = assert_ok(origin.request("session.companion.page", parent, html=str(path)))["id"]
         cursor = remote_viewer.events_baseline()
-        attached = assert_ok(remote_viewer.request("live.attach", page, host=remote_origin.host))["id"]
+        attached = assert_ok(
+            remote_viewer.request(remote_viewer.vocabulary.command("live.attach"), page, host=remote_origin.host)
+        )["id"]
         node = find_session(remote_viewer.tree(), attached)
         assert node["remoteSessionID"] == page
         assert node["parent"] == local

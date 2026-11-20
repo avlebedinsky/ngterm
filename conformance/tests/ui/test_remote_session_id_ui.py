@@ -21,7 +21,13 @@ def test_close_undo_keeps_the_origin_id_in_the_row_and_events(remote_origin, rem
     local = None
     try:
         origin.wait_mounted(sid, "left")
-        local = assert_ok(remote_viewer.request("live.attach", sid, host=remote_origin.host))["id"]
+        origin.wait_response(
+            origin.vocabulary.command("live.tree"), None,
+            lambda response: any(row["id"] == sid for row in assert_ok(response)["remote"]["sessions"]),
+        )
+        local = assert_ok(
+            remote_viewer.request(remote_viewer.vocabulary.command("live.attach"), sid, host=remote_origin.host)
+        )["id"]
         cursor = remote_viewer.events_baseline()
         receipt = assert_ok(remote_viewer.request("session.close", local, undoable=True))
         assert receipt["undoable"] is True

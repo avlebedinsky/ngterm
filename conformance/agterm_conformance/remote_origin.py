@@ -3,10 +3,9 @@
 `sshd` of the harness's own (`loopback_ssh.LoopbackMachine`) and a TCP proxy whose connections a test cuts, as a lost
 network would (`SeveringProxy`).
 
-A login to the origin gets the origin's own HOME, whose `~/.local/bin` holds the build's CLI as its installer links it,
-and the origin's state dir, so the CLI there answers for that instance, as on a machine whose user runs it. A coverage
-run's profile destination reaches the login too: the far side's CLI and session server count. A CLI installed on sshd's
-bare PATH would answer before that one, so the origin does not start beside it.
+A login gets the origin's HOME and state directory. Its PATH starts with `~/.local/bin`, which holds the build's CLI.
+This order keeps the account's installed CLI out of the test. A CLI on sshd's bare PATH still blocks the origin.
+The login also gets the coverage profile destination.
 
 The viewer reaches it as `ORIGIN_HOST` through `RemoteOrigin.client`: a private ssh directory (config, known_hosts and
 identity, all generated here) and an `ssh` that reads nothing else, which a viewer takes first on its PATH
@@ -252,10 +251,12 @@ class RemoteOrigin:
         return self
 
     def login_env(self) -> dict[str, str]:
-        """What a login to the origin exports besides HOME and PATH: the origin's state dir and, in a coverage run, the
-        pooled profile destination its binaries write to."""
+        """The login gets the private CLI first, the origin's state directory, and the coverage profile destination."""
         assert self.instance is not None
-        env = {self.adapter.variable("STATE_DIR"): os.fspath(self.instance.state_dir)}
+        env = {
+            self.adapter.variable("STATE_DIR"): os.fspath(self.instance.state_dir),
+            "PATH": os.pathsep.join((os.fspath(self.instance.home / ".local" / "bin"), LOGIN_PATH)),
+        }
         if (profile := self.instance.env.get(llvm_profiles.PROFILE_VARIABLE)) is not None:
             env[llvm_profiles.PROFILE_VARIABLE] = profile
         return env

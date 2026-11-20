@@ -303,7 +303,7 @@ def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(app, ctl):
     scratch = ctl.instance.root / "scratch"
     primary.mkdir()
     scratch.mkdir()
-    sid = assert_ok(ctl.request("session.new", cwd=str(primary), command="exec cat"))["id"]
+    sid = assert_ok(ctl.request("session.new", cwd=str(primary), command="cat"))["id"]
     try:
         ctl.wait_mounted(sid, "left")
         before = find_session(ctl.tree(), sid)
@@ -312,7 +312,7 @@ def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(app, ctl):
             "printf '\\033]7;file://localhost%s\\007\\033]0;scratch title\\007' "
             f"{shlex.quote(str(scratch))}; exec cat"
         )
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command=command))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="sh -c " + shlex.quote(command)))
         node = find_session(
             ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(scratch)), sid
         )
@@ -321,11 +321,11 @@ def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(app, ctl):
         node = find_session(ctl.tree(), sid)
         assert node["scratch"] is False
         assert node["scratchCwd"] == str(scratch)
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exit"))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="sh -c exit"))
         ctl.wait_tree(
             lambda tree: not find_session(tree, sid)["scratch"] and "scratchCwd" not in find_session(tree, sid)
         )
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exec cat"))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="cat"))
         node = find_session(
             ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(primary)), sid
         )

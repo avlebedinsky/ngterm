@@ -8,6 +8,7 @@ import itertools
 import json
 import os
 import re
+import shlex
 import time
 import uuid
 from pathlib import Path
@@ -209,13 +210,13 @@ def test_tree_shows_the_scratch_cwd_only_when_it_differs(cli, ctl):
     directory.mkdir()
     sid = _new(ctl, name=_name("scratch-cwd"))
     try:
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exec cat"))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="cat"))
         node = find_session(ctl.wait_tree(lambda tree: "scratchCwd" in find_session(tree, sid)), sid)
         assert node["scratchCwd"] == node["cwd"], node
         assert "scratch cwd:" not in _tree_line(cli, sid)
         assert_ok(ctl.request("session.scratch", sid, mode="off"))
         report = f"printf '\\033]7;file://localhost%s\\007' '{directory}'; exec cat"
-        assert_ok(ctl.request("session.scratch", sid, mode="on", command=report))
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="sh -c " + shlex.quote(report)))
         ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(directory))
         line = _tree_line(cli, sid)
         assert f"  {node['cwd']}  scratch cwd: {directory}" in line, line
