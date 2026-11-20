@@ -6,6 +6,7 @@ source gives its focused pane's folder (`AppStore+NewSessionPlacement.swift` `ne
 `AppStoreOrganizationTests.directorySourceFollowsTheDestinationWorkspace`, `AppActionsTests` v0.42.0)."""
 
 import os
+import sys
 
 import pytest
 from agterm_conformance.match import assert_ok, find_session, session_ids
@@ -88,7 +89,8 @@ def test_new_session_takes_its_folder_from_the_rows_workspace(launch, ui_for, en
     assert_ok(ctl.request("session.split", paned, mode="on"))
     ctl.wait_mounted(paned, "left", "right")
     # The shell reports its folder by OSC 7, as a shell integration does.
-    report = "printf '\\033]7;file://localhost%s\\033\\\\' \"$PWD\""
+    report_path = '"/$(cygpath -m "$PWD")"' if sys.platform == "win32" else '"$PWD"'
+    report = f"printf '\\033]7;file://localhost%s\\033\\\\' {report_path}"
     assert_ok(ctl.request("session.type", paned, pane="right", text=f"cd '{right}' && {report}\n"))
     assert_ok(ctl.request("session.focus", paned, pane="right"))
 
