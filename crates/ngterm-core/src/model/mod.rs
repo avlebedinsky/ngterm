@@ -61,7 +61,7 @@ pub use flagged_order::FlaggedOrderPlacement;
 pub use focus::FocusMode;
 pub use html_overlay::{
     HtmlOverlayCommandFailure, HtmlOverlayOpenFailure, HtmlPageSlot, TextChangesFailure, TextLogFollowFailure,
-    TextSearchFailure,
+    TextSearchFailure, TextWrapFailure,
 };
 pub use navigation::{NewSessionPlacement, SessionNavigation, WorkspaceNavigation, stops_attention_navigation};
 pub use outbox::{EventPayload, ModelEvent, Outbox, RecentClosedChange, SaveRequest, WatermarkRemoval};

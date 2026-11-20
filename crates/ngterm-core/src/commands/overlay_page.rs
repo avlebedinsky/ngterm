@@ -948,6 +948,12 @@ impl Core {
         self.library_mut().set_text_changes_report(id, changes);
     }
 
+    /// Records text page `id`'s wrap as its own toggle left it (upstream's `setTextWrap` from `TextPageBridge.wrapped`):
+    /// whether it changed. Settle afterwards.
+    pub fn set_text_wrap_from_page(&mut self, id: Uuid, wrapped: bool) -> bool {
+        self.library_mut().set_text_wrap(id, wrapped)
+    }
+
     /// Opens a clicked web link as a browsing overlay without selecting its session; false uses the browser. The page
     /// is marked clicked, and replaces a hidden page an earlier click opened once the saved store is known usable.
     pub fn open_link_overlay(&mut self, url: Url, session: Uuid, size_percent: Option<i64>) -> bool {

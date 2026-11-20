@@ -29,7 +29,7 @@ pub struct Gpu {
 
 pub type Case = fn(&mut Fixture, &Gpu) -> Result<(), String>;
 
-pub const CASES: [(&str, Case); 32] = [
+pub const CASES: [(&str, Case); 33] = [
     (
         "an_image_document_renders_and_current_reload_rereads_the_source",
         image_document,
@@ -41,6 +41,10 @@ pub const CASES: [(&str, Case); 32] = [
     (
         "a_text_page_starts_with_the_models_search_and_steps_through_its_renderer",
         text_search,
+    ),
+    (
+        "a_text_page_wraps_from_the_model_and_a_theme_rebuild_keeps_it",
+        text_wrap,
     ),
     ("the_engine_renders_on_the_renderers_gpu_in_its_mode", mode),
     ("a_page_loads_and_its_frames_reach_the_screen", loads),
@@ -1812,5 +1816,78 @@ fn text_search(fixture: &mut Fixture, _: &Gpu) -> Result<(), String> {
     let newer = step(fixture, false, "beta", 2)?;
     check(newer == SearchCount { matches: 1, current: 1 }, || {
         format!("a newer revision's query applies before the step: {newer:?}")
+    })
+}
+
+/// Whether the band of a 320 x 240 point text page under its first row, right of its gutter and clear of a horizontal
+/// scrollbar, is one color in a frame `width` pixels wide: an unwrapped page of one long line draws nothing there, a
+/// wrapped one its later rows.
+fn band_is_blank(width: u32, pixels: &[u8]) -> bool {
+    let scale = width / 320;
+    let first = pixel(pixels, width, 110 * scale, 130 * scale);
+    (130 * scale..200 * scale).all(|y| {
+        (110 * scale..300 * scale)
+            .step_by(2)
+            .all(|x| close(pixel(pixels, width, x, y), first))
+    })
+}
+
+/// Upstream's `testAWrapFromTheModelRedrawsThePageAndARebuildKeepsIt`: a text page opens unwrapped, the model's wrap
+/// reaches its renderer (`text.js` in its world) and wraps its long line onto later rows, a theme rebuild keeps the
+/// wrap, and the model's unwrap brings the one row back.
+fn text_wrap(fixture: &mut Fixture, _: &Gpu) -> Result<(), String> {
+    let path = fixture.scratch.path().join("wide.txt");
+    std::fs::write(&path, format!("{}\n", "#".repeat(1500))).map_err(|error| error.to_string())?;
+    let mut overlay = HtmlOverlay::new(
+        HtmlSource::Text {
+            path: path.to_string_lossy().into_owned(),
+            line: None,
+        },
+        HtmlPageFlags::default(),
+    );
+    let element = fixture.mount(&overlay, 320.0, 240.0)?;
+    // the first row sits under the bar, about 75 to 95 points down
+    let ink = |width: u32, pixels: &[u8]| {
+        let scale = width / 320;
+        let background = pixel(pixels, width, 300 * scale, 200 * scale);
+        (70 * scale..100 * scale)
+            .any(|y| (110 * scale..300 * scale).any(|x| !close(pixel(pixels, width, x, y), background)))
+    };
+    fixture.until("the long line on its one row", &element, |_, width, pixels| {
+        ink(width, pixels) && band_is_blank(width, pixels)
+    })?;
+    // the renderer took the document: a step answers only from a ready page
+    fixture.wait("the renderer to be ready", || {
+        html_overlay::step_text_search(
+            overlay.id,
+            &SearchStep {
+                forward: true,
+                query: "#".to_owned(),
+                revision: 0,
+            },
+        )
+        .is_some()
+    })?;
+    overlay.text_wrap = true;
+    fixture.cx.update(|cx| html_overlay::apply(&overlay, true, cx));
+    fixture.until("the long line wrapped onto later rows", &element, |_, width, pixels| {
+        !band_is_blank(width, pixels)
+    })?;
+    let colors = html_overlay::TerminalColors {
+        background: Some("#102030".to_owned()),
+        foreground: Some("#f0f0f0".to_owned()),
+        palette: Vec::new(),
+    };
+    fixture.cx.update(|cx| html_overlay::refresh_themes(&colors, cx));
+    let themed = [0x10, 0x20, 0x30, 0xff];
+    fixture.until("the rebuilt page, still wrapped", &element, |_, width, pixels| {
+        // the gutter's foot, blank under the line's number
+        let scale = width / 320;
+        close(pixel(pixels, width, 20 * scale, 230 * scale), themed) && !band_is_blank(width, pixels)
+    })?;
+    overlay.text_wrap = false;
+    fixture.cx.update(|cx| html_overlay::apply(&overlay, true, cx));
+    fixture.until("the long line back on its one row", &element, |_, width, pixels| {
+        band_is_blank(width, pixels)
     })
 }

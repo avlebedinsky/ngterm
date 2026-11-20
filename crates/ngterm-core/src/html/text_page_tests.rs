@@ -415,3 +415,21 @@ fn a_diff_under_the_highlight_cap_carries_its_file_languages() {
     assert!(!html(text, Some("go"), None, "", &none).contains("data-files"));
     assert!(!html("-a\n+b\n", Some("diff"), None, "", &none).contains("data-files"));
 }
+
+/// Upstream's `aWrappedPageIsMarkedAndAnUnwrappedOneIsNot`.
+#[test]
+fn a_wrapped_page_is_marked_and_an_unwrapped_one_is_not() {
+    let log = TextLogState::new(TextLog { tail: 10, follow: true });
+    let wrapped = PageState {
+        wrap: true,
+        ..PageState::default()
+    };
+    let wrapped_log = PageState {
+        log: Some(&log),
+        ..wrapped
+    };
+
+    assert!(html("x", None, None, "", &wrapped).contains("hidden data-wrap>"));
+    assert!(html("x", None, None, "", &wrapped_log).contains("data-wrap"));
+    assert!(!html("x", None, None, "", &PageState::default()).contains("data-wrap"));
+}

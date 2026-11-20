@@ -63,6 +63,7 @@ mod surface;
 mod text_changes;
 mod text_pages;
 mod text_search;
+mod text_wrap;
 mod theme;
 mod tint;
 mod viewer;

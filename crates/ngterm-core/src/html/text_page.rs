@@ -104,7 +104,8 @@ pub struct SearchState {
 /// the page's search, which a rebuild keeps (upstream's `search`).
 /// `load` is the document's build generation, which the renderer echoes in its ready report, so a ready report from an
 /// older document cannot release a newer one's build (a fix over upstream, whose ready report names no document).
-/// `change` is the change a rebuilt diff page reopens on, from 1 (upstream's `change`).
+/// `change` is the change a rebuilt diff page reopens on, from 1 (upstream's `change`); `wrap` opens the page with its
+/// long lines wrapped (upstream's `wrap`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PageState<'a> {
     pub log: Option<&'a TextLogState>,
@@ -112,6 +113,7 @@ pub struct PageState<'a> {
     pub load: Option<u64>,
     pub search: Option<&'a SearchState>,
     pub change: Option<usize>,
+    pub wrap: bool,
 }
 
 /// Lowercased extensions and the bundled highlight.js language each maps to.
@@ -279,7 +281,7 @@ pub fn validate(data: Vec<u8>) -> Option<String> {
 /// ready report echoes. A search carries its revision, and with a query the escaped query and the match shown.
 /// A plain page of a diff is marked `data-diff` whatever its size, so change navigation outlives the highlighting
 /// limit, with `state.change` as the change it reopens on; under the limit it also carries [`diff_languages`] as JSON
-/// (`data-files`), so each file's lines are highlighted in that file's language.
+/// (`data-files`), so each file's lines are highlighted in that file's language. A wrapped page is marked `data-wrap`.
 #[must_use]
 pub fn html(text: &str, language: Option<&str>, line: Option<i64>, style: &str, state: &PageState) -> String {
     let mut attributes = String::new();
@@ -330,6 +332,9 @@ pub fn html(text: &str, language: Option<&str>, line: Option<i64>, style: &str, 
     }
     if let Some(anchor) = state.anchor.filter(|anchor| anchor.is_finite()) {
         let _ = write!(attributes, " data-anchor=\"{}\"", swift_double(anchor));
+    }
+    if state.wrap {
+        attributes.push_str(" data-wrap");
     }
     if let Some(load) = state.load {
         let _ = write!(attributes, " data-load=\"{load}\"");

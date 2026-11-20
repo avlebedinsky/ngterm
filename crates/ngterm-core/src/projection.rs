@@ -327,7 +327,7 @@ fn html_overlay_node(slot: Option<&str>, page: &HtmlOverlay) -> ControlHtmlOverl
 
 /// A text page's node (upstream's `ControlTextOverlayNode`): the language its name maps to, even past the highlight
 /// cap, and the line it was opened at, not the one in view; a log page adds its line limit and its live state, and a
-/// page with a query its search, and a diff page its changes once reported.
+/// page with a query its search, a diff page its changes once reported, and a wrapped page its wrap.
 fn text_node(path: &str, line: Option<i64>, page: &HtmlOverlay) -> ControlTextOverlayNode {
     let wire = |count: usize| i64::try_from(count).unwrap_or(i64::MAX);
     let log = page.log_state;
@@ -350,6 +350,7 @@ fn text_node(path: &str, line: Option<i64>, page: &HtmlOverlay) -> ControlTextOv
             count: wire(changes.count),
             current: wire(changes.current),
         }),
+        wrap: page.text_wrap.then_some(true),
     }
 }
 

@@ -95,8 +95,6 @@ def test_help_lists_the_v042_subcommands_and_options(cli):
                      id="workspace-reattach"),
         pytest.param(["window", "remote", "open", "buildbox"], "window.remote.open", id="window-remote-open"),
         pytest.param(["window", "remote", "dismiss"], "window.remote.dismiss", id="window-remote-dismiss"),
-        pytest.param(["session", "overlay", "wrap", "on", "--target", "SESSION"], "session.overlay.wrap",
-                     id="overlay-wrap"),
         pytest.param(["session", "convert", "--companion", "--target", "SESSION"], "session.companion.convert",
                      id="convert"),
         pytest.param(["session", "overlay", "open", "--url", "http://localhost:1/", "--page", "--target", "SESSION"],

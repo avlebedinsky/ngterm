@@ -1,20 +1,23 @@
 //! A text page's app side (upstream's `TextPageBridge.swift`), shared by the three web engines: it builds the page's
 //! documents, takes the renderer's reports through one page handler ([`HANDLER`], registered in the renderer's world
 //! only), makes the app's calls into that world ([`PageChannel::call`], which answer), hands the page the model's
-//! search, and owns a log page's [`LogFollower`].
+//! search and wrap, and owns a log page's [`LogFollower`].
 //!
 //! A static text page reads its file on the background executor and keeps the text, so a theme change redraws without
 //! reading it again; a shown page reopens where it was scrolled. A log page's documents are its follower's. Every
-//! document carries the model's search (query, revision and the match shown) and its build generation (`data-load`).
+//! document carries the model's search (query, revision and the match shown), its wrap (`data-wrap`) and its build
+//! generation (`data-load`).
 //!
 //! The renderer (`text.js`) posts `{ready}` once a new document can take updates, and its wrapper
 //! (`documents::text_script`) then `{ready, load}` naming the build the document came from, which releases the pushes
-//! held during that build: the search, and a log page's follow state. `text.js` posts `{following, top}` after a user
-//! scroll of a log page, `{search}` for a query typed into its field, `{report}` for the matches it counted and, on a
-//! diff page, `{changes}` with its count and current change, which a rebuild from the same text reopens on. The
+//! held during that build: the search, the wrap, and a log page's follow state. `text.js` posts `{following, top}`
+//! after a user scroll of a log page, `{search}` for a query typed into its field, `{report}` for the matches it
+//! counted, `{wrap}` when its own toggle changed the wrap, which goes to the model, and, on a diff page, `{changes}`
+//! with its count and current change, which a rebuild from the same text reopens on. The
 //! model's follow state reaches the follower on every apply ([`TextPage::apply`]), where a pause drops the reads in
 //! flight and a resume ticks at once; a moved search revision is pushed to the renderer, marked typed when the page's
-//! own field made it, so the echo never overwrites later typing.
+//! own field made it, so the echo never overwrites later typing; a model wrap that differs from the page's goes to the
+//! renderer, so a control call crossing the page's toggle leaves both on the model's value.
 //!
 //! "On screen" is the page's `on_screen` as the registry applies it: the page's deck slot is in the window's tree and
 //! not hidden (a hidden slot, a session in another tab or a pending close, a page moved out are all off screen). The
@@ -79,6 +82,8 @@ pub(super) enum Message {
     },
     /// A diff page's count of changes and the one it is on.
     Changes(TextChanges),
+    /// The page's own toggle wrapped its long lines or unwrapped them.
+    Wrap(bool),
 }
 
 impl Message {
@@ -98,6 +103,9 @@ impl Message {
         }
         if let Some(changes) = body.get("changes") {
             return changes_of(changes).map(Self::Changes);
+        }
+        if let Some(wrap) = body.get("wrap").and_then(Value::as_bool) {
+            return Some(Self::Wrap(wrap));
         }
         let following = body.get("following")?.as_bool()?;
         Some(Self::Following {
@@ -140,6 +148,11 @@ fn update_call(update: &Update) -> String {
 /// The renderer's follow call (upstream's `agtermTextSetFollowing`).
 fn following_call(following: bool) -> String {
     format!("ngtermTextSetFollowing({following})")
+}
+
+/// The renderer's wrap call (upstream's `agtermTextSetWrap`).
+fn wrap_call(wrap: bool) -> String {
+    format!("ngtermTextSetWrap({wrap})")
 }
 
 /// The renderer's search call (upstream's `agtermTextSearchSet`): the model's query at `revision`, `typed` when the
@@ -296,6 +309,11 @@ pub(super) struct TextPage {
     page: Static,
     /// The model's search as last applied.
     search: RefCell<SearchState>,
+    /// The wrap the page shows: last applied from the model, built with, or set by the page's own toggle.
+    wrap: Cell<bool>,
+    /// The page's own toggles posted to the model and not yet in it: until they are, an apply carries the model's
+    /// older wrap, which must not undo them (upstream's model takes them in place).
+    wrap_posts: Cell<u32>,
     /// The revisions the page's own field produced, so their pushes reach it as echoes and never overwrite its typing.
     typed: RefCell<BTreeSet<u64>>,
     /// The ticks while they run; dropping it ends them.
@@ -328,6 +346,8 @@ impl TextPage {
             follower,
             page: Static::default(),
             search: RefCell::new(search_state(overlay)),
+            wrap: Cell::new(overlay.text_wrap),
+            wrap_posts: Cell::new(0),
             typed: RefCell::new(BTreeSet::new()),
             ticks: RefCell::new(None),
             posted_following: Cell::new(None),
@@ -352,6 +372,7 @@ impl TextPage {
         let read = {
             let mut follower = follower.borrow_mut();
             follower.set_search(self.search.borrow().clone());
+            follower.set_wrap(self.wrap.get());
             follower.load_document(fresh, &self.sink())
         };
         if let Some(read) = read {
@@ -425,6 +446,7 @@ impl TextPage {
             load: Some(load),
             search: Some(&search),
             change: Some(self.page.change.get()),
+            wrap: self.wrap.get(),
             ..PageState::default()
         };
         let style = super::documents::text_style();
@@ -445,9 +467,15 @@ impl TextPage {
     }
 
     /// Takes the model's latest value and whether the page is on screen (upstream's `apply` and `onScreen`): a log
-    /// page's follow state, and a search whose revision moved.
+    /// page's follow state, the wrap, and a search whose revision moved.
     pub(super) fn apply(&self, overlay: &HtmlOverlay, on_screen: bool) {
         self.apply_following(overlay, on_screen);
+        if self.wrap_posts.get() == 0 && overlay.text_wrap != self.wrap.get() {
+            self.wrap.set(overlay.text_wrap);
+            if !self.document_pending() {
+                self.run(wrap_call(overlay.text_wrap));
+            }
+        }
         let next = search_state(overlay);
         let moved = next.revision != self.search.borrow().revision;
         self.search.replace(next);
@@ -486,6 +514,7 @@ impl TextPage {
                 });
             }
             Some(Message::Changes(changes)) => self.changes(changes),
+            Some(Message::Wrap(wrap)) => self.wrapped(wrap),
             // `text.js`'s own ready report names no build: the wrapper's next one does
             Some(Message::Ready { load: None }) | None => {}
         }
@@ -503,6 +532,7 @@ impl TextPage {
                 };
                 if released {
                     self.push_search();
+                    self.run(wrap_call(self.wrap.get()));
                 }
                 self.update_ticks();
             }
@@ -510,6 +540,7 @@ impl TextPage {
                 if self.page.pending.get() && load == self.page.load.get() {
                     self.page.pending.set(false);
                     self.push_search();
+                    self.run(wrap_call(self.wrap.get()));
                 }
             }
         }
@@ -540,6 +571,23 @@ impl TextPage {
                 page.typed.borrow_mut().insert(revision);
             }
             state.settle();
+        });
+    }
+
+    /// The page's own toggle: the page already shows `wrap`, so the bridge takes it at once and the model after it
+    /// (upstream's `wrapped`); a later model value that differs still reaches the page.
+    fn wrapped(&self, wrap: bool) {
+        self.wrap.set(wrap);
+        self.wrap_posts.set(self.wrap_posts.get() + 1);
+        let id = self.id;
+        post(&self.poster, move |state: &mut AppState| {
+            let changed = state.core.set_text_wrap_from_page(id, wrap);
+            if let Some(page) = bridge(id) {
+                page.wrap_posts.set(page.wrap_posts.get().saturating_sub(1));
+            }
+            if changed {
+                state.settle();
+            }
         });
     }
 
@@ -762,7 +810,7 @@ mod tests {
     use super::*;
 
     /// Upstream's `PageHandler`: a ready report (the build it names optional), a scroll report (its offset optional), a
-    /// typed query, a count, nothing else.
+    /// typed query, a count, a diff page's changes, the page's own wrap, nothing else.
     #[test]
     fn the_renderer_reports_parse() {
         assert_eq!(Message::parse(r#"{"ready":true}"#), Some(Message::Ready { load: None }));
@@ -797,7 +845,10 @@ mod tests {
             Message::parse(r#"{"changes":{"count":2,"current":1}}"#),
             Some(Message::Changes(TextChanges { count: 2, current: 1 }))
         );
+        assert_eq!(Message::parse(r#"{"wrap":true}"#), Some(Message::Wrap(true)));
+        assert_eq!(Message::parse(r#"{"wrap":false}"#), Some(Message::Wrap(false)));
         for other in [
+            r#"{"wrap":1}"#,
             r#"{"ready":false}"#,
             r#"{"search":1}"#,
             r#"{"changes":{"count":2}}"#,
@@ -849,6 +900,7 @@ mod tests {
         };
         assert_eq!(step_call(&step), r#"ngtermTextSearchStep(false,"b",2)"#);
         assert_eq!(change_step_call(true), "ngtermTextChangeStep(true)");
+        assert_eq!(wrap_call(true), "ngtermTextSetWrap(true)");
     }
 
     /// A step answers the renderer's `{matches, current}`; anything else is no count.
@@ -971,7 +1023,10 @@ mod tests {
             "another build's report releases nothing"
         );
         page.message(&ready(&built));
-        assert_eq!(channel.take_calls(), [r#"ngtermTextSearchSet("tw",2,false)"#]);
+        assert_eq!(
+            channel.take_calls(),
+            [r#"ngtermTextSearchSet("tw",2,false)"#, "ngtermTextSetWrap(false)"]
+        );
         page.apply(&searched(&overlay, "tw", 2), true);
         assert!(
             channel.take_calls().is_empty(),
@@ -985,6 +1040,76 @@ mod tests {
         assert_eq!(channel.take_calls(), [r#"ngtermTextSearchSet("x",4,false)"#]);
         page.stop();
         assert!(bridge(overlay.id).is_none(), "a stopped page leaves the bridges");
+    }
+
+    /// `overlay` with the model's wrap at `wrap`.
+    fn wrapped(overlay: &HtmlOverlay, wrap: bool) -> HtmlOverlay {
+        let mut overlay = overlay.clone();
+        overlay.text_wrap = wrap;
+        overlay
+    }
+
+    /// Upstream's `TextPageBridge.apply` and `loadDocument` with `wrap`: a page opens with the model's wrap, which its
+    /// renderer gets once ready; a model change waits for a build in flight, which carries it, and else goes to the
+    /// renderer at once; a rebuild keeps the wrap.
+    #[test]
+    fn a_static_page_builds_with_the_models_wrap_and_pushes_each_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\n").unwrap();
+        let (overlay, _, _) = static_page(&path, "", 0);
+        let overlay = wrapped(&overlay, true);
+        let channel = Rc::new(Channel::default());
+        let engine: Rc<dyn PageChannel> = channel.clone();
+        let page = TextPage::new(&overlay, Rc::downgrade(&engine), &crate::state::detached_poster()).unwrap();
+        page.load_document(true);
+        let built = channel.last_document();
+        assert!(built.contains(" data-line=\"2\" data-wrap data-load=\"1\">"), "{built}");
+
+        page.apply(&wrapped(&overlay, false), true);
+        assert!(
+            channel.take_calls().is_empty(),
+            "nothing goes into a document still loading"
+        );
+        page.message(&ready(&built));
+        assert_eq!(
+            channel.take_calls(),
+            [r#"ngtermTextSearchSet("",0,false)"#, "ngtermTextSetWrap(false)"]
+        );
+        page.apply(&wrapped(&overlay, false), true);
+        assert!(channel.take_calls().is_empty(), "an unchanged wrap is not pushed again");
+        page.apply(&wrapped(&overlay, true), true);
+        assert_eq!(channel.take_calls(), ["ngtermTextSetWrap(true)"]);
+        page.load_document(false);
+        assert!(
+            channel.last_document().contains(" data-wrap "),
+            "a rebuild keeps the wrap"
+        );
+    }
+
+    /// Upstream's `TextPageBridge.wrapped`: the page's own toggle is the bridge's at once, so an apply that still
+    /// carries the model's older wrap does not undo it while the toggle's write to the model is on its way.
+    #[test]
+    fn the_pages_own_toggle_is_not_undone_by_an_older_model_wrap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\n").unwrap();
+        let (overlay, channel, page) = static_page(&path, "", 0);
+        page.load_document(true);
+        page.message(&ready(&channel.last_document()));
+        channel.take_calls();
+
+        page.message(r#"{"wrap":true}"#);
+        page.apply(&overlay, true);
+        assert!(
+            channel.take_calls().is_empty(),
+            "the toggle's write is still on its way"
+        );
+        page.load_document(false);
+        assert!(
+            channel.last_document().contains(" data-wrap "),
+            "a rebuild shows the toggle's wrap"
+        );
     }
 
     /// A static page whose file cannot be read shows the probe's failure.

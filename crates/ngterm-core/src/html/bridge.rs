@@ -162,7 +162,7 @@ const SESSION_TARGETED: [Command; 5] = [
 ];
 /// The page's own overlay commands, which also get its pane. Resize is one, so a pane page's own request meets the pane
 /// refusal instead of resizing the session's overlay.
-const OWN_OVERLAY: [Command; 11] = [
+const OWN_OVERLAY: [Command; 12] = [
     Command::Session(SessionCmd::OverlayClose),
     Command::Session(SessionCmd::OverlayReload),
     Command::Session(SessionCmd::OverlayResize),
@@ -174,6 +174,7 @@ const OWN_OVERLAY: [Command; 11] = [
     Command::Session(SessionCmd::OverlayFollow),
     Command::Session(SessionCmd::OverlaySearch),
     Command::Session(SessionCmd::OverlayChanges),
+    Command::Session(SessionCmd::OverlayWrap),
 ];
 /// These take their window as `target`, not as `args.window`.
 const WINDOW_TARGETED: [Command; 9] = [
@@ -645,6 +646,7 @@ mod tests {
             "session.overlay.follow",
             "session.overlay.search",
             "session.overlay.changes",
+            "session.overlay.wrap",
             "session.overlay.resize",
         ] {
             let built = fixture.request(&format!(r#"{{"cmd":"{cmd}"}}"#));

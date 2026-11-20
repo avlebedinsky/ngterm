@@ -1962,7 +1962,7 @@ mod document_tests {
     }
 
     /// A log page's document is its follower's (no gutter, its state in place of a line); the renderer's ready report
-    /// hands it the latest text and the model's search in its world, and a scroll that pauses it goes to the follower before the model. The
+    /// hands it the latest text, the model's search and its wrap in its world, and a scroll that pauses it goes to the follower before the model. The
     /// model's pause reaches the renderer's bar.
     #[gpui_kit::test]
     fn a_log_page_builds_from_its_follower_and_hears_its_renderer(cx: &mut gpui_kit::TestAppContext) {
@@ -1985,7 +1985,7 @@ mod document_tests {
             );
             page.event(&renderer_message(&page, &ready(&built)), cx);
             let calls = evaluated(recorder.take());
-            assert_eq!(calls.len(), 3, "{calls:?}");
+            assert_eq!(calls.len(), 4, "{calls:?}");
             assert!(
                 calls[0].0.starts_with("ngtermTextUpdate(\"first\\nsecond\\n\""),
                 "{calls:?}"
@@ -1996,6 +1996,7 @@ mod document_tests {
                 calls[2],
                 (r#"ngtermTextSearchSet("",0,false)"#.to_owned(), world.clone())
             );
+            assert_eq!(calls[3], ("ngtermTextSetWrap(false)".to_owned(), world.clone()));
             page.event(&renderer_message(&page, r#"{"following":false,"top":12}"#), cx);
             assert!(evaluated(recorder.take()).is_empty(), "the page made the change");
             // an apply ahead of the posted pause carries the model's older value, which keeps the pause
@@ -2012,6 +2013,63 @@ mod document_tests {
             page.apply(&paused, true, cx);
             let pause = ("ngtermTextSetFollowing(false)".to_owned(), world);
             assert_eq!(evaluated(recorder.take()), [pause]);
+            page.close(cx);
+        });
+    }
+
+    /// Upstream's `testTheWrapKeyWrapsLongLines…` and `testAControlWrapAfterAClickTheBridgeHasNotAppliedReachesThePage`,
+    /// the app's half: the page's own toggle reaches the model with nothing pushed back, and a control unwrap after it
+    /// reaches the renderer in its world.
+    #[gpui_kit::test]
+    fn a_pages_own_wrap_reaches_the_model_and_a_later_control_wrap_reaches_the_page(cx: &mut gpui_kit::TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\n").unwrap();
+        let source = HtmlOverlay::new(
+            HtmlSource::Text {
+                path: path.to_string_lossy().into_owned(),
+                line: None,
+            },
+            HtmlPageFlags::default(),
+        );
+        let mut model = crate::html_overlay::registry::tests::Model::new(&source);
+        let page = Page::new(
+            &source,
+            None,
+            PanelColors::resolve(&TerminalColors::default(), None),
+            Storage::Ephemeral,
+            &model.poster(),
+        );
+        let recorder = Rc::new(Recorder::default());
+        let web: Rc<dyn Web> = recorder.clone();
+        page.realize(&web, Some(SessionId::from_raw(1)), 1.0);
+        model.drain();
+        let built = loaded(recorder.take()).expect("the page's document");
+        assert!(!built.contains("data-wrap"), "{built}");
+        let world = Some(crate::html_overlay::documents::WORLD.to_owned());
+        cx.update(|cx| {
+            page.event(&renderer_message(&page, &ready(&built)), cx);
+            recorder.take();
+            page.event(&renderer_message(&page, r#"{"wrap":true}"#), cx);
+            page.apply(model.overlay(), true, cx);
+            assert!(
+                evaluated(recorder.take()).is_empty(),
+                "the model's older wrap does not undo the page's toggle"
+            );
+        });
+        model.drain();
+        assert!(model.overlay().text_wrap, "the toggle reached the model");
+        cx.update(|cx| {
+            page.apply(model.overlay(), true, cx);
+            assert!(evaluated(recorder.take()).is_empty(), "the page made the change");
+        });
+        assert!(model.state.core.library_mut().set_text_wrap(source.id, false));
+        cx.update(|cx| {
+            page.apply(model.overlay(), true, cx);
+            assert_eq!(
+                evaluated(recorder.take()),
+                [("ngtermTextSetWrap(false)".to_owned(), world)]
+            );
             page.close(cx);
         });
     }

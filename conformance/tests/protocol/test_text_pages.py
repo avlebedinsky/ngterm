@@ -469,3 +469,27 @@ def test_wrap_refuses_a_bad_mode_and_a_session_without_a_page(ctl):
         assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "no overlay")
     finally:
         ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "session.overlay.reload")
+def test_wrap_lives_on_its_page_and_starts_off(ctl):
+    path = _file(ctl, "wrap.txt", "long " * 400 + "\n")
+    markdown = _file(ctl, "wrap.md", "# notes\n")
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path)
+        _text(ctl, sid)
+        assert_ok(ctl.request("session.overlay.wrap", sid, mode="on"))
+        # a reload keeps the page's wrap
+        assert_ok(ctl.request("session.overlay.reload", sid))
+        _text(ctl, sid, lambda text: text.get("wrap") is True)
+        assert_ok(ctl.request("session.overlay.close", sid))
+        # the wrap is the page's: the file opened again starts unwrapped
+        _open_text(ctl, sid, path)
+        assert_absent(_text(ctl, sid), "wrap")
+        assert_ok(ctl.request("session.overlay.close", sid))
+        assert_ok(ctl.request("session.overlay.open", sid, markdownFile=str(markdown)))
+        assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "no text page")
+    finally:
+        ctl.request("session.close", sid)

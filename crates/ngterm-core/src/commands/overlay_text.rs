@@ -1,13 +1,15 @@
 //! `session.overlay.search`: a text page's search, set, stepped or closed (upstream's `dispatchSessionOverlaySearch` in
 //! `ControlDispatcher+Overlay.swift`, then `searchSessionOverlay` in `agterm/Control/ControlServer+TextPage.swift`);
 //! `session.overlay.changes`: a diff page stepped to its next or previous change (upstream's
-//! `dispatchSessionOverlayChanges`, then `stepSessionOverlayChanges`).
+//! `dispatchSessionOverlayChanges`, then `stepSessionOverlayChanges`); `session.overlay.wrap`: a text page's long lines
+//! wrapped or not (upstream's dispatcher arm, then `setSessionOverlayWrap`).
 //!
 //! The query lives in the model ([`crate::model::WindowLibrary::set_text_search`]), which reaches the page whenever its
 //! renderer runs, so a query set before the page loads applies when it does. A step, of a search or between a diff's
 //! changes, is a one-shot request to the page's renderer through the frontend
 //! ([`crate::html::HtmlHost::step_text_search`], [`crate::html::HtmlHost::step_text_changes`]), which answers the count
-//! once; the command waits for it a main-loop hop at a time.
+//! once; the command waits for it a main-loop hop at a time. The wrap lives in the model too
+//! ([`crate::model::WindowLibrary::set_text_wrap`]), which the page's bridge pushes back on every change.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
@@ -17,13 +19,13 @@ use uuid::Uuid;
 
 use super::overlay::parse_overlay_pane;
 use super::surface::POLL_INTERVAL;
-use super::{args_of, with_id};
+use super::{Outcome, ToggleMode, args_of, with_id};
 use crate::Core;
 use crate::dispatch::Dispatched;
 use crate::error::ControlError;
 use crate::html::text_page::{self, TextChanges};
 use crate::html::{HtmlOverlay, HtmlSource, SearchCount, SearchStep};
-use crate::model::{OverlayPane, TextChangesFailure, TextSearchFailure};
+use crate::model::{OverlayPane, TextChangesFailure, TextSearchFailure, TextWrapFailure};
 use crate::resolve::Resolver;
 
 /// Upstream's `OverlayHtmlError.searchRequest`.
@@ -240,6 +242,34 @@ fn text_changes_page(
 
 fn changes_refused(failure: TextChangesFailure) -> ControlError {
     ControlError::rejected(failure.message())
+}
+
+/// `session.overlay.wrap [on|off|toggle]` (upstream's dispatcher arm, then `setSessionOverlayWrap`): the mode, then the
+/// pane, before the session resolves; an absent mode toggles. Then the local text page in the addressed slot, with the
+/// refusals of [`text_search_page`]. `result.text` names the state left, `wrapped` or `unwrapped`.
+pub(crate) fn wrap(core: &mut Core, request: &Request) -> Outcome {
+    let args = args_of(request);
+    let raw = args.mode.as_deref();
+    let mode = ToggleMode::parse(raw)
+        .ok_or_else(|| ControlError::rejected(format!("invalid overlay wrap mode: {}", raw.unwrap_or("toggle"))))?;
+    let pane = parse_overlay_pane(args.pane.as_deref())?;
+    let session = Resolver::new(core.library())
+        .session(request.target.as_deref(), args.window.as_deref())?
+        .session;
+    let shown = text_search_page(core, session, pane).map_err(|failure| {
+        let failure = match failure {
+            TextSearchFailure::Page(failure) => TextWrapFailure::Page(failure),
+            TextSearchFailure::Remote => TextWrapFailure::Remote,
+            _ => TextWrapFailure::NotText,
+        };
+        ControlError::rejected(failure.message())
+    })?;
+    let (id, wrapped) = (shown.id, mode.desired_value(shown.text_wrap));
+    core.library_mut().set_text_wrap(id, wrapped);
+    Ok(ControlResult {
+        text: Some((if wrapped { "wrapped" } else { "unwrapped" }).to_owned()),
+        ..with_id(session)
+    })
 }
 
 #[cfg(test)]

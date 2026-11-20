@@ -151,6 +151,7 @@ pub(crate) fn dispatch(core: &mut Core, cmd: SessionCmd, request: &Request) -> O
         SessionCmd::OverlayShow => visibility(core, target, args, OverlayVisibilityMode::Show),
         SessionCmd::OverlayToggle => visibility(core, target, args, OverlayVisibilityMode::Toggle),
         SessionCmd::OverlayFollow => follow(core, target, args),
+        SessionCmd::OverlayWrap => super::overlay_text::wrap(core, request),
         SessionCmd::OverlayJobRun => claim_job(core, target),
         SessionCmd::OverlayPageServe => claim_page_serve(core, target),
         other => Err(ControlError::NotSupported(ngterm_proto::Command::Session(other))),

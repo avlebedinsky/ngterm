@@ -889,6 +889,7 @@ impl Core {
                 | SessionCmd::OverlayFollow
                 | SessionCmd::OverlaySearch
                 | SessionCmd::OverlayChanges
+                | SessionCmd::OverlayWrap
                 | SessionCmd::OverlayJobRun
                 | SessionCmd::OverlayPageServe),
             ) => result_of(&commands::overlay::dispatch(self, cmd, request)?),
@@ -983,7 +984,6 @@ mod tests {
         for name in [
             "session.page",
             "session.companion.convert",
-            "session.overlay.wrap",
             "window.remote.open",
             "window.remote.dismiss",
             "session.detach",
