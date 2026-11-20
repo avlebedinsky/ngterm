@@ -882,10 +882,16 @@ impl Pane {
         }
     }
 
+    /// No frontend answers this pane's clipboard requests any more (its embedder detached it): the request that
+    /// waits now is denied, and so is each later one, at once.
+    pub fn deny_clipboard_requests(&self) {
+        self.shared.mailbox.child_exited();
+    }
+
     /// Whether a clipboard read or write the frontend was asked about has no reply queued for the program yet. An
     /// embedder that closes a stream pane's channel waits until this is `false`, so that the answer it gave as it
-    /// stopped (a denied read) still reaches the program. The terminal answers each request in the end: a denied
-    /// read or write when the frontend does not answer it in time.
+    /// stopped still reaches the program. The terminal answers each request in the end: at once after
+    /// [`Self::deny_clipboard_requests`], else a denied read or write when the frontend does not answer in time.
     #[must_use]
     pub fn clipboard_open(&self) -> bool {
         self.shared.clipboard_open.load(Ordering::Acquire) > 0

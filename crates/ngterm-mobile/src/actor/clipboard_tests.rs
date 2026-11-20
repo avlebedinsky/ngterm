@@ -7,7 +7,7 @@ use std::thread;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use super::pane_tests::{Fixture, QUIET, contains, inputs_until, position, reference, send};
+use super::pane_tests::{Fixture, QUIET, contains, inputs_until, lead_of, position, reference, role_title, send};
 use crate::api::{MobileEvent, PaneInputError};
 use crate::pane::{ClipboardPart, ClipboardReply, ClipboardWriteStatus, PaneClipboard, PaneRef};
 use crate::transport::{ChannelInput, ChannelPeer};
@@ -515,4 +515,25 @@ fn leaving_a_pane_refuses_its_waiting_writes() {
     complete(&fixture, write_id, ClipboardWriteStatus::Done);
     thread::sleep(QUIET);
     assert!(opened.peer.try_input().is_none(), "a late completion is dropped");
+}
+
+#[test]
+fn a_clipboard_read_behind_the_report_that_reattaches_is_denied_before_the_old_channel_closes() {
+    let mut fixture = Fixture::connected();
+    let _pane = fixture.show();
+    let mut first = fixture.attach();
+    let lead = lead_of(&first.command);
+    fixture.attached();
+
+    // the read is never shown to the app: the report replaces the terminal that raised it
+    let mut output = role_title(&lead.nonce, "unowned", 1);
+    output.extend_from_slice(b"\x1b]52;c;?\x07");
+    send(&first.peer, &output);
+    let _second = fixture.attach();
+    let (bytes, others) = inputs_until(&mut first.peer, |_, others| others.contains(&ChannelInput::Close));
+    assert!(
+        contains(&bytes, b"]52;"),
+        "the read is denied before the channel closes"
+    );
+    assert_eq!(others, [ChannelInput::Close]);
 }

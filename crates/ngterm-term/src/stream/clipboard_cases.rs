@@ -337,3 +337,22 @@ fn a_clipboard_request_is_open_until_its_reply_is_queued() {
         b"\x1b]5522;type=write:status=EPERM:id=closed\x1b\\"
     );
 }
+
+#[test]
+fn once_its_requests_are_denied_the_terminal_answers_each_one_at_once() {
+    let fixture = stream(PaneConfig::new(SIZE));
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    read(&fixture);
+    fixture.pane.deny_clipboard_requests();
+    assert_eq!(
+        sent_once_settled(&fixture),
+        b"\x1b]52;c;\x07",
+        "the read that waits is denied"
+    );
+
+    // with nobody to answer, a later read would wait the terminal's 30 s for its deny
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    fixture.sent_until(b"\x1b]52;c;\x07");
+    fixture.feed.deliver(&transaction("late", "", &[]));
+    fixture.sent_until(b"\x1b]5522;type=write:status=EPERM:id=late\x1b\\");
+}
