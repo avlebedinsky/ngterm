@@ -150,7 +150,15 @@ private fun PageEffects(
     onBack: () -> Unit,
 ) {
     BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting, onBack = onBack)
-    val shown = if (exporting) "export" else page.substringBefore(':')
+    // the page that shows, by the conditions that select it in [SettingsRoute]: a key page whose key is not there
+    // (yet) shows Settings
+    val shown =
+        when {
+            exporting -> "export"
+            page == LOGS || page == IMPORT -> page
+            keyShown -> KEY.removeSuffix(":")
+            else -> HOME
+        }
     // only here, in the composition: an effect runs after the page reads the log, and an effect that a newer page
     // replaced before it ran writes a stale page; a second writer (where the page is set) logs a page that the export
     // hides, which this one then logs over

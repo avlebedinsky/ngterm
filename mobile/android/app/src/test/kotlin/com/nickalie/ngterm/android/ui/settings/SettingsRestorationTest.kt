@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -46,6 +47,9 @@ class SettingsRestorationTest {
     private val models = mutableListOf<SettingsViewModel>()
     private var graph by mutableStateOf<TestGraph?>(null)
     private var model by mutableStateOf<SettingsViewModel?>(null)
+
+    // the count of page lines in the log before the restore: the swap of the stores before it logs a page too
+    private var beforeRestore = 0
 
     @After fun tearDown() {
         models.forEach { it.viewModelScope.cancel() }
@@ -86,6 +90,7 @@ class SettingsRestorationTest {
             graph = next
             model = fresh
         }
+        beforeRestore = allPages(next).size
         restoration.emulateSavedInstanceStateRestore()
         return dispatcher
     }
@@ -103,6 +108,17 @@ class SettingsRestorationTest {
                 .isNotEmpty()
         }
     }
+
+    // the pages that the log of [of] names, in their order
+    private fun allPages(of: TestGraph): List<String> =
+        compose.runOnIdle {
+            of.logs.lines
+                .filter { "settings page=" in it }
+                .map { it.substringAfter("settings page=") }
+        }
+
+    // the pages that the log of [of] names after the restore, in their order
+    private fun restoredPages(of: TestGraph): List<String> = allPages(of).drop(beforeRestore)
 
     private fun assertNoRouteBack() {
         compose.runOnIdle { assertFalse(compose.activity.onBackPressedDispatcher.hasEnabledCallbacks()) }
@@ -131,6 +147,9 @@ class SettingsRestorationTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         runUntilShown(dispatcher, "core restored")
         assertNoRouteBack()
+        // the log names each page as it shows: Settings while the stores are read, the key when they are read, then
+        // Settings after Back
+        assertEquals(listOf("home", "key", "home"), restoredPages(requireNotNull(graph)))
     }
 
     @Test
@@ -141,6 +160,8 @@ class SettingsRestorationTest {
         compose.onNodeWithContentDescription("Reading the settings").assertExists()
         runUntilShown(dispatcher, "core restored")
         compose.onNodeWithText("No machine uses it").assertDoesNotExist()
+        // the key page never showed in the new process, so its log names only Settings
+        assertEquals(listOf("home"), restoredPages(graphs.last()))
         assertMissingKeyPageWasCleared()
     }
 
@@ -157,6 +178,8 @@ class SettingsRestorationTest {
         compose.onNodeWithText("Retry").performClick()
         runUntilShown(dispatcher, "core restored")
         compose.onNodeWithText("Can't read the settings").assertDoesNotExist()
+        // the key page never showed, so the log names only Settings, which showed why and then the settings
+        assertEquals(listOf("home"), restoredPages(graphs.last()))
         assertMissingKeyPageWasCleared()
     }
 }
