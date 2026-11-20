@@ -662,18 +662,17 @@ impl TerminalView {
     /// Looks the live link under the pointer up again (`None`: the pointer left the grid) and underlines it.
     fn refresh_link(&mut self, pane: &Pane, position: Option<(f32, f32)>, cx: &mut Context<Self>) {
         let mods = self.pointer.mods;
+        let dragging = self.pointer.held[0] && pane.gesture_state().dragged;
         let at = position
-            .filter(|_| !self.reporting(pane, mods))
+            .filter(|_| !dragging && !self.reporting(pane, mods))
             .map(|(x, y)| pane.cell_at(x, y));
         let key = at.map(|at| (at, mods));
         if key == self.pointer.link_key && self.pointer.link.is_none() {
             return;
         }
         self.pointer.link_key = key;
-        // a drag that left its first cell shows no link until the button is up
-        let dragging = self.pointer.held[0] && pane.gesture_state().dragged;
         let link_mods = self.link_mods(pane, mods, cx);
-        let link = at.filter(|_| !dragging).and_then(|at| {
+        let link = at.and_then(|at| {
             let frame = self.painted.as_ref()?;
             links::link_at(pane, frame, at, link_mods, self.link_url())
         });
