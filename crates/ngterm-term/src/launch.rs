@@ -1060,6 +1060,13 @@ mod tests {
             "env -S '#=x bash' /bin/tcsh",
             "env --argv0 'bash' /bin/tcsh",
             "env -a bash /bin/tcsh",
+            "env --arg bash /bin/tcsh",
+            "env --split='A=1 /bin/tcsh' bash",
+            "env -'a' bash /bin/tcsh",
+            "env -\"a\" bash /bin/tcsh",
+            "env -S\"X=1\"' /bin/tcsh -s' bash",
+            "env -S 'NOTE=x '\"/bin/tcsh\" bash",
+            "env NOTE=1\u{a0}bash /bin/tcsh",
         ] {
             let receiver = Host {
                 shell: shell.into(),
@@ -1093,6 +1100,9 @@ mod tests {
             r"env $'/bin/tcsh\x00=x' bash",
             "env {NOTE=x,/bin/tcsh} bash",
             "env $RECEIVER bash",
+            "env -u 2>/dev/null bash /bin/tcsh",
+            "env -C/;tcsh; bash",
+            "env bash -c :;/bin/tcsh",
         ] {
             let receiver = Host {
                 shell: shell.into(),

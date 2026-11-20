@@ -82,7 +82,7 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
         ("env -Sbash --login", ShellDialect::Posix),
         ("env --split-string=pwsh -NoLogo", ShellDialect::PowerShell),
         (
-            "env -i HOME=/home/u -u TMUX --chdir /tmp -C /tmp -- fish",
+            "env -i -u TMUX --chdir /tmp -C /tmp -- HOME=/home/u fish",
             ShellDialect::Fish,
         ),
         ("env -iuTMUX -P /opt/bin ksh93", ShellDialect::Posix),
@@ -118,7 +118,7 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
         ("env -C", ShellDialect::Unknown),
         ("env --chdir", ShellDialect::Unknown),
         ("env NOTE=use\\", ShellDialect::Unknown),
-        (r#"env -S "NOTE=\"use bash here\" /bin/tcsh""#, ShellDialect::Unknown),
+        (r#"env -S "NOTE=\"use bash here\" /bin/tcsh""#, ShellDialect::Posix),
         ("env -- - NOTE='use bash'", ShellDialect::Unknown),
         ("env NOTE='use bash /bin/tcsh", ShellDialect::Unknown),
         ("nu --login", ShellDialect::Unknown),
@@ -143,6 +143,54 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
     }
 }
 
+/// `/bin/sh` removes quotes before `env` reads its words, `env` takes a long option by a unique prefix, and the
+/// program's own arguments may expand.
+#[test]
+fn env_reads_the_words_that_the_shell_hands_it() {
+    for (shell, dialect) in [
+        ("/usr/bin/env bash --rcfile ~/.bashrc", ShellDialect::Posix),
+        ("env zsh -l 2>/dev/null", ShellDialect::Posix),
+        ("env zsh -l 2>&1 >|log", ShellDialect::Posix),
+        ("env fish -C \"source $HOME/x\"", ShellDialect::Fish),
+        ("env fish -C 'source *.fish' # ; bash", ShellDialect::Fish),
+        ("env -S 'NOTE=a*b fish'", ShellDialect::Fish),
+        ("env -S 'NOTE={x} fish'", ShellDialect::Fish),
+        ("env -S 'fish -C ~/rc'", ShellDialect::Fish),
+        ("env -S \"fish # it's\" bash", ShellDialect::Fish),
+        ("env -S 'fish\t-l'", ShellDialect::Fish),
+        ("env --arg bash fish", ShellDialect::Fish),
+        ("env --split='A=1 fish' bash", ShellDialect::Fish),
+        ("env --ch /tmp --unse X fish", ShellDialect::Fish),
+        (
+            "env --ignore-e --default-signal=INT --block-signal fish",
+            ShellDialect::Fish,
+        ),
+        ("env --i bash", ShellDialect::Unknown),
+        ("env --=x bash", ShellDialect::Unknown),
+        ("env --debug=x bash", ShellDialect::Unknown),
+        ("env --help bash", ShellDialect::Unknown),
+        ("env --vers bash", ShellDialect::Unknown),
+        ("env --bogus bash", ShellDialect::Unknown),
+        ("env -x bash", ShellDialect::Unknown),
+        ("env A=1 -i bash", ShellDialect::Unknown),
+        ("env -'a' bash fish", ShellDialect::Fish),
+        ("env -\"a\" bash fish", ShellDialect::Fish),
+        ("env --'argv0' bash fish", ShellDialect::Fish),
+        (r"env --arg\v0 bash fish", ShellDialect::Fish),
+        (r#"env -"u" bash -"C" /tmp fish"#, ShellDialect::Fish),
+        ("env -S\"X=1\"' fish -l' bash", ShellDialect::Fish),
+        ("env -S 'NOTE=x '\"fish\" bash", ShellDialect::Fish),
+        ("env NOTE=1\u{a0}bash fish", ShellDialect::Fish),
+        ("env\u{a0}bash", ShellDialect::Unknown),
+        (r#"env NOTE="a\b" fish"#, ShellDialect::Fish),
+        ("env NOTE=\"use bash", ShellDialect::Unknown),
+        (r#"env NOTE="use\"#, ShellDialect::Unknown),
+        ("env -S \"'fish\"", ShellDialect::Unknown),
+    ] {
+        assert_eq!(ShellDialect::of_shell(shell), dialect, "{shell}");
+    }
+}
+
 #[test]
 fn unsupported_env_expansions_leave_the_receiver_unknown() {
     for shell in [
@@ -160,6 +208,29 @@ fn unsupported_env_expansions_leave_the_receiver_unknown() {
         "env <(printf /bin/tcsh) bash",
         "env \"$RECEIVER\" bash",
         "env \"`printf /bin/tcsh`\" bash",
+        "env -u 2>/dev/null bash /bin/tcsh",
+        "env -C/;tcsh; bash",
+        "env -u x|tcsh bash",
+        "env -u x&tcsh bash",
+        "env X=1) bash",
+        "env X=a] bash",
+        "env X=a} bash",
+        "env bash -c :;/bin/tcsh",
+        "env bash | tcsh",
+        "env bash >&2|tcsh",
+        "env bash & tcsh",
+        "env bash (tcsh)",
+        "env bash $(tcsh)",
+        "env bash \"$(tcsh)\"",
+        "env bash `tcsh`",
+        "env bash ${X:- #}; tcsh",
+        "env bash \"${X}\"",
+        "env bash $'\\'' ; tcsh ; $'\\''",
+        "env bash\ntcsh",
+        "env bash \\\ntcsh",
+        "env bash \"\\\ntcsh\"",
+        "env -S '${SHELL}' bash",
+        r"env -S 'bash\_-l'",
     ] {
         assert_eq!(shell_program(shell), None, "{shell}");
         let dialect = ShellDialect::of_shell(shell);
@@ -175,8 +246,10 @@ fn unsupported_env_expansions_leave_the_receiver_unknown() {
         r"env NOTE=\{literal\} bash",
         "env -S '\"#=literal\" bash'",
         "env -S 'NOTE=x#=literal bash'",
+        "env bash \n",
+        "env bash # $(tcsh); tcsh",
     ] {
-        assert_eq!(shell_program(shell), Some("bash"), "{shell}");
+        assert_eq!(shell_program(shell).as_deref(), Some("bash"), "{shell}");
     }
 }
 

@@ -551,7 +551,7 @@ pub fn should_restore_in_shell<S: AsRef<str>>(argv: &[String], denylist: &[S], s
         && !(shell
             .and_then(crate::shell_dialect::shell_program)
             .is_some_and(|shell| {
-                let name = shell_name(basename(shell.strip_prefix('-').unwrap_or(shell)));
+                let name = shell_name(basename(shell.strip_prefix('-').unwrap_or(&shell)));
                 name.eq_ignore_ascii_case("csh") || name.eq_ignore_ascii_case("tcsh")
             })
             && argv.iter().any(|word| word.contains('!')))
@@ -1622,6 +1622,13 @@ mod tests {
             "env -a bash /bin/tcsh",
             "env -abash /bin/tcsh",
             "env -ia bash /bin/tcsh",
+            "env --arg bash /bin/tcsh",
+            "env --split='A=1 /bin/tcsh' bash",
+            "env -'a' bash /bin/tcsh",
+            "env -\"a\" bash /bin/tcsh",
+            "env -S\"X=1\"' /bin/tcsh -s' bash",
+            "env -S 'NOTE=x '\"/bin/tcsh\" bash",
+            "env NOTE=1\u{a0}bash /bin/tcsh",
         ] {
             for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
                 assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");

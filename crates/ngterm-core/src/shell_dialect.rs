@@ -39,6 +39,9 @@
 //!   pane comes up as a plain shell, as for a denylisted program, rather than one whose line a shell could run
 //!   differently.
 
+use std::borrow::Cow;
+use std::collections::VecDeque;
+
 use crate::command_restore::{basename, shell_name, shell_quoted_line};
 
 /// The POSIX-family shells, by name: upstream's and their kin (the Korn shells' `ksh93`, OpenBSD's ports `oksh` and
@@ -54,130 +57,294 @@ fn is_env(word: &str) -> bool {
     shell_name(basename(word)).eq_ignore_ascii_case("env")
 }
 
-/// The program that `env` runs after its options, assignments, split strings and nested wrappers; `None` when a shell
-/// expansion or an `env -S` escape before it could change it.
-fn env_program(arguments: &str) -> Option<&str> {
-    let mut words = std::collections::VecDeque::from(env_words(arguments)?);
-    while let Some(word) = words.pop_front() {
-        let word = unquote(word);
-        if word == "-" || (word.contains('=') && !word.starts_with('-')) {
-            continue;
+/// The program that `env` runs after its options, assignments, split strings and nested wrappers, the words read as
+/// `/bin/sh` reads them (quotes removed) and `-S` text as `env` splits it; `None` when it runs none, when a shell
+/// expansion or an `env` escape could change it, or when the rest of the line could start another command.
+fn env_program(arguments: &str) -> Option<String> {
+    let mut line = EnvLine {
+        rest: arguments,
+        pending: VecDeque::new(),
+    };
+    loop {
+        let mut word = line.next()?;
+        while word.starts_with('-') && word != "-" {
+            if word == "--" {
+                word = line.next()?;
+                break;
+            }
+            line.option(&word)?;
+            word = line.next()?;
         }
-        if word == "--" {
-            let mut program = unquote(words.pop_front()?);
-            if program == "-" {
-                program = unquote(words.pop_front()?);
-            }
-            while program.contains('=') {
-                program = unquote(words.pop_front()?);
-            }
-            if !is_env(program) {
-                return Some(program);
-            }
-        } else if word.starts_with('-') {
-            env_option(word, &mut words)?;
-        } else if !is_env(word) {
+        if word == "-" {
+            word = line.next()?;
+        }
+        while word.contains('=') {
+            word = line.next()?;
+        }
+        if !is_env(&word) {
+            return line.ends_plainly().then_some(word);
+        }
+    }
+}
+
+/// An `env` line read one word at a time: the words an `env -S` split gave first, then the shell's.
+struct EnvLine<'a> {
+    rest: &'a str,
+    pending: VecDeque<String>,
+}
+
+impl EnvLine<'_> {
+    fn next(&mut self) -> Option<String> {
+        if let Some(word) = self.pending.pop_front() {
             return Some(word);
         }
+        let (word, rest) = next_word(self.rest, Lexer::Before).ok()??;
+        self.rest = rest;
+        Some(word)
     }
-    None
-}
 
-fn env_option<'a>(word: &'a str, words: &mut std::collections::VecDeque<&'a str>) -> Option<()> {
-    let split = if let Some(long) = word.strip_prefix("--") {
-        if ["unset", "chdir", "argv0"].contains(&long) {
-            words.pop_front()?;
+    /// Whether the shell runs the rest of the line as the program's arguments, with no other command after it.
+    fn ends_plainly(&self) -> bool {
+        let mut rest = self.rest;
+        loop {
+            match next_word(rest, Lexer::After) {
+                Ok(Some((_, after))) => rest = after,
+                Ok(None) => return true,
+                Err(Refused) => return false,
+            }
         }
-        if long == "split-string" {
-            Some(words.pop_front()?)
-        } else {
-            long.strip_prefix("split-string=")
+    }
+
+    /// Reads one option word of `env` (`-iuNAME`, `--chdir=/tmp`, `--arg bash`); `None` when `env` would not run a
+    /// program after it.
+    fn option(&mut self, word: &str) -> Option<()> {
+        match word.strip_prefix("--") {
+            Some(long) => self.long_option(long),
+            None => self.short_options(&word[1..]),
         }
-    } else {
-        let (takes_next, split) = env_short_options(word.strip_prefix('-')?);
-        if takes_next {
-            words.pop_front()?;
+    }
+
+    /// A long option, by any unique prefix of its name as `getopt_long` reads it.
+    fn long_option(&mut self, long: &str) -> Option<()> {
+        let (name, value) = match long.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (long, None),
+        };
+        let takes = long_option_takes(name)?;
+        match (takes, value) {
+            (Takes::Exit, _) | (Takes::Nothing, Some(_)) => None,
+            (Takes::Nothing | Takes::Optional, _) => Some(()),
+            (Takes::Value | Takes::Split, Some(value)) => self.valued(takes, value),
+            (Takes::Value | Takes::Split, None) => {
+                let value = self.next()?;
+                self.valued(takes, &value)
+            }
         }
-        match split {
-            Some("") => Some(words.pop_front()?),
-            split => split,
+    }
+
+    fn valued(&mut self, takes: Takes, value: &str) -> Option<()> {
+        if takes == Takes::Split {
+            self.split(value)?;
         }
-    };
-    if let Some(split) = split {
-        // The shell and `env -S` can each change an escape before the program name.
-        if split.contains('\\') {
+        Some(())
+    }
+
+    /// A bundle of short options without its `-`: GNU's and the BSDs' (`-P`).
+    fn short_options(&mut self, bundle: &str) -> Option<()> {
+        for (at, option) in bundle.char_indices() {
+            let rest = &bundle[at + option.len_utf8()..];
+            let takes = match option {
+                'i' | 'v' | '0' => continue,
+                'u' | 'C' | 'P' | 'a' => Takes::Value,
+                'S' => Takes::Split,
+                _ => return None,
+            };
+            let value = if rest.is_empty() { self.next()? } else { rest.to_owned() };
+            return self.valued(takes, &value);
+        }
+        Some(())
+    }
+
+    /// Puts the words of `env -S`'s `text` before the rest of the line.
+    fn split(&mut self, text: &str) -> Option<()> {
+        // env reads an escape or a variable in its own way.
+        if text.contains(['\\', '$']) {
             return None;
         }
-        let parts = env_words(unquote(split))?;
-        let end = parts
-            .iter()
-            .position(|part| part.starts_with('#'))
-            .unwrap_or(parts.len());
-        for part in parts[..end].iter().rev() {
-            words.push_front(part);
+        let mut words = Vec::new();
+        let mut rest = text;
+        while let Some((word, after)) = next_word(rest, Lexer::Split).ok()? {
+            words.push(word);
+            rest = after;
         }
-    }
-    Some(())
-}
-
-fn unquote(word: &str) -> &str {
-    for quote in ['\'', '"'] {
-        if let Some(inner) = word.strip_prefix(quote).and_then(|rest| rest.strip_suffix(quote)) {
-            return inner;
+        for word in words.into_iter().rev() {
+            self.pending.push_front(word);
         }
-    }
-    word
-}
-
-fn env_words(mut arguments: &str) -> Option<Vec<&str>> {
-    let mut words = Vec::new();
-    loop {
-        arguments = arguments.trim_start();
-        if arguments.is_empty() {
-            return Some(words);
-        }
-        let end = env_word_end(arguments)?;
-        words.push(&arguments[..end]);
-        arguments = &arguments[end..];
+        Some(())
     }
 }
 
-fn env_word_end(arguments: &str) -> Option<usize> {
-    let mut quote = None;
-    let mut escaped = false;
-    for (at, character) in arguments.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match (quote, character) {
-            (None | Some('"'), '$' | '`')
-            | (None, '{' | '}' | '*' | '?' | '[' | ']' | '~' | '(' | ')' | '<' | '>' | '|' | '&' | ';') => return None,
-            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
-            (None, '\'' | '"') => quote = Some(character),
-            (None | Some('"'), '\\') => escaped = true,
-            (None, character) if character.is_whitespace() => return Some(at),
-            _ => {}
-        }
-    }
-    (quote.is_none() && !escaped).then_some(arguments.len())
+/// What a long option of GNU `env` takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Takes {
+    Nothing,
+    /// A value only after `=`.
+    Optional,
+    Value,
+    /// Text that `env` splits into more words.
+    Split,
+    /// None: `env` exits without a program.
+    Exit,
 }
 
-/// What a bundle of `env`'s short options (`-iu`, `-uNAME`, `-Szsh`, without the `-`) leaves: whether the next word
-/// is an option's value, and the start of `-S`'s words joined to it.
-fn env_short_options(bundle: &str) -> (bool, Option<&str>) {
-    /// The short options taking a value.
-    const VALUED: [char; 4] = ['u', 'C', 'P', 'a'];
-    for (at, option) in bundle.char_indices() {
-        let rest = &bundle[at + option.len_utf8()..];
-        if VALUED.contains(&option) {
-            return (rest.is_empty(), None);
-        }
-        if option == 'S' {
-            return (false, Some(rest));
+const LONG_OPTIONS: [(&str, Takes); 13] = [
+    ("argv0", Takes::Value),
+    ("block-signal", Takes::Optional),
+    ("chdir", Takes::Value),
+    ("debug", Takes::Nothing),
+    ("default-signal", Takes::Optional),
+    ("help", Takes::Exit),
+    ("ignore-environment", Takes::Nothing),
+    ("ignore-signal", Takes::Optional),
+    ("list-signal-handling", Takes::Nothing),
+    ("null", Takes::Nothing),
+    ("split-string", Takes::Split),
+    ("unset", Takes::Value),
+    ("version", Takes::Exit),
+];
+
+/// The long option that `name` names in full or by a unique prefix.
+fn long_option_takes(name: &str) -> Option<Takes> {
+    if let Some(&(_, takes)) = LONG_OPTIONS.iter().find(|(option, _)| *option == name) {
+        return Some(takes);
+    }
+    let mut matches = LONG_OPTIONS.iter().filter(|(option, _)| option.starts_with(name));
+    let &(_, takes) = matches.next()?;
+    matches.next().is_none().then_some(takes)
+}
+
+/// How a word of an `env` line is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lexer {
+    /// By `/bin/sh`, before the program: each expansion could change the program, so none is accepted.
+    Before,
+    /// By `/bin/sh`, after the program: an expansion changes only the program's arguments, but what could start
+    /// another command is refused.
+    After,
+    /// By `env -S`, which expands no globs, tildes or braces (the caller refuses its escapes and variables).
+    Split,
+}
+
+/// A word that the lexer cannot read with certainty.
+#[derive(Debug)]
+struct Refused;
+
+impl Lexer {
+    fn ends_word(self, character: char) -> bool {
+        match self {
+            Self::Before | Self::After => matches!(character, ' ' | '\t' | '\n'),
+            Self::Split => matches!(character, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r'),
         }
     }
-    (false, None)
+
+    fn plain(self, character: char, previous: Option<char>) -> Result<(), Refused> {
+        let refused = match self {
+            Self::Before => "{}*?[]~()<>|&;`".contains(character),
+            Self::After => {
+                "();`".contains(character) || (matches!(character, '|' | '&') && !matches!(previous, Some('<' | '>')))
+            }
+            Self::Split => false,
+        };
+        if refused { Err(Refused) } else { Ok(()) }
+    }
+
+    /// A `$` before `next`: after the program, a plain parameter expands to the program's arguments only.
+    fn dollar(self, next: Option<char>) -> Result<(), Refused> {
+        if self == Self::After && !matches!(next, Some('(' | '{' | '\'' | '"')) {
+            Ok(())
+        } else {
+            Err(Refused)
+        }
+    }
+}
+
+type Characters<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
+
+/// The next word of `text` with its quotes removed, and the text after it; `None` at the end of the line or at a
+/// comment.
+fn next_word(text: &str, lexer: Lexer) -> Result<Option<(String, &str)>, Refused> {
+    let text =
+        text.trim_start_matches(|character| lexer.ends_word(character) && (lexer == Lexer::Split || character != '\n'));
+    if text.starts_with('\n') {
+        // A newline ends the shell's command: only blank text may follow it.
+        return if text.trim_start_matches([' ', '\t', '\n']).is_empty() {
+            Ok(None)
+        } else {
+            Err(Refused)
+        };
+    }
+    if text.is_empty() || text.starts_with('#') {
+        return Ok(None);
+    }
+    let mut word = String::new();
+    let mut characters = text.char_indices().peekable();
+    let mut previous = None;
+    while let Some((at, character)) = characters.next() {
+        if lexer.ends_word(character) {
+            return Ok(Some((word, &text[at..])));
+        }
+        match character {
+            '\'' => single_quoted(&mut characters, &mut word)?,
+            '"' => double_quoted(&mut characters, &mut word, lexer)?,
+            '\\' => match characters.next() {
+                Some((_, next)) if next != '\n' => word.push(next),
+                _ => return Err(Refused),
+            },
+            '$' => {
+                lexer.dollar(characters.peek().map(|&(_, next)| next))?;
+                word.push('$');
+            }
+            _ => {
+                lexer.plain(character, previous)?;
+                word.push(character);
+            }
+        }
+        previous = Some(character);
+    }
+    Ok(Some((word, "")))
+}
+
+fn single_quoted(characters: &mut Characters<'_>, word: &mut String) -> Result<(), Refused> {
+    for (_, character) in characters.by_ref() {
+        if character == '\'' {
+            return Ok(());
+        }
+        word.push(character);
+    }
+    Err(Refused)
+}
+
+fn double_quoted(characters: &mut Characters<'_>, word: &mut String, lexer: Lexer) -> Result<(), Refused> {
+    while let Some((_, character)) = characters.next() {
+        match character {
+            '"' => return Ok(()),
+            '`' if lexer != Lexer::Split => return Err(Refused),
+            '$' => {
+                lexer.dollar(characters.peek().map(|&(_, next)| next))?;
+                word.push('$');
+            }
+            '\\' => match characters.next().ok_or(Refused)? {
+                (_, '\n') => return Err(Refused),
+                (_, next @ ('$' | '`' | '"' | '\\')) => word.push(next),
+                (_, next) => {
+                    word.push('\\');
+                    word.push(next);
+                }
+            },
+            _ => word.push(character),
+        }
+    }
+    Err(Refused)
 }
 
 /// What `cmd.exe` reads specially outside quotes, a caret escaping each; `%` and `"` have rules of their own.
@@ -216,7 +383,7 @@ impl ShellDialect {
     /// ([`env_program`]: `/usr/bin/env zsh`, `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
     #[must_use]
     pub fn of_shell(shell: &str) -> Self {
-        shell_program(shell).map_or(Self::Unknown, Self::of_program)
+        shell_program(shell).map_or(Self::Unknown, |program| Self::of_program(&program))
     }
 
     /// What submits a typed line: upstream's line feed for POSIX shells and fish, else a carriage return, the Enter
@@ -255,22 +422,24 @@ impl ShellDialect {
 }
 
 /// The shell program after the same path and `env` rules as [`ShellDialect::of_shell`].
-pub(crate) fn shell_program(shell: &str) -> Option<&str> {
-    let shell = shell.trim_start();
+pub(crate) fn shell_program(shell: &str) -> Option<Cow<'_, str>> {
+    // `/bin/sh` splits words only at these, not at other Unicode white space.
+    const BLANKS: [char; 3] = [' ', '\t', '\n'];
+    let shell = shell.trim_start_matches(BLANKS);
     let mut end = 0;
     loop {
         let rest = &shell[end..];
-        let word = rest.trim_start();
+        let word = rest.trim_start_matches(BLANKS);
         if word.is_empty() {
             return None;
         }
-        end += rest.len() - word.len() + word.find(char::is_whitespace).unwrap_or(word.len());
+        end += rest.len() - word.len() + word.find(BLANKS).unwrap_or(word.len());
         let program = &shell[..end];
         if is_env(program) {
-            return env_program(&shell[end..]);
+            return env_program(&shell[end..]).map(Cow::Owned);
         }
         if ShellDialect::of_program(program) != ShellDialect::Unknown {
-            return Some(program);
+            return Some(Cow::Borrowed(program));
         }
     }
 }
