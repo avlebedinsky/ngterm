@@ -82,7 +82,19 @@ fn env_program(arguments: &str) -> Option<String> {
             word = line.next()?;
         }
         if !is_env(&word) {
-            return line.ends_plainly().then_some(word);
+            return ends_plainly(line.rest).then_some(word);
+        }
+    }
+}
+
+/// Whether `/bin/sh` runs `rest`, the text after a program, as that program's arguments, with no other command after
+/// it.
+fn ends_plainly(mut rest: &str) -> bool {
+    loop {
+        match next_word(rest, Lexer::After) {
+            Ok(Some((_, after))) => rest = after,
+            Ok(None) => return true,
+            Err(Refused) => return false,
         }
     }
 }
@@ -101,18 +113,6 @@ impl EnvLine<'_> {
         let (word, rest) = next_word(self.rest, Lexer::Before).ok()??;
         self.rest = rest;
         Some(word)
-    }
-
-    /// Whether the shell runs the rest of the line as the program's arguments, with no other command after it.
-    fn ends_plainly(&self) -> bool {
-        let mut rest = self.rest;
-        loop {
-            match next_word(rest, Lexer::After) {
-                Ok(Some((_, after))) => rest = after,
-                Ok(None) => return true,
-                Err(Refused) => return false,
-            }
-        }
     }
 
     /// Reads one option word of `env` (`-iuNAME`, `--chdir=/tmp`, `--arg bash`); `None` when `env` would not run a
@@ -275,6 +275,12 @@ type Characters<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 fn next_word(text: &str, lexer: Lexer) -> Result<Option<(String, &str)>, Refused> {
     let text =
         text.trim_start_matches(|character| lexer.ends_word(character) && (lexer == Lexer::Split || character != '\n'));
+    let text = match text.strip_prefix('#') {
+        // The shell's comment ends at the line's end; env -S's ends the split text.
+        Some(comment) if lexer != Lexer::Split => comment.find('\n').map_or("", |at| &comment[at..]),
+        Some(_) => return Ok(None),
+        None => text,
+    };
     if text.starts_with('\n') {
         // A newline ends the shell's command: only blank text may follow it.
         return if text.trim_start_matches([' ', '\t', '\n']).is_empty() {
@@ -283,7 +289,7 @@ fn next_word(text: &str, lexer: Lexer) -> Result<Option<(String, &str)>, Refused
             Err(Refused)
         };
     }
-    if text.is_empty() || text.starts_with('#') {
+    if text.is_empty() {
         return Ok(None);
     }
     let mut word = String::new();
@@ -379,7 +385,8 @@ impl ShellDialect {
     /// (`C:\Program Files\PowerShell\7\pwsh.exe`) or a program and its arguments (`pwsh -NoLogo`, `/usr/bin/fish -l`).
     /// The program is the value's shortest run of leading words that names a known shell or `env`, so a path with
     /// spaces is read whole and a shell's argument never stands for it (`bash --rcfile /etc/env`,
-    /// `pwsh -File C:\scripts\bash`); [`Self::Unknown`] when no run does. A program `env` is the program it runs
+    /// `pwsh -File C:\scripts\bash`); [`Self::Unknown`] when no run does, or when, outside Windows, the rest of the
+    /// value could start another command (`bash -c : ; tcsh`). A program `env` is the program it runs
     /// ([`env_program`]: `/usr/bin/env zsh`, `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
     #[must_use]
     pub fn of_shell(shell: &str) -> Self {
@@ -439,7 +446,8 @@ pub(crate) fn shell_program(shell: &str) -> Option<Cow<'_, str>> {
             return env_program(&shell[end..]).map(Cow::Owned);
         }
         if ShellDialect::of_program(program) != ShellDialect::Unknown {
-            return Some(Cow::Borrowed(program));
+            // Windows runs the login shell directly, not through `/bin/sh`.
+            return (cfg!(windows) || ends_plainly(&shell[end..])).then_some(Cow::Borrowed(program));
         }
     }
 }

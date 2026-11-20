@@ -231,6 +231,9 @@ fn unsupported_env_expansions_leave_the_receiver_unknown() {
         "env bash \"\\\ntcsh\"",
         "env -S '${SHELL}' bash",
         r"env -S 'bash\_-l'",
+        "env bash -c : # x\n/bin/tcsh",
+        "env -S bash # x\n/bin/tcsh",
+        "env # x\nbash",
     ] {
         assert_eq!(shell_program(shell), None, "{shell}");
         let dialect = ShellDialect::of_shell(shell);
@@ -248,8 +251,40 @@ fn unsupported_env_expansions_leave_the_receiver_unknown() {
         "env -S 'NOTE=x#=literal bash'",
         "env bash \n",
         "env bash # $(tcsh); tcsh",
+        "env bash # x\n \n",
+        "bash -l # x\n",
     ] {
         assert_eq!(shell_program(shell).as_deref(), Some("bash"), "{shell}");
+    }
+}
+
+/// Outside Windows, `/bin/sh` runs the configured shell, so a second command after it could be the shell that reads
+/// the typed line.
+#[test]
+fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
+    for shell in [
+        "bash -c : ; /bin/tcsh",
+        "bash -c :;/bin/tcsh",
+        "bash -c :\n/bin/tcsh",
+        "zsh --version; tcsh",
+        "bash -c : # x\n/bin/tcsh",
+        "fish | tcsh",
+        "bash $(tcsh)",
+    ] {
+        let program = shell_program(shell);
+        if cfg!(windows) {
+            assert!(program.is_some(), "{shell}");
+        } else {
+            assert_eq!(program, None, "{shell}");
+            assert_eq!(
+                ShellDialect::of_shell(shell).typed(&["grep", "!needle"]),
+                None,
+                "{shell}"
+            );
+        }
+    }
+    for shell in ["bash -l 2>/dev/null", "fish -C 'source x; y' # z", "zsh -l\n"] {
+        assert_ne!(ShellDialect::of_shell(shell), ShellDialect::Unknown, "{shell}");
     }
 }
 
