@@ -19,8 +19,10 @@ MAX_DEPTH = 40
 # `QuickTerminalMetrics`' built-in size: a share of the visible frame, at most this size
 DEFAULT_SHARE = 0.9
 DEFAULT_MAX_SIZE = (1100.0, 700.0)
-# both builds round the panel's size and its origin to whole points: an edge is up to one point off the unrounded frame
-SLACK = 1.0
+# both builds round the panel's size to whole points, then center it on whole points: the size is up to half a
+# point off the unrounded frame, the origin up to one point
+SIZE_SLACK = 0.5
+ORIGIN_SLACK = 1.0
 
 
 def _holds_quick(ui, handle, depth=0):
@@ -77,7 +79,8 @@ def _framed(zoomed):
     def check(frame):
         visible = _visible_frame(frame)
         want = visible if zoomed else _target_frame(visible)
-        return all(abs(got - expected) <= SLACK for got, expected in zip(frame, want))
+        slack = (ORIGIN_SLACK, ORIGIN_SLACK, SIZE_SLACK, SIZE_SLACK)
+        return all(abs(got - expected) <= most for got, expected, most in zip(frame, want, slack))
 
     return check
 
