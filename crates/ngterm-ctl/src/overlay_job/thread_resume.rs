@@ -23,13 +23,18 @@ pub(super) trait OpenedThread {
     fn resume(&self) -> bool;
 }
 
-/// Resumes each thread of `pid` that `listed` names and that has not ended. A program with no such thread cannot be
-/// resumed: it has exited, or it is not there.
+/// Resumes each thread of `pid` that `listed` names and that has not ended. A program that has `exited`, or that has
+/// no such thread, cannot be resumed.
 pub(super) fn resume_listed<T: OpenedThread>(
     pid: u32,
+    exited: bool,
     listed: impl IntoIterator<Item = ListedThread>,
     mut open: impl FnMut(u32) -> Option<T>,
 ) -> io::Result<()> {
+    // the system signals an exited process before the objects of its last threads, which still resume for a moment
+    if exited {
+        return Err(not_resumed());
+    }
     let mut resumed = 0_usize;
     for thread in listed.into_iter().filter(|thread| thread.owner == pid) {
         let Some(opened) = open(thread.id) else {
@@ -40,9 +45,13 @@ pub(super) fn resume_listed<T: OpenedThread>(
         }
     }
     if resumed == 0 {
-        return Err(io::Error::other("the program's thread could not be resumed"));
+        return Err(not_resumed());
     }
     Ok(())
+}
+
+fn not_resumed() -> io::Error {
+    io::Error::other("the program's thread could not be resumed")
 }
 
 #[cfg(test)]
@@ -109,10 +118,14 @@ mod tests {
             }
         }
 
-        /// Resumes `pid` over `listed`, opening each id as the system holds it now.
+        /// Resumes `pid`, still running, over `listed`, opening each id as the system holds it now.
         fn resume(&self, pid: u32, listed: &[(u32, u32)]) -> Result<(), String> {
+            self.resume_program(pid, false, listed)
+        }
+
+        fn resume_program(&self, pid: u32, exited: bool, listed: &[(u32, u32)]) -> Result<(), String> {
             let listed = listed.iter().map(|&(id, owner)| ListedThread { id, owner });
-            resume_listed(pid, listed, |id| {
+            resume_listed(pid, exited, listed, |id| {
                 self.threads.get(&id).map(|&thread| Opened {
                     id,
                     thread,
@@ -152,6 +165,17 @@ mod tests {
         };
         let system = System::with(&[(1, ended)]);
         assert_eq!(system.resume(PROGRAM, &[(1, PROGRAM)]), Err(NOT_RESUMED.to_owned()));
+        assert_eq!(system.resumed(), [0_u32; 0]);
+    }
+
+    /// The process reads as exited while its last thread still runs its exit and resumes without an error.
+    #[test]
+    fn a_program_that_has_exited_cannot_be_resumed_while_its_thread_still_looks_alive() {
+        let system = System::with(&[(1, FakeThread::running_in(PROGRAM))]);
+        assert_eq!(
+            system.resume_program(PROGRAM, true, &[(1, PROGRAM)]),
+            Err(NOT_RESUMED.to_owned())
+        );
         assert_eq!(system.resumed(), [0_u32; 0]);
     }
 

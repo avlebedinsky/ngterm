@@ -109,7 +109,7 @@ pub(super) fn spawn(
         .current_dir(&context.cwd)
         .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED);
     let mut child = command.spawn()?;
-    let started = join(&job, &child).and_then(|()| resume(child.id()));
+    let started = join(&job, &child).and_then(|()| resume(&child));
     if let Err(error) = started {
         let _ = child.kill();
         let _ = child.wait();
@@ -158,10 +158,18 @@ fn join(job: &OwnedHandle, child: &Child) -> io::Result<()> {
     Ok(())
 }
 
-/// Resumes the threads of `pid`, a process created suspended: its one main thread. std keeps no thread handle, so
-/// the thread is found by a snapshot of the system's threads.
-fn resume(pid: u32) -> io::Result<()> {
-    resume_listed(pid, listed_threads()?, Thread::open)
+/// Resumes the threads of `program`, created suspended: its one main thread. std keeps no thread handle, so the
+/// thread is found by a snapshot of the system's threads.
+fn resume(program: &Child) -> io::Result<()> {
+    let exited = signaled(program.as_raw_handle(), 0);
+    resume_listed(program.id(), exited, listed_threads()?, Thread::open)
+}
+
+/// Whether the object behind `object`, open with `SYNCHRONIZE`, is signaled within `timeout_ms`: a process or a
+/// thread is once it has ended.
+fn signaled(object: HANDLE, timeout_ms: u32) -> bool {
+    // SAFETY: the caller's handle is open for the call.
+    unsafe { WaitForSingleObject(object, timeout_ms) == WAIT_OBJECT_0 }
 }
 
 /// Every thread a snapshot of the system's threads names.
@@ -209,10 +217,8 @@ impl Thread {
 }
 
 impl OpenedThread for Thread {
-    /// A thread's object is signaled once the thread has ended.
     fn ended(&self) -> bool {
-        // SAFETY: the thread handle is open with `SYNCHRONIZE`; a zero timeout only polls.
-        unsafe { WaitForSingleObject(handle(&self.0), 0) == WAIT_OBJECT_0 }
+        signaled(handle(&self.0), 0)
     }
 
     fn owner(&self) -> Option<u32> {
