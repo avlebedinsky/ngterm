@@ -280,6 +280,36 @@ def test_run_in_a_removed_session_directory_starts_in_home(ctl, keymap):
         ctl.request("session.close", sid)
 
 
+@pytest.mark.since("0.42.1")
+@pytest.mark.requires(
+    "posix-command-line", reason="the command is a POSIX command line, and the scratch reports its directory with printf"
+)
+@pytest.mark.covers("keymap.run", "session.scratch")
+def test_run_keeps_the_primary_context_while_the_scratch_has_its_own_directory(ctl, keymap):
+    # upstream #981: the scratch's directory reaches only a chord typed in it; `keymap.run` keeps the primary pane
+    primary = ctl.instance.root / "run-primary"
+    scratch = primary / "scratch"
+    scratch.mkdir(parents=True)
+    marker = ctl.instance.root / "run-primary-context"
+    tmp = _quoted(f"{marker}.tmp")
+    keymap.write_text(
+        f"command \"where\" printf '%s|%s|%s|%s' \"$AGT_SESSION_PWD\" \"$AGT_SESSION_HOST\" \"$AGT_PANE\" \"$PWD\" "
+        f"> {tmp} && mv {tmp} {_quoted(marker)}\n"
+    )
+    assert assert_ok(ctl.request("keymap.reload")) == {"count": 0}
+    sid = _new(ctl, cwd=os.fspath(primary))
+    try:
+        report = f"printf '\\033]7;file://localhost%s\\007' {_quoted(scratch)}; exec cat"
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command=report))
+        ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == os.fspath(scratch))
+        assert assert_ok(ctl.request("keymap.run", sid, name="where")) == {"id": sid}
+        pwd, host, pane, cwd = _written(marker).split("|")
+        assert (pwd, host, pane) == (os.fspath(primary), "", "left")
+        assert os.path.realpath(cwd) == os.path.realpath(primary)
+    finally:
+        ctl.request("session.close", sid)
+
+
 @pytest.mark.covers("keymap.run", "keymap.reload")
 def test_reload_reaches_every_window(ctl, keymap, adapter):
     lines = CommandLines.of(adapter)

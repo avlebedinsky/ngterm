@@ -196,6 +196,35 @@ def test_tree_lists_workspaces_and_tagged_sessions(cli, ctl, adapter, tree_works
     _refused_json(cli("tree", "--json", "--window", UNKNOWN), f"no such window: {UNKNOWN}")
 
 
+def _tree_line(cli, sid):
+    (line,) = [line for line in _ok(cli("tree")).splitlines() if f"[{sid}]" in line]
+    return line
+
+
+@pytest.mark.since("0.42.1")
+@pytest.mark.requires("posix-command-line", reason="the scratch program reports its directory with printf")
+@pytest.mark.covers("cli:tree", "field:tree.session.scratchCwd")
+def test_tree_shows_the_scratch_cwd_only_when_it_differs(cli, ctl):
+    directory = ctl.instance.root / _name("cli-scratch-cwd")
+    directory.mkdir()
+    sid = _new(ctl, name=_name("scratch-cwd"))
+    try:
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exec cat"))
+        node = find_session(ctl.wait_tree(lambda tree: "scratchCwd" in find_session(tree, sid)), sid)
+        assert node["scratchCwd"] == node["cwd"], node
+        assert "scratch cwd:" not in _tree_line(cli, sid)
+        assert_ok(ctl.request("session.scratch", sid, mode="off"))
+        report = f"printf '\\033]7;file://localhost%s\\007' '{directory}'; exec cat"
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command=report))
+        ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(directory))
+        line = _tree_line(cli, sid)
+        assert f"  {node['cwd']}  scratch cwd: {directory}" in line, line
+        assert_ok(ctl.request("session.scratch", sid, mode="off"))
+        assert f"  scratch cwd: {directory}" in _tree_line(cli, sid), "a hidden scratch keeps its directory"
+    finally:
+        ctl.request("session.close", sid)
+
+
 def _events(ctl, cursor, last):
     """Every event after `cursor` up to the one with seq `last`, as the protocol reports them."""
     items, after = [], cursor.after
