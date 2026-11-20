@@ -150,11 +150,11 @@ index be141e9..b240357 100644
  
  $statusWrapper = $env:NGTERM_STATUS_WRAPPER
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 8a78b3f..123e297 100755
+index a4748d3..469e44b 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -37,6 +37,17 @@
- # (`agent_id`) never does; a subagent's permission prompt does, and `agent hook` keeps only the prompt of it.
+@@ -20,6 +20,17 @@
+ # rewrites at the end.
  set -u
  
 +# A background job of Claude Code's daemon (CLAUDE_JOB_DIR is set: Claude Code moves a conversation there on

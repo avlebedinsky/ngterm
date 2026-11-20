@@ -12,16 +12,16 @@
 //! of the XDG Base Directory spec, instead of an admin-owned `/usr/local/bin`. The
 //! agents' own configs live where upstream puts them.
 //!
-//! The payloads under the repository's `resources/` are upstream v0.41.1's `agterm/Resources/agent-status` and
+//! The payloads under `resources/` are upstream v0.42.3's `agterm/Resources/agent-status` and v0.41.1's
 //! `plugins/agterm/skills/agterm` (MIT, `resources/LICENSE.upstream`), at `resources/agent-status` and
 //! `resources/skills/ngterm` (the skill's directory renamed with the skill), with these deviations:
 //!
 //! - the Codex adapter reads the hook payload (the Stop's `last_assistant_message`, and the null `transcript_path` of
 //!   Codex's ephemeral memory-consolidation thread, whose events it ignores) with `python3` or `jq` where macOS has
 //!   `plutil`, and with none of the three reports such an event as any other;
-//! - the Claude adapter reads a `completed` call's payload and reports a `Stop` whose `background_tasks` lists work in
-//!   flight as `active --blink` (upstream's goes `completed` at once), and the installer adds a sixth Claude hook,
-//!   `SessionEnd` → `completed --auto-reset`, so that claim cannot outlive the agent ([`hooks_config`]);
+//! - the Claude adapter also keeps a `Stop` active for a background shell task. Upstream does this for subagents
+//!   and workflows only. The installer adds `SessionEnd` → `completed --auto-reset`, so the status ends with the agent
+//!   ([`hooks_config`]);
 //! - the package adds a restore adapter, `ngterm-agent-restore.sh`, which upstream has no counterpart for (it ships the
 //!   idea as its `claude-session-resume` cookbook recipe and the `SessionStart`-pin pattern in its skill): the
 //!   installer wires it to Claude Code's `SessionStart` and `SessionEnd` only (Codex gets no restore hooks), and it
@@ -130,7 +130,7 @@ pub struct Environment {
     pub skill: Option<PathBuf>,
     /// The bundled `ngtermctl`, the binary's sibling.
     pub bundled_cli: Option<PathBuf>,
-    /// The process environment, for the `OpenCode` probe and the `PATH` check.
+    /// The process environment, for `CODEX_HOME`, the `OpenCode` probe and the `PATH` check.
     pub vars: HashMap<String, String>,
 }
 
@@ -167,6 +167,29 @@ impl Environment {
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_path_buf));
         staged_resource_dir(exe_dir.as_deref(), "agent-status").is_some()
+    }
+
+    /// The custom Codex root from the process, or its login shell when the process has no `CODEX_HOME`.
+    #[must_use]
+    pub fn codex_home(&self) -> Option<PathBuf> {
+        let selected = self.vars.iter().find(|(key, _)| {
+            if cfg!(windows) {
+                key.eq_ignore_ascii_case("CODEX_HOME")
+            } else {
+                *key == "CODEX_HOME"
+            }
+        });
+        if let Some((_, value)) = selected {
+            return hooks_config::codex_home(Some(value), std::env::current_dir().ok().as_deref());
+        }
+        #[cfg(not(windows))]
+        {
+            opencode::codex_home(&self.vars)
+        }
+        #[cfg(windows)]
+        {
+            None
+        }
     }
 
     /// The home as text, for the paths the transforms build.

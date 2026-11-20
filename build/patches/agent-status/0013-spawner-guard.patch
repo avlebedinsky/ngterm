@@ -1,7 +1,7 @@
 Keep an agent that another agent started inside a pane from painting the spawner's row, an ngterm extension (upstream guards only the Claude adapter). The Codex hook stays silent with a second agent above its Codex inside the pane (the Claude adapter's ancestor walk, with its agent names, omp among them, and its pane boundary) and for a Codex that runs without its TUI (`codex exec`, `codex review`), told from its argv in /proc, else from the words `ps` joined where a value with a space, split in them, cannot mislead (no option before the first positional, `resume` or `fork` reports; `exec resume` with `--last` among its options or a session id as its first positional is silent, later words being the prompt's), and for other words or with no process table from the `source` of its rollout's session_meta (still wrong by the words, behind an option value with a space: a resume in either direction, and a `codex exec` whose split leaves `resume` or `fork` first; a `codex exec resume` of a TUI session by a thread name or with `--last` behind its prompt; and a TUI session whose prompt starts with `exec resume --last` or `exec resume <session id>`, which is silent): a reviewer's `codex exec` under a Claude Code worker inherited the worker's NGTERM_* and its Stop painted that session `blocked`. The shared wrapper's POSIX form makes the same walk for what reports through it alone (the Pi and Oh My Pi extensions, the OpenCode plugins), unless an adapter that has walked says so (NGTERM_STATUS_WALKED). Applied after 0012-oh-my-pi.patch.
 
 diff --git a/ngterm-agent-status.sh b/ngterm-agent-status.sh
-index 24092db1..5b45f243 100755
+index 24092db..5b45f24 100755
 --- a/ngterm-agent-status.sh
 +++ b/ngterm-agent-status.sh
 @@ -27,6 +27,61 @@ set -u
@@ -67,20 +67,20 @@ index 24092db1..5b45f243 100755
  # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
  state=$1
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 0d2551b7..93d69f3d 100755
+index 6126226..a17cd92 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -120,6 +120,8 @@ report_agent() {
+@@ -103,6 +103,8 @@ report_agent() {
    printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
  }
  
-+export NGTERM_STATUS_WALKED=1 # the walk above stands: the status wrapper need not repeat it
++export NGTERM_STATUS_WALKED=1
 +
- case "${1:-}" in
-   active | blocked)
-     if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then
+ # the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
+ # next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
+ # so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index 380edce0..40680b02 100755
+index 7dace96..0836a93 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -48,7 +48,8 @@ case "$action" in

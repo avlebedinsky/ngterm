@@ -12,7 +12,7 @@ above the hook. Applied after
 
 diff --git a/ngterm-agent-mail.ps1 b/ngterm-agent-mail.ps1
 new file mode 100644
-index 00000000..e2a09620
+index 0000000..e2a0962
 --- /dev/null
 +++ b/ngterm-agent-mail.ps1
 @@ -0,0 +1,45 @@
@@ -63,7 +63,7 @@ index 00000000..e2a09620
 +exit $status
 diff --git a/ngterm-agent-mail.sh b/ngterm-agent-mail.sh
 new file mode 100755
-index 00000000..24ef4ac5
+index 0000000..24ef4ac
 --- /dev/null
 +++ b/ngterm-agent-mail.sh
 @@ -0,0 +1,32 @@
@@ -100,7 +100,7 @@ index 00000000..24ef4ac5
 +
 +exec "${NGTERMCTL:-ngtermctl}" "${args[@]}"
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index aa63d170..3f400dc2 100755
+index 79e7b37..f54e1bc 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -10,6 +10,16 @@
@@ -134,8 +134,8 @@ index aa63d170..3f400dc2 100755
  esac
  
  # Pipes the payload to `ngtermctl agent hook codex <event>`; a subagent's event other than a permission prompt is left
-@@ -105,6 +122,18 @@ if not (isinstance(payload, dict) and "transcript_path" in payload and payload["
-   fi
+@@ -100,6 +117,18 @@ assistant_message_contains_question() {
+   [[ "$prose" =~ $question ]]
  }
  
 +# Takes the pane's mail for this event into $mail_output, the hook answer `ngtermctl agent mail codex` prints; fails
@@ -153,7 +153,7 @@ index aa63d170..3f400dc2 100755
  read_visible_screen() {
    "${NGTERMCTL:-ngtermctl}" session text \
      --target "$NGTERM_SESSION_ID" \
-@@ -202,9 +231,14 @@ case "$action" in
+@@ -196,9 +225,14 @@ case "$action" in
      report_agent UserPromptSubmit
      report_status active --blink
      start_watcher
@@ -169,7 +169,7 @@ index aa63d170..3f400dc2 100755
      ;;
    permission-request)
      # Candidate only: keep watching while Auto Review decides. The watcher reports blocked only if
-@@ -213,6 +247,11 @@ case "$action" in
+@@ -207,6 +241,11 @@ case "$action" in
      start_watcher
      ;;
    stop)

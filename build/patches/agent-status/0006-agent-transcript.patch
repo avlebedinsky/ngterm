@@ -1,16 +1,9 @@
-The agent record of the Android chat view, an ngterm extension: the adapters that own the four events the record
-needs pipe the hook payload to `ngtermctl agent hook <claude|codex> <event>`, which parses it in Rust and sends
-`agent.report`. Claude Code's SessionStart and SessionEnd go through the restore adapter, under its guards (the
-interactive CLI only, no subagent), every end whatever its reason; its UserPromptSubmit and PermissionRequest through
-the Claude status adapter, which reads the payload's head for the event an `active` or `blocked` call stands for (so a
-PostToolUse payload stays unread), after its process-topology walk and only for the interactive CLI, a subagent's
-prompt left out. Codex's SessionStart, UserPromptSubmit and PermissionRequest go through its adapter, which reads
-those three payloads once and hands them on to its own readers; a subagent's events other than a permission prompt are
-left out. PostToolUse and Stop make no call. The PowerShell forms do the same, reading and handing on the payload as
-UTF-8. Applied after 0005-codex-own-process.patch.
+Keep the chat hooks of ngterm. Send the same payload to the chat record and the status rules.
+
+The prompt reader keeps its fast path for large payloads. Restore hooks keep their guards and UTF-8 payloads.
 
 diff --git a/ngterm-agent-restore.ps1 b/ngterm-agent-restore.ps1
-index 7ec08adb..6a7947ba 100644
+index 7ec08ad..6a7947b 100644
 --- a/ngterm-agent-restore.ps1
 +++ b/ngterm-agent-restore.ps1
 @@ -11,6 +11,10 @@
@@ -37,7 +30,7 @@ index 7ec08adb..6a7947ba 100644
 @@ -48,28 +53,46 @@ function Get-SessionId {
    return $null
  }
- 
+
 +function Get-Ngtermctl {
 +  if ($env:NGTERMCTL) { return $env:NGTERMCTL }
 +  $baked = Get-Variable -Name NgtermctlBaked -ValueOnly -ErrorAction SilentlyContinue
@@ -58,7 +51,7 @@ index 7ec08adb..6a7947ba 100644
    if ($env:NGTERM_SOCKET) { $cli += @('--socket', $env:NGTERM_SOCKET) }
    try { $null | & $ngtermctl @cli *> $null } catch { }
  }
- 
+
 +# Pipes the payload to `ngtermctl agent hook claude <event>`, the pane addressed as the status hooks address it.
 +function Send-AgentHook([string] $agentEvent) {
 +  $ngtermctl = Get-Ngtermctl
@@ -88,7 +81,7 @@ index 7ec08adb..6a7947ba 100644
        if ($reason -ceq 'prompt_input_exit' -or $reason -ceq 'logout') { Invoke-Restore @('--clear') }
      }
 diff --git a/ngterm-agent-restore.sh b/ngterm-agent-restore.sh
-index 64072303..9827f7ab 100755
+index 6407230..9827f7a 100755
 --- a/ngterm-agent-restore.sh
 +++ b/ngterm-agent-restore.sh
 @@ -29,6 +29,10 @@
@@ -105,7 +98,7 @@ index 64072303..9827f7ab 100755
 @@ -70,16 +74,27 @@ restore() {
    "${NGTERMCTL:-ngtermctl}" "${args[@]}" </dev/null || true
  }
- 
+
 +# Pipes the payload to `ngtermctl agent hook claude <event>`, the pane addressed as the status hooks address it.
 +agent_hook() {
 +  local args=(agent hook claude "$1" --target "$NGTERM_SESSION_ID")
@@ -131,7 +124,7 @@ index 64072303..9827f7ab 100755
        case "$reason" in prompt_input_exit | logout) restore --clear ;; esac
        ;;
 diff --git a/ngterm-claude-status.ps1 b/ngterm-claude-status.ps1
-index f4fbea1b..be141e98 100644
+index f4fbea1..be141e9 100644
 --- a/ngterm-claude-status.ps1
 +++ b/ngterm-claude-status.ps1
 @@ -15,8 +15,18 @@
@@ -152,13 +145,13 @@ index f4fbea1b..be141e98 100644
 +#
 +# ngtermctl resolution: $env:NGTERMCTL, else the path the installer bakes in ($NgtermctlBaked), else `ngtermctl` on
 +# PATH.
- 
+
  if (-not $env:NGTERM_SESSION_ID) { exit 0 }
- 
+
 @@ -91,6 +101,46 @@ function Test-Worker {
- 
+
  if (Test-Worker) { exit 0 }
- 
+
 +# The hook payload on stdin as UTF-8, or '' when none arrives within `$milliseconds`.
 +function Read-Payload([int] $milliseconds) {
 +  try {
@@ -203,35 +196,13 @@ index f4fbea1b..be141e98 100644
    $payload = ''
    try {
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 0560a8c5..8a78b3f4 100755
+index 1c6fedc..a4748d3 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -23,9 +23,18 @@
- # when nothing is in flight), so a Stop that would post `completed` posts `active --blink` instead and
- # the row keeps pulsing until a Stop with nothing in flight, or the SessionEnd hook the installer adds
- # when the agent quits first. Upstream's stock Stop goes green at once and covers this case only in its
--# truthful-agent-lights cookbook recipe. Only a `completed` call reads
--# stdin, where Claude Code writes the payload as JSON; a key quoted inside a string value is escaped
--# (`\"background_tasks\"`), so the match cannot hit the last assistant message.
-+# truthful-agent-lights cookbook recipe. A `completed` call reads stdin, where Claude Code writes the
-+# payload as JSON, for this check (an `active` or `blocked` call reads it for the chat view below); a
-+# key quoted inside a string value is escaped (`\"background_tasks\"`), so the match cannot hit the
-+# last assistant message.
-+#
-+# ngterm's chat view (an ngterm extension): `UserPromptSubmit` and `PermissionRequest` also report to the pane's agent
-+# record, piping the payload to `ngtermctl agent hook claude <event>` ahead of the status. Their state does not name
-+# the event (`PostToolUse` posts `active` too), so an `active` or `blocked` call reads the payload's head for its
-+# `hook_event_name`, and only those two events read the rest, with `cat`, since bash's `read` takes a pipe a byte at a
-+# time: a `PostToolUse` payload, which can hold a whole tool output, stays unread. Only the interactive CLI reports (a
-+# `claude -p` worker runs with CLAUDE_CODE_ENTRYPOINT `sdk-cli`, besides the walk above), and a subagent's prompt
-+# (`agent_id`) never does; a subagent's permission prompt does, and `agent hook` keeps only the prompt of it.
- set -u
- 
- [ -n "${NGTERM_SESSION_ID:-}" ] || exit 0
-@@ -89,6 +98,34 @@ for _ in 1 2 3 4 5 6 7 8; do
+@@ -81,12 +81,38 @@ for _ in 1 2 3 4 5 6 7 8; do
    p=$ppid
  done
- 
+
 +# Pipes $payload to `ngtermctl agent hook claude <event>`, the pane addressed as the status wrapper addresses it.
 +report_agent() {
 +  local args=(agent hook claude "$1" --target "$NGTERM_SESSION_ID")
@@ -241,30 +212,35 @@ index 0560a8c5..8a78b3f4 100755
 +  printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
 +}
 +
-+case "${1:-}" in
-+  active | blocked)
-+    if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then
-+      payload=
-+      IFS= read -r -d '' -n 4096 -t 2 payload || true
-+      record_re='"hook_event_name"[[:space:]]*:[[:space:]]*"(UserPromptSubmit|PermissionRequest)"'
-+      subagent_re='(^|[^\\])"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
-+      if [[ $payload =~ $record_re ]]; then
-+        event=${BASH_REMATCH[1]}
-+        rest=$(cat) # the payload ends in its closing brace, so dropping trailing newlines loses nothing
-+        payload=$payload$rest
-+        if [ "$event" = PermissionRequest ] || ! [[ $payload =~ $subagent_re ]]; then
-+          report_agent "$event"
-+        fi
-+      fi
+ # the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
+ # next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
+ # so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
+ # the payload is tested, not the status.
+ payload=
+-[ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
++if [ ! -t 0 ]; then
++  IFS= read -r -d '' -n 4096 -t 2 payload || true
++  record_re='"hook_event_name"[[:space:]]*:[[:space:]]*"(UserPromptSubmit|PermissionRequest)"'
++  if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] &&
++    { [ "${1:-}" = active ] || [ "${1:-}" = blocked ]; } && [[ $payload =~ $record_re ]]; then
++    event=${BASH_REMATCH[1]}
++    rest=$(cat)
++    payload=$payload$rest
++    subagent_re='(^|[^\\])"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
++    if [ "$event" = PermissionRequest ] || ! [[ $payload =~ $subagent_re ]]; then
++      report_agent "$event"
 +    fi
-+    ;;
-+esac
-+
- if [ "${1:-}" = completed ] && [ ! -t 0 ]; then
-   payload=
-   IFS= read -r -d '' -t 2 payload || true # EOF ends the read: the payload carries no NUL
++  elif [ "${#payload}" -eq 4096 ]; then
++    rest=
++    IFS= read -r -d '' -t 2 rest || true
++    payload=$payload$rest
++  fi
++fi
+
+ field() { # key path value, array length for an array, empty when absent or unparseable
+   if [[ $OSTYPE == darwin* ]] && [ -x /usr/bin/plutil ]; then
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index e7368f8d..aa63d170 100755
+index e2466e1..79e7b37 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -5,6 +5,11 @@
@@ -277,12 +253,12 @@ index e7368f8d..aa63d170 100755
 +# front and hand it on to the readers below. A subagent's events fire here with its `agent_id` and its own transcript:
 +# only its permission prompt is reported, and `agent hook` keeps only the prompt of it.
  set -u
- 
+
  [ -n "${NGTERM_SESSION_ID:-}" ] || exit 0
 @@ -26,6 +31,27 @@ report_status() {
    "$status_wrapper" "$@" >/dev/null 2>&1 || true
  }
- 
+
 +payload=
 +case "$action" in
 +  session-start|user-prompt-submit|permission-request)
@@ -304,11 +280,11 @@ index e7368f8d..aa63d170 100755
 +    "${pane_args[@]+"${pane_args[@]}"}" >/dev/null 2>&1 || true
 +}
 +
- assistant_message_contains_question() {
-   local message prose question quoted_mark
-   # ngterm's Linux changes to this script: with no plutil, python3 or jq reads the payload's field, and awk, sed,
-@@ -168,10 +194,12 @@ esac
- 
+ # macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so the platform picks the
+ # tool, and the server installer requires jq there.
+ # json_string prints a top-level string field of the JSON on stdin and fails when it is absent or not a string.
+@@ -162,10 +188,12 @@ esac
+
  case "$action" in
    session-start)
 +    report_agent SessionStart
@@ -320,7 +296,7 @@ index e7368f8d..aa63d170 100755
      report_status active --blink
      start_watcher
      ;;
-@@ -181,6 +209,7 @@ case "$action" in
+@@ -175,6 +203,7 @@ case "$action" in
    permission-request)
      # Candidate only: keep watching while Auto Review decides. The watcher reports blocked only if
      # Codex subsequently leaves a real approval prompt visible for the user.

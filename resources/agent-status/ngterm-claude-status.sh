@@ -16,25 +16,8 @@
 #
 # It fails OPEN (reports) whenever the chain is unreadable or severed, e.g. a detached worker whose
 # spawner already exited: a missed guard is the behavior without this adapter, while a false silence
-# is a bug with no symptom. The argv is forwarded to the shared wrapper verbatim, with one exception:
-#
-# A turn can end with work still in flight, a background shell, subagent or monitor that wakes the
-# agent again when it is done. Claude Code's Stop payload lists that work in `background_tasks` (empty
-# when nothing is in flight), so a Stop that would post `completed` posts `active --blink` instead and
-# the row keeps pulsing until a Stop with nothing in flight, or the SessionEnd hook the installer adds
-# when the agent quits first. Upstream's stock Stop goes green at once and covers this case only in its
-# truthful-agent-lights cookbook recipe. A `completed` call reads stdin, where Claude Code writes the
-# payload as JSON, for this check (an `active` or `blocked` call reads it for the chat view below); a
-# key quoted inside a string value is escaped (`\"background_tasks\"`), so the match cannot hit the
-# last assistant message.
-#
-# ngterm's chat view (an ngterm extension): `UserPromptSubmit` and `PermissionRequest` also report to the pane's agent
-# record, piping the payload to `ngtermctl agent hook claude <event>` ahead of the status. Their state does not name
-# the event (`PostToolUse` posts `active` too), so an `active` or `blocked` call reads the payload's head for its
-# `hook_event_name`, and only those two events read the rest, with `cat`, since bash's `read` takes a pipe a byte at a
-# time: a `PostToolUse` payload, which can hold a whole tool output, stays unread. Only the interactive CLI reports (a
-# `claude -p` worker runs with CLAUDE_CODE_ENTRYPOINT `sdk-cli`, besides the walk above), and a subagent's prompt
-# (`agent_id`) never does; a subagent's permission prompt does, and `agent hook` keeps only the prompt of it.
+# is a bug with no symptom. The argv reaches the shared wrapper unchanged except for the two payload
+# rewrites at the end.
 set -u
 
 # A background job of Claude Code's daemon (CLAUDE_JOB_DIR is set: Claude Code moves a conversation there on
@@ -120,34 +103,66 @@ report_agent() {
   printf '%s' "$payload" | "${NGTERMCTL:-ngtermctl}" "${args[@]}" >/dev/null 2>&1 || true
 }
 
-export NGTERM_STATUS_WALKED=1 # the walk above stands: the status wrapper need not repeat it
+export NGTERM_STATUS_WALKED=1
 
-case "${1:-}" in
-  active | blocked)
-    if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] && [ ! -t 0 ]; then
-      payload=
-      IFS= read -r -d '' -n 4096 -t 2 payload || true
-      record_re='"hook_event_name"[[:space:]]*:[[:space:]]*"(UserPromptSubmit|PermissionRequest)"'
-      subagent_re='(^|[^\\])"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
-      if [[ $payload =~ $record_re ]]; then
-        event=${BASH_REMATCH[1]}
-        rest=$(cat) # the payload ends in its closing brace, so dropping trailing newlines loses nothing
-        payload=$payload$rest
-        if [ "$event" = PermissionRequest ] || ! [[ $payload =~ $subagent_re ]]; then
-          report_agent "$event"
-        fi
-      fi
+# the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
+# next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
+# so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
+# the payload is tested, not the status.
+payload=
+if [ ! -t 0 ]; then
+  IFS= read -r -d '' -n 4096 -t 2 payload || true
+  record_re='"hook_event_name"[[:space:]]*:[[:space:]]*"(UserPromptSubmit|PermissionRequest)"'
+  if [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] &&
+    { [ "${1:-}" = active ] || [ "${1:-}" = blocked ]; } && [[ $payload =~ $record_re ]]; then
+    event=${BASH_REMATCH[1]}
+    rest=$(cat)
+    payload=$payload$rest
+    subagent_re='(^|[^\\])"agent_id"[[:space:]]*:[[:space:]]*"[^"]'
+    if [ "$event" = PermissionRequest ] || ! [[ $payload =~ $subagent_re ]]; then
+      report_agent "$event"
     fi
-    ;;
-esac
+  elif [ "${#payload}" -eq 4096 ]; then
+    rest=
+    IFS= read -r -d '' -t 2 rest || true
+    payload=$payload$rest
+  fi
+fi
 
-if [ "${1:-}" = completed ] && [ ! -t 0 ]; then
-  payload=
-  IFS= read -r -d '' -t 2 payload || true # EOF ends the read: the payload carries no NUL
-  stop_re='"hook_event_name"[[:space:]]*:[[:space:]]*"Stop"'
-  in_flight_re='"background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{'
-  if [[ $payload =~ $stop_re ]] && [[ $payload =~ $in_flight_re ]]; then
-    exec "$status_wrapper" active --blink
+field() { # key path value, array length for an array, empty when absent or unparseable
+  if [[ $OSTYPE == darwin* ]] && [ -x /usr/bin/plutil ]; then
+    if v=$(printf '%s' "$payload" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null); then printf '%s' "$v"; fi
+  elif command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$payload" | python3 -c 'import json, sys
+value = json.load(sys.stdin)
+for key in sys.argv[1].split("."):
+    value = value[int(key)] if isinstance(value, list) else value[key]
+if isinstance(value, list): print(len(value), end="")
+elif isinstance(value, (str, int, float)) and not isinstance(value, bool): print(value, end="")' "$1" 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    printf '%s' "$payload" | jq -r --arg p "$1" \
+      'getpath($p | split(".") | map(tonumber? // .)) | if type == "array" then length else . // empty end' 2>/dev/null
+  fi
+}
+
+running_agent() {
+  n=$(field background_tasks)
+  case "$n" in '' | *[!0-9]*) return 1 ;; esac
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ "$(field "background_tasks.$i.status")" = running ]; then
+      case "$(field "background_tasks.$i.type")" in subagent | workflow | shell) return 0 ;; esac
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+if [ -n "$payload" ]; then
+  if [ -n "$(field agent_id)" ]; then
+    [ "${1:-}" = active ] && set -- "$@" --if-idle
+  elif [ "${1:-}" = completed ] && [ "$(field hook_event_name)" = Stop ] && running_agent; then
+    set -- active --blink
   fi
 fi
 

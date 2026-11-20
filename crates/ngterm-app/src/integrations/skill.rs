@@ -1,6 +1,6 @@
 //! The agent skill installer (upstream's `SkillInstall.swift` and `SkillInstaller.swift`): the bundled skill into the
 //! skills directory of every coding agent present: Claude Code (`~/.claude/skills/ngterm`), Codex
-//! (`~/.codex/skills/ngterm`) and Oh My Pi (`~/.omp/agent/skills/ngterm`), Claude Code's when none is present.
+//! (`$CODEX_HOME/skills/ngterm`, default `~/.codex/skills/ngterm`) and Oh My Pi (`~/.omp/agent/skills/ngterm`), Claude Code's when none is present.
 //! Idempotent, and a same-named skill the user wrote (`SKILL.md` absent, unreadable or unmarked) is never overwritten.
 //!
 //! The skill is named `ngterm`, not upstream's `agterm`: upstream installs its own `agterm` skill into the same agents'
@@ -104,6 +104,8 @@ pub enum TargetPlan {
     Install { target: Target, fresh_skills_dir: bool },
     /// A different `ngterm` skill is there: left untouched.
     UserOwned(Target),
+    /// The custom Codex root does not exist.
+    MissingCodex(PathBuf),
 }
 
 /// The plan: the bundled source and one step per target.
@@ -111,6 +113,8 @@ pub enum TargetPlan {
 pub struct SkillPlan {
     pub source: PathBuf,
     pub targets: Vec<TargetPlan>,
+    /// The custom Codex root, when `CODEX_HOME` selects one.
+    pub codex_home: Option<PathBuf>,
 }
 
 /// Plans the install over `env`'s home, without writing.
@@ -125,12 +129,20 @@ pub fn plan(env: &Environment) -> Result<SkillPlan, InstallError> {
         .filter(|source| source.is_dir())
         .ok_or_else(|| InstallError("The agent skill is not bundled in this build.".to_owned()))?;
     let home = &env.home;
+    let codex_home = env.codex_home();
+    let codex_directory = codex_home.clone().unwrap_or_else(|| home.join(".codex"));
     let agents = [Agent::Claude, Agent::Codex, Agent::Omp]
         .into_iter()
-        .filter(|agent| join_relative(home, agent.config_directory()).exists());
-    let targets = install_targets(home, agents)
+        .filter(|agent| match agent {
+            Agent::Codex => codex_directory.exists(),
+            _ => join_relative(home, agent.config_directory()).exists(),
+        });
+    let mut targets: Vec<_> = install_targets(home, agents)
         .into_iter()
-        .map(|target| {
+        .map(|mut target| {
+            if target.agent == "Codex" {
+                target.skill_directory = codex_directory.join("skills").join(SKILL_NAME);
+            }
             // lstat: a symlink there, dangling or not, counts as present, so the wipe never deletes the user's link
             let directory_exists = files::entry_exists(&target.skill_directory);
             let existing = fs::read_to_string(target.skill_directory.join("SKILL.md")).ok();
@@ -144,7 +156,14 @@ pub fn plan(env: &Environment) -> Result<SkillPlan, InstallError> {
             }
         })
         .collect();
-    Ok(SkillPlan { source, targets })
+    if codex_home.is_some() && !codex_directory.exists() {
+        targets.push(TargetPlan::MissingCodex(codex_directory));
+    }
+    Ok(SkillPlan {
+        source,
+        targets,
+        codex_home,
+    })
 }
 
 /// What the install did (upstream's `Report`).
@@ -160,10 +179,19 @@ pub struct SkillReport {
 pub fn apply(plan: &SkillPlan) -> SkillReport {
     let mut report = SkillReport::default();
     for step in &plan.targets {
+        let prefix = match step {
+            TargetPlan::Install { target, .. } | TargetPlan::UserOwned(target)
+                if target.agent == "Codex" && plan.codex_home.is_some() =>
+            {
+                format!("{}: ", target.skill_directory.display())
+            }
+            _ => String::new(),
+        };
         match step {
+            TargetPlan::MissingCodex(path) => report.skipped.push(("Codex", format!("no {} found", path.display()))),
             TargetPlan::UserOwned(target) => report.skipped.push((
                 target.agent,
-                format!("a different '{SKILL_NAME}' skill is already there — left untouched"),
+                format!("{prefix}a different '{SKILL_NAME}' skill is already there — left untouched"),
             )),
             TargetPlan::Install {
                 target,
@@ -173,7 +201,7 @@ pub fn apply(plan: &SkillPlan) -> SkillReport {
                     report.fresh_skills_dir |= fresh_skills_dir;
                     report.installed.push((target.agent, target.skill_directory.clone()));
                 }
-                Err(err) => report.skipped.push((target.agent, err.to_string())),
+                Err(err) => report.skipped.push((target.agent, format!("{prefix}{err}"))),
             },
         }
     }

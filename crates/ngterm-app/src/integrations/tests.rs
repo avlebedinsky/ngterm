@@ -1127,3 +1127,6 @@ fn the_bundled_resources_carry_their_ownership_markers() {
         );
     }
 }
+
+#[path = "codex_install_tests.rs"]
+mod codex_install_tests;

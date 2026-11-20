@@ -1,8 +1,4 @@
-This build's changes to upstream's agterm/Resources/agent-status from before it took the name ngterm: the wrappers
-and plugins call the CLI as `ngtermctl`; the Claude adapter keeps a Stop with background work in flight `active`
-(the row pulses until that work ends or SessionEnd fires); the Codex adapter reads its payload with python3 or jq
-where macOS's plutil is missing and finds awk, sed, tr and tail on PATH. sync-resources.sh reapplies this series to
-upstream's tree after every sync; a hunk an upstream release conflicts with is merged by hand, keeping these.
+Keep ngterm's CLI names, Python and jq payload readers, PATH tools, and background shell status on Linux.
 
 diff --git a/agterm-agent-status.sh b/agterm-agent-status.sh
 index e2f70c0..887bab8 100755
@@ -43,7 +39,7 @@ index e2f70c0..887bab8 100755
  pane_args=()
  [ -n "${AGTERM_PANE:-}" ] && pane_args+=(--pane "$AGTERM_PANE")
  [ -n "${AGTERM_PANE_ID:-}" ] && pane_args+=(--pane-id "$AGTERM_PANE_ID")
- 
+
  if [ -n "${AGTERM_SOCKET:-}" ]; then
 -  "${AGTERMCTL:-agtermctl}" session status "$state" \
 +  "${AGTERMCTL:-ngtermctl}" session status "$state" \
@@ -56,72 +52,68 @@ index e2f70c0..887bab8 100755
  fi
  exit 0
 diff --git a/agterm-claude-status.sh b/agterm-claude-status.sh
-index 30825d2..26c0bd7 100755
+index 6e4782b..8f8fb8a 100755
 --- a/agterm-claude-status.sh
 +++ b/agterm-claude-status.sh
-@@ -16,8 +16,16 @@
- #
- # It fails OPEN (reports) whenever the chain is unreadable or severed, e.g. a detached worker whose
- # spawner already exited: a missed guard is the behavior without this adapter, while a false silence
--# is a bug with no symptom. The argv is forwarded to the shared wrapper verbatim, so the adapter adds
--# a guard and changes nothing else; it never reads stdin, so a payload another hook wants is intact.
-+# is a bug with no symptom. The argv is forwarded to the shared wrapper verbatim, with one exception:
-+#
-+# A turn can end with work still in flight, a background shell, subagent or monitor that wakes the
-+# agent again when it is done. Claude Code's Stop payload lists that work in `background_tasks` (empty
-+# when nothing is in flight), so a Stop that would post `completed` posts `active --blink` instead and
-+# the row keeps pulsing until a Stop with nothing in flight, or the SessionEnd hook the installer adds
-+# when the agent quits first. Upstream's stock Stop goes green at once and covers this case only in its
-+# truthful-agent-lights cookbook recipe. Only a `completed` call reads
-+# stdin, where Claude Code writes the payload as JSON; a key quoted inside a string value is escaped
-+# (`\"background_tasks\"`), so the match cannot hit the last assistant message.
- set -u
- 
- [ -n "${AGTERM_SESSION_ID:-}" ] || exit 0
-@@ -81,4 +89,14 @@ for _ in 1 2 3 4 5 6 7 8; do
-   p=$ppid
- done
- 
-+if [ "${1:-}" = completed ] && [ ! -t 0 ]; then
-+  payload=
-+  IFS= read -r -d '' -t 2 payload || true # EOF ends the read: the payload carries no NUL
-+  stop_re='"hook_event_name"[[:space:]]*:[[:space:]]*"Stop"'
-+  in_flight_re='"background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{'
-+  if [[ $payload =~ $stop_re ]] && [[ $payload =~ $in_flight_re ]]; then
-+    exec "$status_wrapper" active --blink
-+  fi
-+fi
-+
- exec "$status_wrapper" "$@"
+@@ -89,8 +89,15 @@ payload=
+ [ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
+
+ field() { # key path value, array length for an array, empty when absent or unparseable
+-  if [ -x /usr/bin/plutil ]; then
++  if [[ $OSTYPE == darwin* ]] && [ -x /usr/bin/plutil ]; then
+     if v=$(printf '%s' "$payload" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null); then printf '%s' "$v"; fi
++  elif command -v python3 >/dev/null 2>&1; then
++    printf '%s' "$payload" | python3 -c 'import json, sys
++value = json.load(sys.stdin)
++for key in sys.argv[1].split("."):
++    value = value[int(key)] if isinstance(value, list) else value[key]
++if isinstance(value, list): print(len(value), end="")
++elif isinstance(value, (str, int, float)) and not isinstance(value, bool): print(value, end="")' "$1" 2>/dev/null
+   elif command -v jq >/dev/null 2>&1; then
+     printf '%s' "$payload" | jq -r --arg p "$1" \
+       'getpath($p | split(".") | map(tonumber? // .)) | if type == "array" then length else . // empty end' 2>/dev/null
+@@ -103,7 +110,7 @@ running_agent() {
+   i=0
+   while [ "$i" -lt "$n" ]; do
+     if [ "$(field "background_tasks.$i.status")" = running ]; then
+-      case "$(field "background_tasks.$i.type")" in subagent | workflow) return 0 ;; esac
++      case "$(field "background_tasks.$i.type")" in subagent | workflow | shell) return 0 ;; esac
+     fi
+     i=$((i + 1))
+   done
 diff --git a/agterm-codex-status.sh b/agterm-codex-status.sh
-index 6395bd8..0dfdc06 100755
+index 1cfade4..781439e 100755
 --- a/agterm-codex-status.sh
 +++ b/agterm-codex-status.sh
-@@ -28,20 +28,59 @@ report_status() {
- 
- assistant_message_contains_question() {
-   local message prose question quoted_mark
--  message=$(/usr/bin/plutil -extract last_assistant_message raw -o - - 2>/dev/null) || return 1
-+  # agterm-rs's Linux changes to this script: with no plutil, python3 or jq reads the payload's field, and awk, sed,
-+  # tr and tail are found on PATH (NixOS, Guix and a non-merged /usr have no /usr/bin copies)
-+  if [ -x /usr/bin/plutil ]; then
-+    message=$(/usr/bin/plutil -extract last_assistant_message raw -o - - 2>/dev/null) || return 1
-+  elif command -v python3 >/dev/null 2>&1; then
-+    message=$(python3 -c '
-+import json
-+import sys
-+
-+value = json.load(sys.stdin).get("last_assistant_message")
-+if not isinstance(value, str):
-+    raise SystemExit(1)
-+sys.stdout.write(value)
-+' 2>/dev/null) || return 1
-+  elif command -v jq >/dev/null 2>&1; then
-+    message=$(jq -er '.last_assistant_message | strings' 2>/dev/null) || return 1
-+  else
-+    return 1
+@@ -34,6 +34,13 @@ json_string() {
+     /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null
+     return
+   fi
++  if command -v python3 >/dev/null 2>&1; then
++    python3 -c 'import json, sys
++value = json.load(sys.stdin).get(sys.argv[1])
++if not isinstance(value, str): raise SystemExit(1)
++sys.stdout.write(value)' "$1" 2>/dev/null
++    return
 +  fi
-   # a ? that opens quoted text ("? for shortcuts") ends no word, yet its opener would pass as one
+   jq -er --arg key "$1" '.[$key] | strings' 2>/dev/null
+ }
+
+@@ -43,6 +50,13 @@ json_null() {
+     [ "$(/usr/bin/plutil -type "$1" - 2>/dev/null)" = "(any)" ]
+     return
+   fi
++  if command -v python3 >/dev/null 2>&1; then
++    python3 -c 'import json, sys
++value = json.load(sys.stdin)
++key = sys.argv[1]
++if not (isinstance(value, dict) and key in value and value[key] is None): raise SystemExit(1)' "$1" 2>/dev/null
++    return
++  fi
+   jq -e --arg key "$1" 'has($key) and .[$key] == null' >/dev/null 2>&1
+ }
+
+@@ -53,15 +67,15 @@ assistant_message_contains_question() {
    quoted_mark=$'s/(^|[[:space:]])([“‘"\'([*_]+)\\?/\\1\\2/g'
    # a span becomes a word rather than nothing so "run `make test`?" keeps its ? attached
    prose=$(printf '%s\n' "$message" \
@@ -133,35 +125,14 @@ index 6395bd8..0dfdc06 100755
    question=$'[^[:space:]]\\?[]"\')*_!’”]*([[:space:]]|$)'
    [[ "$prose" =~ $question ]]
  }
- 
-+# whether the payload's transcript_path is there and null. plutil types a null as "(any)"; with no plutil, python3 or
-+# jq reads it, and with none of the three nothing counts as null, so the event is reported (fail open)
-+transcript_path_is_null() {
-+  if [ -x /usr/bin/plutil ]; then
-+    [ "$(/usr/bin/plutil -type transcript_path - 2>/dev/null)" = "(any)" ]
-+  elif command -v python3 >/dev/null 2>&1; then
-+    python3 -c '
-+import json
-+import sys
-+
-+payload = json.load(sys.stdin)
-+if not (isinstance(payload, dict) and "transcript_path" in payload and payload["transcript_path"] is None):
-+    raise SystemExit(1)
-+' 2>/dev/null
-+  elif command -v jq >/dev/null 2>&1; then
-+    jq -e 'type == "object" and has("transcript_path") and .transcript_path == null' >/dev/null 2>&1
-+  else
-+    return 1
-+  fi
-+}
-+
+
  read_visible_screen() {
 -  "${AGTERMCTL:-agtermctl}" session text \
 +  "${AGTERMCTL:-ngtermctl}" session text \
      --target "$AGTERM_SESSION_ID" \
      "${socket_args[@]+"${socket_args[@]}"}" \
      "${pane_args[@]+"${pane_args[@]}"}" 2>/dev/null
-@@ -54,7 +93,7 @@ watch_file_path() {
+@@ -74,7 +88,7 @@ watch_file_path() {
    fi
    local key pane_key
    pane_key=${AGTERM_PANE_ID:-${AGTERM_PANE:-left}}
@@ -169,40 +140,31 @@ index 6395bd8..0dfdc06 100755
 +  key=$(printf '%s-%s' "$AGTERM_SESSION_ID" "$pane_key" | tr -c 'A-Za-z0-9._-' '_')
    printf '%s/agterm-codex-watch-%s-%s' "${TMPDIR:-/tmp}" "${UID:-0}" "$key"
  }
- 
-@@ -83,7 +122,7 @@ watch_for_blocker() {
+
+@@ -103,7 +117,7 @@ watch_for_blocker() {
      current_token=$(cat "$token_file" 2>/dev/null) || break
      [ "$current_token" = "$token" ] || break
      screen=$(read_visible_screen) || break
 -    footer=$(printf '%s\n' "$screen" | /usr/bin/tail -n 12 | /usr/bin/tr '[:upper:]' '[:lower:]')
 +    footer=$(printf '%s\n' "$screen" | tail -n 12 | tr '[:upper:]' '[:lower:]')
- 
+
      case "$footer" in
        *"press enter to confirm"*|*"enter to submit answer"*|*"enter to submit all"*|*"allow command?"*)
-@@ -123,7 +162,7 @@ case "$action" in
-     # events would leave the pane active and replace the foreground watcher. it is ephemeral, so its
-     # transcript_path is null, which plutil types as "(any)". foreground ephemeral sessions lose
-     # these updates too.
--    [ "$(/usr/bin/plutil -type transcript_path - 2>/dev/null)" = "(any)" ] && exit 0
-+    transcript_path_is_null && exit 0
-     ;;
- esac
- 
 diff --git a/opencode/agterm-status.js b/opencode/agterm-status.js
 index d46005e..47a9386 100644
 --- a/opencode/agterm-status.js
 +++ b/opencode/agterm-status.js
 @@ -29,7 +29,7 @@ const ABORT_ERROR_NAMES = new Set(["MessageAbortedError", "AbortError"]);
  const OVERFLOW_ERROR_NAME = "ContextOverflowError";
- 
+
  function defaultWrapperPath() {
 -  return join(homedir(), ".config", "agterm", "agent-status", "agterm-agent-status.sh");
 +  return join(homedir(), ".config", "ngterm", "agent-status", "agterm-agent-status.sh");
  }
- 
+
  function errorName(error) {
 @@ -53,7 +53,7 @@ function createReportQueue(reportFn) {
- 
+
  function spawnReport(wrapper, args) {
    // Bound wait with real process-group cancellation (detached + kill(-pid)), not the old 1s
 -  // abandonment that reordered reports under load while leaving agtermctl running.
@@ -216,12 +178,12 @@ index 1eee2e5..3cd1a88 100644
 +++ b/opencode/agterm-v2/tui.js
 @@ -15,7 +15,7 @@ const COMPLETED = ["completed", "--auto-reset"];
  const IDLE = ["idle"];
- 
+
  function defaultWrapperPath() {
 -  return join(homedir(), ".config", "agterm", "agent-status", "agterm-agent-status.sh");
 +  return join(homedir(), ".config", "ngterm", "agent-status", "agterm-agent-status.sh");
  }
- 
+
  /** Serialize reports so a slow spawn cannot reorder status; failures must never reject into OpenCode. */
 diff --git a/pi/agterm-status.ts b/pi/agterm-status.ts
 index b4da4e8..ba60277 100644
@@ -229,10 +191,10 @@ index b4da4e8..ba60277 100644
 +++ b/pi/agterm-status.ts
 @@ -9,7 +9,7 @@ import { join } from "node:path";
  import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
- 
+
  export default function (pi: ExtensionAPI) {
 -  const wrapper = join(homedir(), ".config", "agterm", "agent-status", "agterm-agent-status.sh");
 +  const wrapper = join(homedir(), ".config", "ngterm", "agent-status", "agterm-agent-status.sh");
- 
+
    async function report(args: string[]): Promise<void> {
      if (!process.env.AGTERM_SESSION_ID) return;

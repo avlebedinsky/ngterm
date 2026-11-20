@@ -162,7 +162,7 @@ pub fn configuration_directory(
 }
 
 /// `.` and `..` resolved lexically, as Foundation's `standardizedFileURL`.
-fn normalize(path: &Path) -> PathBuf {
+pub(super) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -174,6 +174,24 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+#[cfg(not(windows))]
+pub(super) fn codex_home(environment: &HashMap<String, String>) -> Option<PathBuf> {
+    let shell = environment.get("SHELL").filter(|shell| !shell.is_empty())?;
+    let marker = format!("ngterm-codex-home-{}", uuid::Uuid::new_v4());
+    let command = format!("printf '\\n{marker}\\n%s\\000%s\\000' \"$PWD\" \"${{CODEX_HOME-}}\"");
+    let hop = format!("exec /bin/sh -c {}", super::hooks_config::shell_quote(&command));
+    let vars = environment
+        .iter()
+        .filter(|(key, _)| !key.starts_with("NGTERM_"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let (stdout, _) = run_with_timeout(shell, &["-ilc", &hop], &vars, PROBE_TIMEOUT)?;
+    let (_, fields) = stdout.split_once(&format!("\n{marker}\n"))?;
+    let mut fields = fields.split('\0');
+    let cwd = Path::new(fields.next()?);
+    super::hooks_config::codex_home(fields.next(), Some(cwd))
 }
 
 /// What the login-shell probe found: the major version `opencode --version` reported, and the configuration directory
@@ -351,6 +369,24 @@ mod tests {
 
     fn detect_fixture(environment: &HashMap<String, String>, home: &str) -> Option<Probe> {
         detect_with_timeout(environment, home, crate::test_shell::CHILD_DEADLINE)
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_home_reads_the_login_shell_without_the_live_pane_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = dir.path().join("shell");
+        ngterm_host::fakes::write_executable(&shell,
+            "#!/bin/sh\n[ -z \"${NGTERM_SOCKET-}\" ] || exit 9\nexport CODEX_HOME='./old/../custom codex'\ncd \"$HOME\"\nexec /bin/sh -c \"$2\"\n").unwrap();
+        let vars = HashMap::from([
+            ("SHELL".to_owned(), shell.to_string_lossy().into_owned()),
+            ("HOME".to_owned(), dir.path().to_string_lossy().into_owned()),
+            ("NGTERM_SOCKET".to_owned(), "/nonexistent/test.sock".to_owned()),
+        ]);
+        assert_eq!(codex_home(&vars), Some(dir.path().join("custom codex")));
+        ngterm_host::fakes::write_executable(&shell, "#!/bin/sh\nprintf 'no marker'\n").unwrap();
+        assert_eq!(codex_home(&vars), None);
+        assert_eq!(codex_home(&HashMap::new()), None);
     }
 
     #[test]

@@ -156,28 +156,27 @@ function Send-AgentHook([string] $hookEvent, [string] $payload) {
   } catch { }
 }
 
+$payload = ''
+if ([Console]::IsInputRedirected) { $payload = Read-Payload 2000 }
+$data = $null
+try { $data = ConvertFrom-Json -InputObject $payload -ErrorAction Stop } catch { }
+
 if ($args.Count -gt 0 -and ($args[0] -ceq 'active' -or $args[0] -ceq 'blocked') -and
-  $env:CLAUDE_CODE_ENTRYPOINT -ceq 'cli' -and [Console]::IsInputRedirected) {
-  $payload = Read-Payload 5000
-  if ($payload -cmatch '"hook_event_name"\s*:\s*"(UserPromptSubmit|PermissionRequest)"') {
-    $hookEvent = $Matches[1]
-    if ($hookEvent -ceq 'PermissionRequest' -or $payload -cnotmatch '(^|[^\\])"agent_id"\s*:\s*"[^"]') {
-      Send-AgentHook $hookEvent $payload
-    }
+  $env:CLAUDE_CODE_ENTRYPOINT -ceq 'cli' -and
+  @('UserPromptSubmit', 'PermissionRequest') -ccontains $data.hook_event_name) {
+  if ($data.hook_event_name -ceq 'PermissionRequest' -or -not $data.agent_id) {
+    Send-AgentHook $data.hook_event_name $payload
   }
 }
 
-if ($args.Count -gt 0 -and $args[0] -ceq 'completed' -and [Console]::IsInputRedirected) {
-  $payload = ''
-  try {
-    $read = [Console]::In.ReadToEndAsync()
-    if ($read.Wait(2000)) { $payload = $read.Result }
-  } catch { }
-  $stopPattern = '"hook_event_name"\s*:\s*"Stop"'
-  $inFlightPattern = '"background_tasks"\s*:\s*\[\s*\{'
-  if ($payload -cmatch $stopPattern -and $payload -cmatch $inFlightPattern) {
-    try { & $statusWrapper active --blink *> $null } catch { }
-    exit 0
+if ($data.agent_id) {
+  if ($args.Count -gt 0 -and $args[0] -ceq 'active') { $args = @($args) + @('--if-idle') }
+} elseif ($args.Count -gt 0 -and $args[0] -ceq 'completed' -and $data.hook_event_name -ceq 'Stop') {
+  foreach ($task in $data.background_tasks) {
+    if ($task.status -ceq 'running' -and @('subagent', 'workflow', 'shell') -ccontains $task.type) {
+      $args = @('active', '--blink')
+      break
+    }
   }
 }
 

@@ -983,6 +983,20 @@ fn strip_baked_block(text: &str, body_lines: usize) -> String {
     kept.join("\n")
 }
 
+/// A nonempty `CODEX_HOME`, resolved against an absolute working directory without shell expansion.
+#[must_use]
+pub fn codex_home(value: Option<&str>, working_directory: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(value.filter(|value| !value.is_empty())?);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        working_directory
+            .filter(|directory| directory.is_absolute())?
+            .join(path)
+    };
+    Some(super::opencode::normalize(&absolute))
+}
+
 #[cfg(test)]
 #[path = "hooks_config_tests.rs"]
 mod tests;

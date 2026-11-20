@@ -283,27 +283,43 @@ report_agent() {
     "${pane_args[@]+"${pane_args[@]}"}" >/dev/null 2>&1 || true
 }
 
+# macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so the platform picks the
+# tool, and the server installer requires jq there.
+# json_string prints a top-level string field of the JSON on stdin and fails when it is absent or not a string.
+json_string() {
+  if [[ $OSTYPE == darwin* ]]; then
+    /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null
+    return
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json, sys
+value = json.load(sys.stdin).get(sys.argv[1])
+if not isinstance(value, str): raise SystemExit(1)
+sys.stdout.write(value)' "$1" 2>/dev/null
+    return
+  fi
+  jq -er --arg key "$1" '.[$key] | strings' 2>/dev/null
+}
+
+# json_null succeeds when the JSON on stdin has the field and it is null.
+json_null() {
+  if [[ $OSTYPE == darwin* ]]; then
+    [ "$(/usr/bin/plutil -type "$1" - 2>/dev/null)" = "(any)" ]
+    return
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json, sys
+value = json.load(sys.stdin)
+key = sys.argv[1]
+if not (isinstance(value, dict) and key in value and value[key] is None): raise SystemExit(1)' "$1" 2>/dev/null
+    return
+  fi
+  jq -e --arg key "$1" 'has($key) and .[$key] == null' >/dev/null 2>&1
+}
+
 assistant_message_contains_question() {
   local message prose question quoted_mark
-  # ngterm's Linux changes to this script: with no plutil, python3 or jq reads the payload's field, and awk, sed,
-  # tr and tail are found on PATH (NixOS, Guix and a non-merged /usr have no /usr/bin copies)
-  if [ -x /usr/bin/plutil ]; then
-    message=$(/usr/bin/plutil -extract last_assistant_message raw -o - - 2>/dev/null) || return 1
-  elif command -v python3 >/dev/null 2>&1; then
-    message=$(python3 -c '
-import json
-import sys
-
-value = json.load(sys.stdin).get("last_assistant_message")
-if not isinstance(value, str):
-    raise SystemExit(1)
-sys.stdout.write(value)
-' 2>/dev/null) || return 1
-  elif command -v jq >/dev/null 2>&1; then
-    message=$(jq -er '.last_assistant_message | strings' 2>/dev/null) || return 1
-  else
-    return 1
-  fi
+  message=$(json_string last_assistant_message) || return 1
   # a ? that opens quoted text ("? for shortcuts") ends no word, yet its opener would pass as one
   quoted_mark=$'s/(^|[[:space:]])([“‘"\'([*_]+)\\?/\\1\\2/g'
   # a span becomes a word rather than nothing so "run `make test`?" keeps its ? attached
@@ -313,27 +329,6 @@ sys.stdout.write(value)
   # bash 3.2 cannot parse this bracket set inline in [[ ]]
   question=$'[^[:space:]]\\?[]"\')*_!’”]*([[:space:]]|$)'
   [[ "$prose" =~ $question ]]
-}
-
-# whether the payload's transcript_path is there and null. plutil types a null as "(any)"; with no plutil, python3 or
-# jq reads it, and with none of the three nothing counts as null, so the event is reported (fail open)
-transcript_path_is_null() {
-  if [ -x /usr/bin/plutil ]; then
-    [ "$(/usr/bin/plutil -type transcript_path - 2>/dev/null)" = "(any)" ]
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c '
-import json
-import sys
-
-payload = json.load(sys.stdin)
-if not (isinstance(payload, dict) and "transcript_path" in payload and payload["transcript_path"] is None):
-    raise SystemExit(1)
-' 2>/dev/null
-  elif command -v jq >/dev/null 2>&1; then
-    jq -e 'type == "object" and has("transcript_path") and .transcript_path == null' >/dev/null 2>&1
-  else
-    return 1
-  fi
 }
 
 # Takes the pane's mail for this event into $mail_output, the hook answer `ngtermctl agent mail codex` prints; fails
@@ -431,9 +426,8 @@ case "$action" in
   session-start|user-prompt-submit|pre-tool-use|post-tool-use)
     # codex's memory consolidation thread reaches these hooks but no user Stop handler, so its
     # events would leave the pane active and replace the foreground watcher. it is ephemeral, so its
-    # transcript_path is null, which plutil types as "(any)". foreground ephemeral sessions lose
-    # these updates too.
-    transcript_path_is_null && exit 0
+    # transcript_path is null. foreground ephemeral sessions lose these updates too.
+    json_null transcript_path && exit 0
     ;;
 esac
 

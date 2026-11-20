@@ -1,8 +1,8 @@
 //! The agent-status hooks installer (upstream's `AgentHooksInstaller.swift`): the bundled package into
 //! `~/.config/ngterm/agent-status` with the bundled `ngtermctl` baked into its wrappers, a marker-guarded `source` line
 //! in `~/.zshrc`, `~/.bashrc` and (when fish is set up) `config.fish`, the Claude Code hooks merged into
-//! `~/.claude/settings.json`, the Codex hooks into `~/.codex/config.toml`, and, where each agent is set up, Pi's
-//! extension and `OpenCode`'s plugin. The Claude Code hooks include the restore adapter's (an ngterm extension:
+//! `~/.claude/settings.json`, the Codex hooks into `$CODEX_HOME/config.toml` (default `~/.codex`), and Pi's extension
+//! where Pi is present, plus `OpenCode`'s plugin. The Claude Code hooks include the restore adapter's (an ngterm extension:
 //! [`config::RESTORE_WRAPPER_NAME`]) and the mail adapter's ([`config::MAIL_WRAPPER_NAME`]); Codex gets neither (its
 //! mail goes through its lifecycle adapter). Claude and Codex configs get a `.bak` first; every rewrite keeps
 //! a symlinked file's link and its target's mode. Idempotent: a second run refreshes the baked path and changes
@@ -131,6 +131,8 @@ pub struct HooksPlan {
     /// The rc files that could not be read, left untouched.
     pub rcs_skipped: Vec<PathBuf>,
     pub codex: CodexPlan,
+    /// The custom Codex root, when `CODEX_HOME` selects one.
+    pub codex_home: Option<PathBuf>,
     pub pi: PiPlan,
     pub omp: OmpPlan,
     pub opencode: OpenCodePlan,
@@ -250,6 +252,8 @@ pub struct HooksOutcome {
     /// The rc files that could not be read and did not get the `source` line.
     pub rcs_skipped: Vec<PathBuf>,
     pub codex: CodexResult,
+    /// The custom Codex root, when `CODEX_HOME` selects one.
+    pub codex_home: Option<PathBuf>,
     pub pi: PiResult,
     pub omp: OmpResult,
     pub opencode: OpenCodeResult,
@@ -304,7 +308,7 @@ impl HooksOutcome {
             "Scripts installed to {}.\n{claude}\n{}\n{}\n{}\n{}\n{}\n\nOpen a new terminal for the shell integration to take \
              effect.",
             self.script_dir.display(),
-            codex_text(self.codex),
+            codex_text_at(self.codex, self.codex_home.as_deref()),
             pi_text(self.pi),
             omp_text(self.omp),
             opencode_text(&self.opencode),
@@ -319,27 +323,36 @@ pub const CODEX_MANUAL_DOCS_URL: &str = "https://ngterm.com/docs#codex-hooks-man
 /// The Codex line of the alert: one line each, never the generated block (upstream's `codexText`).
 #[must_use]
 pub fn codex_text(codex: CodexResult) -> String {
+    codex_text_at(codex, None)
+}
+
+fn codex_text_at(codex: CodexResult, codex_home: Option<&Path>) -> String {
+    let directory = codex_home.map_or_else(|| "~/.codex".to_owned(), shell_path);
     let approve = "Run /hooks in Codex to review and approve them before they take effect.";
     let manual =
         "See the Add Codex hooks by hand section of the ngterm docs for the block to add, then run /hooks in Codex.";
     match codex {
         CodexResult::Merged => format!(
-            "Codex lifecycle hooks merged into ~/.codex/config.toml (any old codex-notify.sh notify line was \
+            "Codex lifecycle hooks merged into {directory}/config.toml (any old codex-notify.sh notify line was \
              removed). {approve}"
         ),
         CodexResult::AlreadyConfigured => {
-            format!("Codex lifecycle hooks are already present in ~/.codex/config.toml. {approve}")
+            format!("Codex lifecycle hooks are already present in {directory}/config.toml. {approve}")
         }
         CodexResult::HooksExist => {
-            format!("Your ~/.codex/config.toml already defines its own hooks, so ngterm left it untouched. {manual}")
+            format!("Your {directory}/config.toml already defines its own hooks, so ngterm left it untouched. {manual}")
         }
         CodexResult::Unparseable => format!(
-            "Your ~/.codex/config.toml isn't valid TOML, so ngterm left it untouched. Fix it and run this again. \
+            "Your {directory}/config.toml isn't valid TOML, so ngterm left it untouched. Fix it and run this again. \
              {manual}"
         ),
         CodexResult::Unreadable => {
-            "Your ~/.codex/config.toml exists but couldn't be read, so ngterm left it untouched.".to_owned()
+            format!("Your {directory}/config.toml exists but couldn't be read, so ngterm left it untouched.")
         }
+        CodexResult::NoCodex if codex_home.is_some() => format!(
+            "No {directory} found (your CODEX_HOME), so Codex hooks were skipped. \
+             Mount or create it, or fix CODEX_HOME, then run this again."
+        ),
         CodexResult::NoCodex => {
             "No ~/.codex found, so Codex hooks were skipped. Install Codex, then run this again.".to_owned()
         }
@@ -560,6 +573,8 @@ pub fn plan(env: &Environment, opencode: &OpenCodeStart, probe: Option<&Probe>) 
         .clone()
         .filter(|package| package.is_dir())
         .ok_or_else(|| InstallError("The agent-status scripts are not bundled in this build.".to_owned()))?;
+    let codex_home = env.codex_home();
+    let codex_directory = codex_home.clone().unwrap_or_else(|| env.home.join(".codex"));
     let script_dir = script_dir(&env.home);
     let dir = shell_path(&script_dir);
     let opencode = match opencode {
@@ -575,7 +590,8 @@ pub fn plan(env: &Environment, opencode: &OpenCodeStart, probe: Option<&Probe>) 
         claude: plan_claude(&env.home, &dir),
         shell_rcs,
         rcs_skipped,
-        codex: plan_codex(&env.home, &dir),
+        codex: plan_codex(&codex_directory, &dir),
+        codex_home,
         pi,
         omp: plan_omp(&env.home, &package)?,
         opencode,
@@ -724,8 +740,7 @@ fn plan_shell_rcs(home: &Path, script_dir: &str) -> (Vec<FileWrite>, Vec<PathBuf
     (writes, skipped)
 }
 
-fn plan_codex(home: &Path, script_dir: &str) -> CodexPlan {
-    let codex = home.join(".codex");
+fn plan_codex(codex: &Path, script_dir: &str) -> CodexPlan {
     if !codex.exists() {
         return CodexPlan::NoCodex;
     }
@@ -835,6 +850,7 @@ pub fn apply(plan: &HooksPlan) -> Result<HooksOutcome, InstallError> {
         settings_skipped,
         rcs_skipped: plan.rcs_skipped.clone(),
         codex,
+        codex_home: plan.codex_home.clone(),
         pi,
         opencode,
         omp,

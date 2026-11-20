@@ -183,6 +183,8 @@ fn claude_orphan(
     let status = command
         .arg(resources().join("ngterm-claude-status.sh"))
         .args(args)
+        .env("HOME", stub.dir.path())
+        .env("USERPROFILE", stub.dir.path())
         .env("PAYLOAD", &input)
         .env("OUT", &out)
         .env("DONE", &done)
@@ -600,6 +602,8 @@ fn codex_env(command: &mut Command, stub: &Stub, setup: &CodexSetup) {
     }
     scrub(command);
     command
+        .env("HOME", bash_path(stub.dir.path()))
+        .env("USERPROFILE", stub.dir.path())
         .env("STATUSES", bash_path(&statuses))
         .env("NGTERMCTL", bash_path(&stub.path("ngtermctl")))
         .env("NGTERM_STATUS_WRAPPER", bash_path(&wrapper))
@@ -1408,5 +1412,119 @@ fn a_hook_under_a_second_agent_is_a_workers_and_stays_silent() {
         under(&["omp", "claude"]),
         None,
         "a Claude worker must not reset the OMP pane"
+    );
+}
+
+#[test]
+fn subagent_activity_only_changes_an_idle_status() {
+    for event in ["UserPromptSubmit", "PostToolUse", "PermissionRequest", "Stop"] {
+        let input = format!(r#"{{"hook_event_name":"{event}","agent_id":"a1"}}"#);
+        assert_eq!(
+            forwarded(&["active", "--blink", "--color", "#4A9EFF"], &input),
+            "active --blink --color #4A9EFF --if-idle"
+        );
+        for args in [&["blocked"][..], &["completed", "--auto-reset"], &["idle"]] {
+            assert_eq!(forwarded(args, &input), args.join(" "));
+        }
+    }
+}
+
+#[test]
+fn absent_empty_and_unreadable_payload_fields_preserve_the_arguments() {
+    for input in [
+        "",
+        "not json",
+        r#"{"agent_id":"#,
+        "{}",
+        r#"{"agent_id":""}"#,
+        r#"{"agent_id":null}"#,
+        r#"{"message":"\"agent_id\":\"a1\""}"#,
+    ] {
+        assert_eq!(forwarded(&["active", "--blink"], input), "active --blink", "{input}");
+        assert_eq!(
+            forwarded(&["completed", "--auto-reset"], input),
+            "completed --auto-reset",
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn a_stop_with_a_running_agent_drops_completion_flags() {
+    for kind in ["subagent", "workflow", "shell"] {
+        let tasks = format!(r#"[{{"type":"subagent","status":"completed"}},{{"type":"{kind}","status":"running"}}]"#);
+        let input = payload("Stop", "work continues", &tasks);
+        assert_eq!(
+            forwarded(
+                &["completed", "--auto-reset", "--sound", "Glass", "--color", "#4A9EFF"],
+                &input
+            ),
+            "active --blink"
+        );
+        let subagent = input.replacen('{', r#"{"agent_id":"a1","#, 1);
+        assert_eq!(
+            forwarded(&["completed", "--auto-reset"], &subagent),
+            "completed --auto-reset"
+        );
+    }
+    for tasks in [
+        "[]",
+        r#"[{"type":"subagent","status":"completed"}]"#,
+        r#"[{"type":"workflow","status":"failed"}]"#,
+        r#"[{"type":"other","status":"running"}]"#,
+    ] {
+        assert_eq!(
+            forwarded(&["completed", "--auto-reset"], &payload("Stop", "done", tasks)),
+            "completed --auto-reset"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_claude_payload_uses_python_or_jq_and_reports_without_a_parser() {
+    let bin = tempfile::tempdir().unwrap();
+    let find = |name: &str| {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join(name))
+            .find(|path| path.is_file())
+    };
+    for tool in ["sh", "bash", "ps", "dirname", "cat", "mv"] {
+        std::os::unix::fs::symlink(find(tool).unwrap(), bin.path().join(tool)).unwrap();
+    }
+    let path = bin.path().to_str().unwrap();
+    let subagent = r#"{"hook_event_name":"PostToolUse","agent_id":"a1"}"#;
+    let stop = payload("Stop", "work", r#"[{"type":"workflow","status":"running"}]"#);
+    for parser in ["python3", "jq"] {
+        let Some(executable) = find(parser) else {
+            eprintln!("SKIPPED: {parser} is not installed");
+            continue;
+        };
+        let link = bin.path().join(parser);
+        std::os::unix::fs::symlink(executable, &link).unwrap();
+        assert_eq!(
+            claude(&["active", "--blink"], subagent, &[("PATH", path)]).forwarded,
+            "active --blink --if-idle",
+            "{parser}"
+        );
+        assert_eq!(
+            claude(&["completed", "--auto-reset"], &stop, &[("PATH", path)]).forwarded,
+            "active --blink",
+            "{parser}"
+        );
+        assert_eq!(
+            claude(&["active"], r#"{"hook_event_name":"PostToolUse"}"#, &[("PATH", path)]).forwarded,
+            "active",
+            "{parser}: missing key"
+        );
+        fs::remove_file(link).unwrap();
+    }
+    assert_eq!(
+        claude(&["active", "--blink"], subagent, &[("PATH", path)]).forwarded,
+        "active --blink"
+    );
+    assert_eq!(
+        claude(&["completed", "--auto-reset"], &stop, &[("PATH", path)]).forwarded,
+        "completed --auto-reset"
     );
 }
