@@ -93,7 +93,7 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
         ("bash --rcfile /etc/env", ShellDialect::Posix),
         ("/bin/zsh -c /opt/env", ShellDialect::Posix),
         ("fish -C /etc/bash", ShellDialect::Fish),
-        ("/opt/my tools/env fish", ShellDialect::Fish),
+        ("~/bin/fish -l", ShellDialect::Fish),
         ("/usr/bin/env nu", ShellDialect::Unknown),
         ("/usr/bin/env", ShellDialect::Unknown),
         ("env -u", ShellDialect::Unknown),
@@ -125,6 +125,7 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
     ];
     if cfg!(windows) {
         cases.extend([
+            ("/opt/my tools/env fish", ShellDialect::Fish),
             (r"C:\Program Files\Git\usr\bin\ENV.EXE bash -l", ShellDialect::Posix),
             (r"C:\Program Files\PowerShell\7\pwsh.exe", ShellDialect::PowerShell),
             (r"C:\Program Files\Git\bin\sh.exe --login", ShellDialect::Posix),
@@ -137,9 +138,36 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
                 ShellDialect::PowerShell,
             ),
         ]);
+    } else {
+        cases.extend([
+            ("/opt/my tools/env fish", ShellDialect::Unknown),
+            ("'/opt/my tools/env' fish", ShellDialect::Fish),
+            ("\"/opt/my tools/fish\" -l", ShellDialect::Fish),
+            ("~user/bin/fish", ShellDialect::Unknown),
+            ("/bin/fi?h", ShellDialect::Unknown),
+        ]);
     }
     for (shell, dialect) in cases {
         assert_eq!(ShellDialect::of_shell(shell), dialect, "{shell}");
+    }
+}
+
+/// Windows runs the value directly, so a path with spaces is read whole and a separator is only part of a word.
+#[test]
+fn windows_reads_a_shell_value_through_its_spaces() {
+    for (shell, program) in [
+        (
+            "C:/Program Files/PowerShell/7/pwsh.exe -NoLogo",
+            Some("C:/Program Files/PowerShell/7/pwsh.exe"),
+        ),
+        ("pwsh -File C:/scripts/bash", Some("pwsh")),
+        ("C:/Program Files/Git/usr/bin/env.exe bash -l", Some("bash")),
+        ("/opt/my tools/env fish", Some("fish")),
+        ("tcsh;/bin/bash", Some("tcsh;/bin/bash")),
+        ("C:/Program Files/nu.exe", None),
+        ("", None),
+    ] {
+        assert_eq!(windows_shell_program(shell).as_deref(), program, "{shell}");
     }
 }
 
@@ -270,6 +298,11 @@ fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
         "bash -c : # x\n/bin/tcsh",
         "fish | tcsh",
         "bash $(tcsh)",
+        "tcsh;/bin/bash",
+        "/bin/tcsh; /bin/bash",
+        "exec fish || /bin/bash",
+        "tcsh;/usr/bin/env bash",
+        "fish&bash",
     ] {
         let program = shell_program(shell);
         if cfg!(windows) {
