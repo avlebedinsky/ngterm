@@ -371,9 +371,12 @@ def test_refused_launch_spawns_nothing_and_removes_its_root(roots: list[Path], t
 # -- launch and stop against the fake app
 
 
+SIGNAL_RECORD_TIMEOUT = 30.0
+
+
 def await_signals(instance: Instance, recorded: str) -> None:
     """Waits until the fake app in ignore-term mode recorded exactly the signals `recorded` lists."""
-    signals, deadline = instance.state_dir / "fake-signals", time.monotonic() + 30
+    signals, deadline = instance.state_dir / "fake-signals", time.monotonic() + SIGNAL_RECORD_TIMEOUT
     while not signals.exists() or signals.read_text() != recorded:
         seen = signals.read_text() if signals.exists() else None
         assert time.monotonic() < deadline, f"the fake app recorded {seen!r}, not {recorded!r}"
@@ -393,10 +396,32 @@ def record_each_signal_before_the_next(instance: Instance, monkeypatch: pytest.M
 
     def held(sig: int) -> None:
         if sig in awaited:
-            await_signals(instance, awaited[sig])
+            try:
+                await_signals(instance, awaited[sig])
+            except BaseException:
+                # The stop never gets to its SIGKILL now, and the fake ignores SIGTERM and SIGABRT
+                send(signal.SIGKILL)
+                raise
         send(sig)
 
     monkeypatch.setattr(process, "send_signal", held)
+
+
+def test_a_signal_hold_that_times_out_kills_the_fake_app(
+    roots: list[Path], fake_bin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_APP_MODE", "ignore-term")
+    monkeypatch.setattr(sys.modules[__name__], "SIGNAL_RECORD_TIMEOUT", 0.5)
+    instance = UpstreamVocabularyAdapter(fake_bin).launch()
+    record_each_signal_before_the_next(instance, monkeypatch)
+    try:
+        with pytest.raises(AssertionError, match=r"the fake app recorded None, not 'TERM\\n'"):
+            instance.process.send_signal(signal.SIGABRT)
+        assert instance.process.wait(timeout=10) == -9
+    finally:
+        if instance.process.poll() is None:
+            os.kill(instance.pid, signal.SIGKILL)
+            instance.process.wait(timeout=10)
 
 
 def test_launch_isolates_and_stop_cleans_up(roots: list[Path], fake_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
