@@ -1057,6 +1057,9 @@ mod tests {
             "env NOTE='use bash' /bin/tcsh",
             "env -C '/tmp/use bash' /bin/tcsh",
             "env --split-string='NOTE=\"use bash\" /bin/tcsh -l'",
+            "env -S '#=x bash' /bin/tcsh",
+            "env --argv0 'bash' /bin/tcsh",
+            "env -a bash /bin/tcsh",
         ] {
             let receiver = Host {
                 shell: shell.into(),
@@ -1081,6 +1084,25 @@ mod tests {
                     "{shell}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn an_uncertain_env_receiver_refuses_a_capture_with_a_bang() {
+        for shell in [
+            r"env $'/bin/tcsh\x00=x' bash",
+            "env {NOTE=x,/bin/tcsh} bash",
+            "env $RECEIVER bash",
+        ] {
+            let receiver = Host {
+                shell: shell.into(),
+                ..host(None)
+            };
+            let launch = Launch {
+                initial_input: Some(PaneInput::Replay(vec!["echo".into(), "!".into()])),
+                ..Launch::default()
+            };
+            assert_eq!(receiver.prepare(&launch, &MapEnv::new()).initial_input, None, "{shell}");
         }
     }
 

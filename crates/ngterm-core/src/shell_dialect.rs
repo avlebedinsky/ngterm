@@ -54,7 +54,8 @@ fn is_env(word: &str) -> bool {
     shell_name(basename(word)).eq_ignore_ascii_case("env")
 }
 
-/// The program that `env` runs after its options, assignments, split strings and nested wrappers.
+/// The program that `env` runs after its options, assignments, split strings and nested wrappers; `None` when a shell
+/// expansion or an `env -S` escape before it could change it.
 fn env_program(arguments: &str) -> Option<&str> {
     let mut words = std::collections::VecDeque::from(env_words(arguments)?);
     while let Some(word) = words.pop_front() {
@@ -84,7 +85,7 @@ fn env_program(arguments: &str) -> Option<&str> {
 
 fn env_option<'a>(word: &'a str, words: &mut std::collections::VecDeque<&'a str>) -> Option<()> {
     let split = if let Some(long) = word.strip_prefix("--") {
-        if ["unset", "chdir"].contains(&long) {
+        if ["unset", "chdir", "argv0"].contains(&long) {
             words.pop_front()?;
         }
         if long == "split-string" {
@@ -107,7 +108,12 @@ fn env_option<'a>(word: &'a str, words: &mut std::collections::VecDeque<&'a str>
         if split.contains('\\') {
             return None;
         }
-        for part in env_words(unquote(split))?.into_iter().rev() {
+        let parts = env_words(unquote(split))?;
+        let end = parts
+            .iter()
+            .position(|part| part.starts_with('#'))
+            .unwrap_or(parts.len());
+        for part in parts[..end].iter().rev() {
             words.push_front(part);
         }
     }
@@ -145,6 +151,8 @@ fn env_word_end(arguments: &str) -> Option<usize> {
             continue;
         }
         match (quote, character) {
+            (None | Some('"'), '$' | '`')
+            | (None, '{' | '}' | '*' | '?' | '[' | ']' | '~' | '(' | ')' | '<' | '>' | '|' | '&' | ';') => return None,
             (Some('\''), '\'') | (Some('"'), '"') => quote = None,
             (None, '\'' | '"') => quote = Some(character),
             (None | Some('"'), '\\') => escaped = true,
@@ -159,7 +167,7 @@ fn env_word_end(arguments: &str) -> Option<usize> {
 /// is an option's value, and the start of `-S`'s words joined to it.
 fn env_short_options(bundle: &str) -> (bool, Option<&str>) {
     /// The short options taking a value.
-    const VALUED: [char; 3] = ['u', 'C', 'P'];
+    const VALUED: [char; 4] = ['u', 'C', 'P', 'a'];
     for (at, option) in bundle.char_indices() {
         let rest = &bundle[at + option.len_utf8()..];
         if VALUED.contains(&option) {

@@ -1614,6 +1614,14 @@ mod tests {
             "env NOTE='use bash' env -u 'use bash' /bin/tcsh",
             "env -S 'NOTE=\"use bash\" /bin/tcsh -l'",
             "env --split-string='NOTE=\"use bash\" /bin/tcsh -l'",
+            "env -S '#=x bash' /bin/tcsh",
+            "env --split-string='#=x bash' /bin/tcsh",
+            "env -S 'NOTE=x #=x bash' /bin/tcsh",
+            "env --argv0 'bash' /bin/tcsh",
+            "env --argv0=bash /bin/tcsh",
+            "env -a bash /bin/tcsh",
+            "env -abash /bin/tcsh",
+            "env -ia bash /bin/tcsh",
         ] {
             for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
                 assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");

@@ -97,6 +97,13 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
         ("/usr/bin/env nu", ShellDialect::Unknown),
         ("/usr/bin/env", ShellDialect::Unknown),
         ("env -u", ShellDialect::Unknown),
+        ("env --argv0 tcsh fish", ShellDialect::Fish),
+        ("env -a bash pwsh", ShellDialect::PowerShell),
+        ("env -abash fish", ShellDialect::Fish),
+        ("env --argv0", ShellDialect::Unknown),
+        ("env -a", ShellDialect::Unknown),
+        ("env -S '#=x bash' fish", ShellDialect::Fish),
+        ("env -S '#=x bash'", ShellDialect::Unknown),
         ("env NOTE='use bash' /bin/tcsh", ShellDialect::Posix),
         ("env NOTE=\"use fish\" /bin/bash", ShellDialect::Posix),
         ("env -C '/tmp/use bash' fish", ShellDialect::Fish),
@@ -133,6 +140,43 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
     }
     for (shell, dialect) in cases {
         assert_eq!(ShellDialect::of_shell(shell), dialect, "{shell}");
+    }
+}
+
+#[test]
+fn unsupported_env_expansions_leave_the_receiver_unknown() {
+    for shell in [
+        r"env $'/bin/tcsh\x00=x' bash",
+        "env {NOTE=x,/bin/tcsh} bash",
+        "env {NOTE=x,}/bin/tcsh bash",
+        "env $RECEIVER bash",
+        "env ${RECEIVER} bash",
+        "env $(printf /bin/tcsh) bash",
+        "env `printf /bin/tcsh` bash",
+        "env /bin/[t]csh bash",
+        "env /bin/*csh bash",
+        "env /bin/?csh bash",
+        "env ~/tcsh bash",
+        "env <(printf /bin/tcsh) bash",
+        "env \"$RECEIVER\" bash",
+        "env \"`printf /bin/tcsh`\" bash",
+    ] {
+        assert_eq!(shell_program(shell), None, "{shell}");
+        let dialect = ShellDialect::of_shell(shell);
+        assert_eq!(dialect, ShellDialect::Unknown, "{shell}");
+        assert_eq!(dialect.typed(&["grep", "!needle"]), None, "{shell}");
+    }
+    for shell in [
+        "env NOTE='{literal}' bash",
+        "env NOTE=\"{literal}\" bash",
+        "env NOTE='$literal' bash",
+        "env NOTE='`literal`' bash",
+        "env NOTE='*?[literal]~' bash",
+        r"env NOTE=\{literal\} bash",
+        "env -S '\"#=literal\" bash'",
+        "env -S 'NOTE=x#=literal bash'",
+    ] {
+        assert_eq!(shell_program(shell), Some("bash"), "{shell}");
     }
 }
 
