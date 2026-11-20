@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use ngterm_core::overlay_capture::{self, OverlayLaunchContext};
 use ngterm_host::ShellCommand;
-use windows_sys::Win32::Foundation::{FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE};
+use windows_sys::Win32::Foundation::{FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Console::{
     CTRL_BREAK_EVENT, CTRL_C_EVENT, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
 };
@@ -43,10 +43,12 @@ use windows_sys::Win32::System::JobObjects::{
     JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::Threading::{
-    CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, GetProcessIdOfThread, OpenThread, ResumeThread,
+    THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME, THREAD_SYNCHRONIZE, WaitForSingleObject,
 };
 
 use super::Canceler;
+use super::thread_resume::{ListedThread, OpenedThread, resume_listed};
 
 /// No terminal to hand over or watch on Windows (the module docs say why): the console is the helper's and the
 /// program's alike.
@@ -159,6 +161,11 @@ fn join(job: &OwnedHandle, child: &Child) -> io::Result<()> {
 /// Resumes the threads of `pid`, a process created suspended: its one main thread. std keeps no thread handle, so
 /// the thread is found by a snapshot of the system's threads.
 fn resume(pid: u32) -> io::Result<()> {
+    resume_listed(pid, listed_threads()?, Thread::open)
+}
+
+/// Every thread a snapshot of the system's threads names.
+fn listed_threads() -> io::Result<Vec<ListedThread>> {
     // SAFETY: a snapshot of every thread; `pid` is ignored for a thread snapshot.
     let raw = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
     if raw == INVALID_HANDLE_VALUE {
@@ -170,32 +177,54 @@ fn resume(pid: u32) -> io::Result<()> {
         dwSize: u32::try_from(size_of::<THREADENTRY32>()).map_err(io::Error::other)?,
         ..THREADENTRY32::default()
     };
-    let mut resumed = 0_usize;
+    let mut listed = Vec::new();
     // SAFETY: the snapshot is open and `entry` a live struct whose `dwSize` is set.
     let mut more = unsafe { Thread32First(handle(&snapshot), &raw mut entry) } != 0;
     while more {
-        if entry.th32OwnerProcessID == pid && resume_thread(entry.th32ThreadID) {
-            resumed += 1;
-        }
+        listed.push(ListedThread {
+            id: entry.th32ThreadID,
+            owner: entry.th32OwnerProcessID,
+        });
         // SAFETY: as above.
         more = unsafe { Thread32Next(handle(&snapshot), &raw mut entry) } != 0;
     }
-    if resumed == 0 {
-        return Err(io::Error::other("the program's thread could not be resumed"));
-    }
-    Ok(())
+    Ok(listed)
 }
 
-fn resume_thread(id: u32) -> bool {
-    // SAFETY: plain arguments; a thread that is gone fails the call.
-    let raw = unsafe { OpenThread(THREAD_SUSPEND_RESUME, FALSE, id) };
-    if raw.is_null() {
-        return false;
+/// A listed thread, open to be checked and resumed.
+#[derive(Debug)]
+struct Thread(OwnedHandle);
+
+impl Thread {
+    fn open(id: u32) -> Option<Self> {
+        let access = THREAD_SUSPEND_RESUME | THREAD_SYNCHRONIZE | THREAD_QUERY_LIMITED_INFORMATION;
+        // SAFETY: plain arguments; a thread that is gone fails the call.
+        let raw = unsafe { OpenThread(access, FALSE, id) };
+        if raw.is_null() {
+            return None;
+        }
+        // SAFETY: `raw` is the thread handle just opened, owned by nothing else.
+        Some(Self(unsafe { OwnedHandle::from_raw_handle(raw) }))
     }
-    // SAFETY: `raw` is the thread handle just opened, owned by nothing else.
-    let thread = unsafe { OwnedHandle::from_raw_handle(raw) };
-    // SAFETY: the thread handle is open with the access `ResumeThread` needs.
-    unsafe { ResumeThread(handle(&thread)) != u32::MAX }
+}
+
+impl OpenedThread for Thread {
+    /// A thread's object is signaled once the thread has ended.
+    fn ended(&self) -> bool {
+        // SAFETY: the thread handle is open with `SYNCHRONIZE`; a zero timeout only polls.
+        unsafe { WaitForSingleObject(handle(&self.0), 0) == WAIT_OBJECT_0 }
+    }
+
+    fn owner(&self) -> Option<u32> {
+        // SAFETY: the thread handle is open with `THREAD_QUERY_LIMITED_INFORMATION`.
+        let pid = unsafe { GetProcessIdOfThread(handle(&self.0)) };
+        (pid != 0).then_some(pid)
+    }
+
+    fn resume(&self) -> bool {
+        // SAFETY: the thread handle is open with the access `ResumeThread` needs.
+        unsafe { ResumeThread(handle(&self.0)) != u32::MAX }
+    }
 }
 
 /// The running program: its child, its process group and the job its tree runs in. Dropping it closes the job,

@@ -1,6 +1,7 @@
 //! The overlay job's Windows platform, below what `overlay_job`'s own tests reach through a run: the console that is
 //! never handed over, the resume of a program with no thread left, and the console's Ctrl handler.
 
+use std::os::windows::process::CommandExt as _;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -20,7 +21,8 @@ fn the_console_is_never_handed_over_or_watched() {
     assert!(!hung_up(console));
 }
 
-/// A process that has exited has no thread to resume. Its handle stays open in `child`, so its pid is not reused.
+/// A process that has exited has no thread to resume. Its handle stays open in `child`, so its pid is not reused,
+/// and the wait on it returns only once every thread of it has ended.
 #[test]
 fn a_program_with_no_thread_left_cannot_be_resumed() {
     let mut child = std::process::Command::new("cmd.exe")
@@ -29,6 +31,29 @@ fn a_program_with_no_thread_left_cannot_be_resumed() {
         .unwrap();
     assert!(child.wait().unwrap().success());
     let error = resume(child.id()).unwrap_err();
+    assert_eq!(error.to_string(), "the program's thread could not be resumed");
+}
+
+/// An open handle keeps an ended thread's object, so the snapshot can still name it after its process has exited.
+#[test]
+fn a_program_whose_ended_thread_is_still_held_cannot_be_resumed() {
+    let mut child = std::process::Command::new("cmd.exe")
+        .args(["/D", "/C", "exit 0"])
+        .creation_flags(CREATE_SUSPENDED)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let held: Vec<Thread> = listed_threads()
+        .unwrap()
+        .into_iter()
+        .filter(|thread| thread.owner == pid)
+        .filter_map(|thread| Thread::open(thread.id))
+        .collect();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(!held.is_empty());
+    assert!(held.iter().all(OpenedThread::ended));
+    let error = resume(pid).unwrap_err();
     assert_eq!(error.to_string(), "the program's thread could not be resumed");
 }
 

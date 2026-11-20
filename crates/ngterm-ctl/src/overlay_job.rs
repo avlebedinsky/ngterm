@@ -35,6 +35,9 @@ mod sys;
 #[cfg(windows)]
 #[path = "overlay_job/windows.rs"]
 mod sys;
+#[cfg(any(windows, test))]
+#[path = "overlay_job/thread_resume.rs"]
+mod thread_resume;
 
 /// How long a cancelled program gets to exit before it is killed.
 pub const DEFAULT_GRACE: Duration = Duration::from_secs(3);
