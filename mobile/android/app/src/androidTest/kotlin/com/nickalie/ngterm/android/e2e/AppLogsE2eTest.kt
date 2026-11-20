@@ -34,9 +34,10 @@ import java.io.File
 
 /**
  * The diagnostic log, end to end: after signing in to a real machine and reading its sessions, Settings > Logs shows
- * the connection's lines (the app's and the core's, written through the real native log), Copy puts them on the
- * clipboard, and Share writes the whole log to a file and opens the system's share sheet. Neither the imported
- * private key nor the host key's fingerprint is in what was copied or exported.
+ * the connection's lines (the app's and the core's, written through the real native log) and the page's own line,
+ * written as it opens; Copy puts them on the clipboard, and Share writes the whole log to a file and opens the
+ * system's share sheet. Neither the imported private key nor the host key's fingerprint is in what was copied or
+ * exported.
  *
  * The stack is [SoftKeyboardSwitchE2eTest]'s: `scripts/test-android-e2e.sh` starts the machine and hands it over as
  * instrumentation arguments; without them the test is skipped.
@@ -94,6 +95,8 @@ class AppLogsE2eTest {
         awaitText(text(R.string.settings_logs))
         compose.onNodeWithText(text(R.string.settings_logs)).performScrollTo().performClick()
         awaitText(text(R.string.logs_never))
+        // the page's own line, written as it opens, shows without leaving the app and coming back
+        awaitText("settings page=logs", substring = true)
         for (line in CONNECT_LINES) awaitText(line, substring = true)
         screenshot("shown")
 

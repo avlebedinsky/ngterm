@@ -66,7 +66,8 @@ fun SettingsRoute(
     auth: DeviceAuth = rememberDeviceAuth(),
     exports: ExportKeyViewModel = rememberExportKeyViewModel(graph),
 ) {
-    var page by rememberSaveable { mutableStateOf(HOME) }
+    val pages = rememberSettingsPage(HOME)
+    var page by pages
     val state by model.state.collectAsStateWithLifecycle()
     val work by model.keyWork.collectAsStateWithLifecycle()
     val export by exports.work.collectAsStateWithLifecycle()
@@ -79,10 +80,7 @@ fun SettingsRoute(
     val shown = page.takeIf { it.startsWith(KEY) }?.removePrefix(KEY)
     val item = state.keyItem(shown)
     val exported = state.keyItem(export.keyId)
-    PageEffects(page, keyShown = item != null, exporting = exported != null) {
-        exports.close()
-        page = HOME
-    }
+    PageEffects(pages, keyShown = item != null, exporting = exported != null, onBack = exports::close)
     when {
         exported != null -> {
             EndUnlockOnLeave(exports::close)
@@ -141,17 +139,22 @@ private fun OpenFreshKey(
     LaunchedEffect(fresh) { fresh?.let(open) }
 }
 
-// back from a page Settings opened returns to Settings, and the page shown is logged by its kind alone
+// back from a page Settings opened ([onBack] first) returns to Settings; the page shown when Settings opens, and the
+// export's page, are logged here (a page set by a tap is logged as it is set)
 @Composable
 private fun PageEffects(
-    page: String,
+    pages: SettingsPage,
     keyShown: Boolean,
     exporting: Boolean,
     onBack: () -> Unit,
 ) {
-    BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting, onBack = onBack)
+    var page by pages
+    BackHandler(enabled = page == IMPORT || page == LOGS || keyShown || exporting) {
+        onBack()
+        page = HOME
+    }
     val shown = if (exporting) "export" else page.substringBefore(':')
-    LaunchedEffect(shown) { Diagnostics.info(LogTag.NAV, "settings page=$shown") }
+    LaunchedEffect(shown) { pages.note(shown) }
 }
 
 /**

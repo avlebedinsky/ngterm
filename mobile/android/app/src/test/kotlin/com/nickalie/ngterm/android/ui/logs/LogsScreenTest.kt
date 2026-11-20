@@ -68,6 +68,23 @@ class LogsScreenTest {
     }
 
     @Test
+    fun theLogShowsTheLineWrittenAsItOpensEachTime() {
+        open()
+        // Settings writes the page it shows as the page opens: the screen's read comes after it
+        compose.awaitText("settings page=logs", substring = true)
+        assertEquals(listOf("I nav: settings page=home", "I nav: settings page=logs"), pages())
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.awaitText("core settings-test")
+        test.logs.clear()
+        compose.onNodeWithText("Logs").performScrollTo().performClick()
+        compose.awaitText("settings page=logs", substring = true)
+        // each page once, as it was shown
+        assertEquals(listOf("I nav: settings page=logs"), pages())
+    }
+
+    private fun pages() = test.logs.lines.filter { "settings page=" in it }
+
+    @Test
     fun openingTheLogAgainShowsAndCopiesWhatWasLoggedSince() {
         open()
         compose.onNodeWithContentDescription("Back").performClick()
