@@ -35,7 +35,7 @@ pub const PLACEHOLDER: &str = "Search sessions";
 /// The field's height: it fits the compact title bar.
 pub const HEIGHT: f32 = 24.;
 /// The field's text size.
-const TEXT_SIZE: f32 = 12.;
+pub const TEXT_SIZE: f32 = 12.;
 /// The clear button's square.
 const CLEAR_SIZE: f32 = 18.;
 
@@ -118,6 +118,12 @@ impl SearchField {
     #[must_use]
     pub fn text(&self, cx: &App) -> String {
         self.input.read(cx).value().to_string()
+    }
+
+    /// Where the input laid its text out at the last paint.
+    #[cfg(test)]
+    pub(crate) fn text_bounds(&self, cx: &App) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
+        self.input.read(cx).text_bounds()
     }
 
     /// Posts `action` for the window; a text change counts toward the field's idle state.
@@ -242,6 +248,8 @@ impl Render for SearchField {
                         .appearance(false)
                         .accessibility_id("sidebar-search")
                         .aria_label(PLACEHOLDER)
+                        // the box draws the insets: the input's own would cut the text at the narrowest sidebar
+                        .px(px(0.))
                         .h(px(HEIGHT - 2.))
                         .text_color(ink),
                 ),

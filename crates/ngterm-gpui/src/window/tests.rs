@@ -2173,6 +2173,89 @@ fn the_empty_hints_link_and_the_clear_button_empty_the_field_and_keep_its_keyboa
     );
 }
 
+impl Shell<'_> {
+    /// The search field's box and the room its input lays text out in, as last painted.
+    fn search_room(&mut self) -> (gpui_kit::Bounds<gpui_kit::Pixels>, gpui_kit::Bounds<gpui_kit::Pixels>) {
+        let field = self.cx.debug_bounds("sidebar-search").expect("the field is drawn");
+        let text = self
+            .view
+            .read_with(self.cx, |view, cx| view.search_field().read(cx).text_bounds(cx));
+        (field, text.expect("the input laid its text out"))
+    }
+
+    /// How wide `text` is in the field's text size and the theme's font, which gpui-kit's root gives the app.
+    fn search_text_width(&mut self, text: &str) -> gpui_kit::Pixels {
+        use gpui_kit::component::ActiveTheme as _;
+        self.cx.update(|window, cx| {
+            let mut style = window.text_style();
+            style.font_family = cx.theme().font_family.clone();
+            let run = style.to_run(text.len());
+            window
+                .text_system()
+                .shape_line(
+                    text.to_owned().into(),
+                    px(crate::sidebar_search::TEXT_SIZE),
+                    &[run],
+                    None,
+                )
+                .width
+        })
+    }
+}
+
+#[gpui_kit::test]
+fn the_field_shows_its_text_whole_at_the_default_and_the_narrowest_sidebar(cx: &mut TestAppContext) {
+    // the box's border and insets, the magnifier, the clear button's room and the gaps between them
+    const CHROME: f32 = 2. + 7. + 3. + 13. + 18. + 2. * 4.;
+    // the room the input keeps after its caret before it scrolls the text left
+    const CARET_ROOM: f32 = 10.;
+    let mut s = shell(cx);
+    s.with_keys();
+    let (field, text) = s.search_room();
+    assert!(
+        text.size.width >= field.size.width - px(CHROME + 0.5),
+        "the input adds no inset of its own: {text:?} in {field:?}"
+    );
+    let placeholder = s.search_text_width(crate::sidebar_search::PLACEHOLDER);
+    assert!(
+        placeholder <= text.size.width,
+        "the placeholder ({placeholder:?}) shows whole at the default width: {text:?}"
+    );
+
+    s.state
+        .core
+        .library_mut()
+        .store_mut(s.window)
+        .unwrap()
+        .set_sidebar_width(ngterm_core::model::SIDEBAR_WIDTH_MIN);
+    s.state.settle();
+    s.settle();
+    let (_, text) = s.search_room();
+    let query = s.search_text_width("notes");
+    assert!(
+        query + px(CARET_ROOM) <= text.size.width,
+        "a short query ({query:?}) shows whole, its first letter uncut, in the narrowest sidebar: {text:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_ctrl_tab_walk_from_the_field_gives_the_picked_terminal_the_keyboard(cx: &mut TestAppContext) {
+    let mut s = shell(cx);
+    s.with_keys();
+    let u = s.session("u").unwrap();
+    s.search_chord();
+    s.cx.simulate_keystrokes("v");
+    s.settle();
+    assert!(s.search_field_holds());
+    s.cx.simulate_keystrokes("ctrl-tab");
+    s.cx.simulate_modifiers_change(gpui_kit::Modifiers::default());
+    s.settle();
+    assert_eq!(s.active(), Some(u), "Control's release selected the walk's pick");
+    assert!(!s.search_field_holds(), "the walk takes the keyboard from the field");
+    assert!(s.terminal_focused(), "the picked session's terminal has the keyboard");
+    assert_eq!(s.sidebar_search(), "v", "the search stays");
+}
+
 #[gpui_kit::test]
 fn the_field_keeps_its_text_and_keyboard_through_a_selection_made_elsewhere(cx: &mut TestAppContext) {
     let mut s = shell(cx);
