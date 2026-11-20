@@ -10,14 +10,14 @@
     margin: 0; height: 100%;
     background: var(--ngterm-background, #1e1e1e);
     color: var(--ngterm-foreground, #ddd);
-    font: 13px/1.45 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+    font: 13px/19px ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
     overflow: hidden;
   }
   body { --dim: color-mix(in srgb, var(--ngterm-foreground, #ddd) 55%, transparent); }
   #app { display: flex; flex-direction: column; height: 100%; padding: 10px 12px; gap: 8px; }
   #top, #info, #hints { flex: none; }
-  #top { display: flex; align-items: baseline; gap: 12px; padding: 6px 8px; border-radius: 6px;
-         border: 1px solid color-mix(in srgb, var(--ngterm-foreground, #ddd) 22%, transparent); }
+  #top { display: flex; align-items: baseline; gap: 12px; padding: 7px 9px; border-radius: 6px;
+         box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ngterm-foreground, #ddd) 22%, transparent); }
   #chip { flex: none; padding: 0 6px; border-radius: 4px; box-shadow: inset 0 0 0 1px currentColor; font-weight: 700;
           white-space: pre; }
   #chip[hidden] { display: none; }
@@ -56,11 +56,12 @@
   .st-done { color: var(--ngterm-color-2, #6ac46a); }
   .st-idle, .st-shell, .st-unknown { opacity: .55; }
   .empty { opacity: .55; padding: 8px; }
-  #info { padding: 6px 8px; border-top: 1px solid color-mix(in srgb, var(--ngterm-foreground, #ddd) 18%, transparent); }
+  #info { padding: 7px 8px 6px;
+          box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ngterm-foreground, #ddd) 18%, transparent); }
   #info div { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
   #meta { opacity: .6; }
-  #hints { color: color-mix(in srgb, var(--ngterm-foreground, #ddd) 45%, transparent); font-size: 12px; padding: 0 8px;
-           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #hints { color: color-mix(in srgb, var(--ngterm-foreground, #ddd) 45%, transparent); padding: 0 8px;
+           font-size: 12px; line-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #hints mark { background: color-mix(in srgb, var(--ngterm-color-4, #4a7ad8) 45%, transparent); }
 </style>
 </head>
