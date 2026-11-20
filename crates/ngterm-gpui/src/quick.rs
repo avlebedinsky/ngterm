@@ -22,10 +22,11 @@
 //! stands in for upstream's pointer-screen rule). It is framed against the frontmost ngterm window's display (else the
 //! first) until the platform reports the display it landed on, then refitted there once by reopening it named on that
 //! output ([`placement::refits_on_enter`]); the zoom (`surface.zoom --target quick`) reopens it too, anchored to every
-//! edge of the output it is on, as upstream fills the screen's visible frame. The window host is sized and centered on
-//! the frontmost ngterm window's display, and maximizes in place for the zoom (on macOS it takes its screen's visible
-//! frame). Display bounds are logical (xdg-output's, GPUI patch `gpui-pre-linux` 0002), so a fractional-scale output
-//! frames the panel right.
+//! edge of the output it is on, as upstream fills the screen's visible frame. The window host is sized and centered in
+//! the visible frame of the frontmost ngterm window's display (upstream's `targetFrame`: the menu bar and Dock, or the
+//! taskbar, left out), and maximizes in place for the zoom (on macOS it takes its screen's visible frame). Display
+//! bounds are logical (xdg-output's, GPUI patch `gpui-pre-linux` 0002), so a fractional-scale output frames the panel
+//! right.
 //!
 //! Losing the keyboard dismisses only a panel the user summoned ([`Core::quick_lost_focus`]); the window manager's
 //! close request hides the panel, its shell kept, and so does the compositor closing the layer surface (its output
@@ -476,6 +477,6 @@ fn target_of(id: DisplayId, cx: &App) -> Option<Target> {
 fn target(display: &dyn PlatformDisplay) -> Target {
     Target {
         id: display.id(),
-        bounds: display.bounds(),
+        visible: display.visible_bounds(),
     }
 }

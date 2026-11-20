@@ -47,20 +47,22 @@ pub struct Fit {
     pub zoomed: bool,
 }
 
-/// The display a frame is computed against: its id, and its bounds in logical pixels.
+/// The display a frame is computed against: its id, and its visible frame in logical pixels (its bounds less the
+/// macOS menu bar and Dock or the Windows taskbar, as GPUI reports them; the whole bounds elsewhere), which upstream's
+/// `targetFrame` sizes and centers the panel in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Target {
     pub id: DisplayId,
-    pub bounds: Bounds<Pixels>,
+    pub visible: Bounds<Pixels>,
 }
 
 impl Target {
-    /// The display's extent, as the placement takes it.
+    /// The display's visible extent, as the placement takes it.
     #[must_use]
     pub fn extent(&self) -> PanelSize {
         PanelSize {
-            width: f64::from(f32::from(self.bounds.size.width)),
-            height: f64::from(f32::from(self.bounds.size.height)),
+            width: f64::from(f32::from(self.visible.size.width)),
+            height: f64::from(f32::from(self.visible.size.height)),
         }
     }
 }
@@ -181,7 +183,8 @@ fn layer_options(base: WindowOptions, fit: Fit, display: Option<&Target>, _named
     Some(window_host_options(base, fit, display))
 }
 
-/// The window host's options: the panel's size on `display`, centered on it, maximized while zoomed.
+/// The window host's options: the panel's size on `display`'s visible frame, centered in it on whole pixels,
+/// maximized while zoomed.
 fn window_host_options(base: WindowOptions, fit: Fit, display: Option<&Target>) -> WindowOptions {
     let (width, height) = display.map_or(NO_DISPLAY, |display| {
         placement::panel_pixels(display.extent(), fit.size_percent)
@@ -192,7 +195,14 @@ fn window_host_options(base: WindowOptions, fit: Fit, display: Option<&Target>) 
             origin: point(px(0.), px(0.)),
             size: extent,
         },
-        |display| Bounds::centered_at(display.bounds.center(), extent),
+        |display| {
+            let centered = Bounds::centered_at(display.visible.center(), extent);
+            // a half-point origin would grow the macOS panel by a point; AppKit puts upstream's on whole points
+            Bounds {
+                origin: point(centered.origin.x.round(), centered.origin.y.round()),
+                size: extent,
+            }
+        },
     );
     WindowOptions {
         kind: if cfg!(any(windows, target_os = "macos")) {

@@ -16,7 +16,7 @@ fn no_compositor_selects_or_refuses_a_layer_surface() {
 fn a_requested_layer_surface_falls_back_to_the_window_host() {
     let target = Target {
         id: DisplayId::new(7),
-        bounds: Bounds {
+        visible: Bounds {
             origin: point(px(100.), px(50.)),
             size: size(px(1920.), px(1080.)),
         },

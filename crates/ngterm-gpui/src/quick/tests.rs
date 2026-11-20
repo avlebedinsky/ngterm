@@ -50,7 +50,7 @@ fn frame(host: QuickHost, zoomed: bool, sized_for: Option<DisplayId>, landed: Op
 fn display(id: DisplayId, width: f32, height: f32) -> Target {
     Target {
         id,
-        bounds: Bounds {
+        visible: Bounds {
             origin: point(px(0.), px(0.)),
             size: size(px(width), px(height)),
         },
@@ -250,7 +250,7 @@ fn the_placement_follows_a_fractional_outputs_logical_size() {
 fn the_window_host_is_undecorated_centered_and_maximized_for_the_zoom() {
     let monitor = Target {
         id: two(),
-        bounds: Bounds {
+        visible: Bounds {
             origin: point(px(1280.), px(0.)),
             size: size(px(1280.), px(800.)),
         },
@@ -294,6 +294,74 @@ fn the_window_host_is_undecorated_centered_and_maximized_for_the_zoom() {
     assert!(matches!(zoomed.window_bounds, Some(WindowBounds::Maximized(_))));
     let nowhere = window_options(QuickHost::Window, fit(false), None, false, "io.test").unwrap();
     assert_eq!(windowed_size(&nowhere), size(px(1100.), px(700.)));
+}
+
+/// A screen whose visible frame is its bounds less a menu bar at the top and a Dock at the bottom.
+#[derive(Debug)]
+struct Screen {
+    bounds: Bounds<gpui_kit::Pixels>,
+    visible: Bounds<gpui_kit::Pixels>,
+}
+
+impl Screen {
+    fn new(width: f32, height: f32, menu_bar: f32, dock: f32) -> Self {
+        Self {
+            bounds: Bounds::new(point(px(0.), px(0.)), size(px(width), px(height))),
+            visible: Bounds::new(
+                point(px(0.), px(menu_bar)),
+                size(px(width), px(height - menu_bar - dock)),
+            ),
+        }
+    }
+}
+
+impl PlatformDisplay for Screen {
+    fn id(&self) -> DisplayId {
+        one()
+    }
+
+    fn uuid(&self) -> gpui_kit::Result<uuid::Uuid> {
+        Ok(uuid::Uuid::nil())
+    }
+
+    fn bounds(&self) -> Bounds<gpui_kit::Pixels> {
+        self.bounds
+    }
+
+    fn visible_bounds(&self) -> Bounds<gpui_kit::Pixels> {
+        self.visible
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        None
+    }
+}
+
+fn windowed(screen: &Screen) -> Option<WindowBounds> {
+    window_options(QuickHost::Window, fit(false), Some(&target(screen)), false, "io.test").and_then(|o| o.window_bounds)
+}
+
+#[test]
+fn the_window_host_sizes_and_centers_the_panel_in_the_visible_frame() {
+    // upstream's targetFrame: the panel size of the visible frame, centered in it, not on the whole screen; a
+    // half-point origin rounds to a whole one, as AppKit puts upstream's
+    let laptop = Screen::new(1470., 956., 33., 0.);
+    assert_eq!(
+        windowed(&laptop),
+        Some(WindowBounds::Windowed(Bounds::new(
+            point(px(185.), px(145.)),
+            size(px(1100.), px(700.))
+        )))
+    );
+    // below a visible height of about 778 the share binds, so the panel takes 90% of the visible height
+    let small = Screen::new(1024., 768., 25., 65.);
+    assert_eq!(
+        windowed(&small),
+        Some(WindowBounds::Windowed(Bounds::new(
+            point(px(51.), px(59.)),
+            size(px(922.), px(610.))
+        )))
+    );
 }
 
 #[test]
