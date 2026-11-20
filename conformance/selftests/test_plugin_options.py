@@ -168,6 +168,44 @@ def test_linux_installer_cases_do_not_break_other_hosts_must_pass(
     assert result.ret == pytest.ExitCode.OK
 
 
+@pytest.mark.parametrize(("platform", "held"), [("win32", False), ("darwin", True), ("linux", True)])
+def test_the_live_background_child_lock_case_is_held_by_must_pass_off_windows(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, bin_path: Path, platform: str, held: bool
+) -> None:
+    source = Path(__file__).resolve().parents[1] / "tests/behaviors/test_state_dir_lock.py"
+    locks = pytester.makepyfile(test_state_dir_lock=source.read_text())
+    pytester.makepyfile(
+        test_live_any_shell="""
+        import pytest
+
+        @pytest.mark.requires("live-any-shell")
+        def test_live_any_shell():
+            pass
+        """
+    )
+
+    class Host:
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_pycollect_makemodule(self, module_path: Path, parent: pytest.Collector):
+            if module_path == locks:
+                module = pytest.Module.from_parent(parent, path=module_path)
+                with monkeypatch.context() as patch:
+                    patch.setattr("sys.platform", platform)
+                    _ = module.obj
+                return module
+            return None
+
+    # Only the stand-in runs: a deselected test that a must-pass capability holds fails the gate.
+    result = pytester.runpytest(
+        "--impl", "rust", "--bin", str(bin_path), "--must-pass", "live-any-shell", "-k", "test_live_any_shell",
+        plugins=[Host()],
+    )
+    result.assert_outcomes(passed=1, deselected=3)
+    broken = "test_state_dir_lock.py::test_the_locks_are_released_at_exit_with_a_live_background_child"
+    assert (broken in result.stdout.str()) == held
+    assert result.ret == (pytest.ExitCode.TESTS_FAILED if held else pytest.ExitCode.OK)
+
+
 def test_scrub_environ_prefixes() -> None:
     environ = {
         "AGTERM_SOCKET": "/s",

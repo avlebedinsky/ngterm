@@ -84,8 +84,24 @@ def test_the_lock_is_released_at_exit(launch, adapter):
     assert lock.is_file()
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="The child descriptor check uses /proc on Linux.")
-@pytest.mark.requires("live-sessions", "live-any-shell", any=True, reason="The child must survive the app exit.")
+# No requirement on Windows, so its must-pass does not count this skip: no child there can hold a lock handle.
+_LIVE_BASH_CHILD = (
+    pytest.mark.skip(reason="Windows lock handles are not inherited, so no child can keep a lock")
+    if sys.platform == "win32"
+    else pytest.mark.requires("live-any-shell", reason="A bash pane is Live, so its child survives the app exit.")
+)
+
+
+def _held_by_a_writer(reader: int) -> bool:
+    """Whether a process holds the write end of the FIFO open: a non-blocking read with no data gets EOF only when no
+    writer is left."""
+    try:
+        return os.read(reader, 1) != b""
+    except BlockingIOError:
+        return True
+
+
+@_LIVE_BASH_CHILD
 @pytest.mark.covers("behavior:app.state-dir-owned", "behavior:restore.live-session-survives-relaunch")
 def test_the_locks_are_released_at_exit_with_a_live_background_child(launch, adapter):
     ctl = launch(settings={"restoreMode": "live"}, pane_shell="/bin/bash")
@@ -96,17 +112,18 @@ def test_the_locks_are_released_at_exit_with_a_live_background_child(launch, ada
     descriptor_file = owner.root / "child-descriptor"
     locks = [owner.state_dir / f"{adapter.app_dir_name}.lock", Path(f"{owner.socket}.lock")]
     inodes = [path.stat().st_ino for path in locks]
+    os.mkfifo(descriptor_file)
+    reader = os.open(descriptor_file, os.O_RDONLY | os.O_NONBLOCK)
     command = (
         f"sleep 600 9>{quote(str(descriptor_file))} </dev/null >/dev/null 2>&1 & "
-        f"child=$!; disown \"$child\"; printf '%s\\n' \"$child\" >{quote(str(pid_file))}\n"
+        f"child=$!; disown; printf '%s\\n' \"$child\" >{quote(str(pid_file))}\n"
     )
     child = None
     try:
         assert_ok(ctl.request("session.type", sid, text=command))
         wait_until(lambda: pid_file.is_file() and pid_file.read_text().strip())
         child = int(pid_file.read_text())
-        descriptor = Path(f"/proc/{child}/fd/9")
-        wait_until(lambda: descriptor.exists() and descriptor.samefile(descriptor_file))
+        wait_until(lambda: _held_by_a_writer(reader))
 
         ctl = launch.relaunch(ctl)
 
@@ -114,7 +131,8 @@ def test_the_locks_are_released_at_exit_with_a_live_background_child(launch, ada
         assert ctl.instance.state_dir == owner.state_dir
         assert ctl.instance.socket == owner.socket
         assert_ok(ctl.request("window.list"))
-        assert descriptor.samefile(descriptor_file)
+        os.kill(child, 0)
+        assert _held_by_a_writer(reader)
         assert [path.stat().st_ino for path in locks] == inodes
         second = adapter.launch_beside(ctl.instance, timeout=REFUSAL_TIMEOUT)
         assert second.returncode == 1, second.stderr
@@ -127,4 +145,5 @@ def test_the_locks_are_released_at_exit_with_a_live_background_child(launch, ada
                 os.kill(child, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-            wait_until(lambda: not Path(f"/proc/{child}/fd/9").exists())
+            wait_until(lambda: not _held_by_a_writer(reader))
+        os.close(reader)
