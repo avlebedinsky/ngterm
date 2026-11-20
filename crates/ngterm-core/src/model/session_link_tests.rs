@@ -87,6 +87,47 @@ fn session_links_cross_local_windows_and_refuse_closed_or_non_shell_origins() {
 }
 
 #[test]
+fn session_links_refuse_duplicate_local_ids_from_restored_windows() {
+    let mut library = WindowLibrary::seeded("/tmp");
+    let first = library.active_window_id().unwrap();
+    let clicked = row(&mut library, first, None);
+    let second = library.new_window(None);
+    let target = row(&mut library, second, None);
+    let snapshot = library.store(second).unwrap().snapshot();
+    let third = library.new_window(None);
+    library.store_mut(third).unwrap().restore(&snapshot, false);
+
+    for origin in [
+        ClickOrigin::Pane(clicked),
+        ClickOrigin::RemotePane(clicked),
+        ClickOrigin::Scratch(clicked),
+    ] {
+        assert_eq!(library.session_link_target(target, origin, None), None);
+    }
+
+    library.store_mut(third).unwrap().soft_close_session(target);
+    assert_eq!(
+        library.session_link_target(target, ClickOrigin::Pane(clicked), None),
+        Some((second, target))
+    );
+    library.store_mut(third).unwrap().restore(&snapshot, false);
+    assert_eq!(
+        library.session_link_target(target, ClickOrigin::Pane(clicked), None),
+        None
+    );
+    library.close_window(second);
+    assert_eq!(
+        library.session_link_target(target, ClickOrigin::Pane(clicked), None),
+        Some((third, target))
+    );
+    library.close_window(third);
+    assert_eq!(
+        library.session_link_target(target, ClickOrigin::Pane(clicked), None),
+        None
+    );
+}
+
+#[test]
 fn session_links_use_remote_ids_for_mapped_panes_and_local_ids_for_scratch_and_local_splits() {
     let mut library = WindowLibrary::seeded("/tmp");
     let first = library.active_window_id().unwrap();

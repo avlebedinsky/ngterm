@@ -31,6 +31,8 @@ pub struct RemoteBinding {
     /// The origin's session id, which `live present` names.
     pub remote_session_id: String,
     /// A row owned by a remote catalog, whose scratch also runs on the origin.
+    /// The catalog mirror must set this flag to use origin session IDs for scratch links and rows without an origin endpoint.
+    /// `RemoteBinding::new` sets it to `false` for Attach Remote rows.
     pub catalog_owned: bool,
     /// The origin's presentation protocol version, `None` for an origin that predates the stream.
     pub presentation_version: Option<i64>,

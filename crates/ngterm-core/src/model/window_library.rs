@@ -125,7 +125,12 @@ impl WindowLibrary {
             clicked.remote_presentation()?.binding.remote_pane(pane?).is_some()
         };
         if !on_origin {
-            return self.window_id_for_session(id).map(|window| (window, id));
+            let mut matches = self
+                .open_ids()
+                .into_iter()
+                .filter(|window| self.store(*window).is_some_and(|store| store.session(id).is_some()));
+            let window = matches.next()?;
+            return matches.next().is_none().then_some((window, id));
         }
         let endpoint = &clicked.remote_presentation()?.binding.origin.as_ref()?.endpoint;
         let mut target = None;

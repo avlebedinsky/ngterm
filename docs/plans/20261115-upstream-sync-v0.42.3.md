@@ -746,6 +746,8 @@ rebuilds its rows from the catalog and saves none as attached rows.
   clears the unknown marks. A command a remote row cannot take answers `… is not available in a remote window`.
 - [ ] `session detach|reattach`, `workspace detach|reattach` hide and show rows here and leave them running; the
   view state is saved per window and host. Closing the window detaches it.
+- [ ] The catalog mirror sets `RemoteBinding::catalog_owned` to `true` on each catalog row binding.
+  Test scratch links with origin session IDs and catalog rows without an origin endpoint (Task 11).
 - [ ] A pool of shared ssh connections, at most eight channels each, with the keep-alive check on each master.
 - [ ] Rust unit tests on the fakes with the Swift cases; conformance cases.
 
