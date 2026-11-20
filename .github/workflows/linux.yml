@@ -729,7 +729,7 @@ jobs:
             curl xz patch ncurses fontconfig ttf-dejavu procps-ng \
             weston dbus xorg-server-xvfb mesa vulkan-swrast \
             pixman libinput libevdev libdrm cairo pango libpng hwdata seatd lcms2 \
-            python zsh fish at-spi2-core gobject-introspection cairo pkgconf gcc openssh
+            python zsh fish at-spi2-core gobject-introspection cairo pkgconf gcc openssh jq
       - uses: actions/checkout@v7
       # the runner owns the workspace, the container runs as root: without this git refuses the checkout, and
       # run-linux.sh reads the build's commit from it
