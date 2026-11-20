@@ -355,6 +355,8 @@ and how this build does it where the OS matters:
   routes the keymap's chords ahead of the page's on Linux, and WebView2's view hands it to the window on Windows.
 - Diff pages (v0.41.1) step between changes (`session overlay changes --next|--prev`, tree `text.changes`) and color
   each file's code by its language over the row bands.
+- Text, log and diff pages wrap long lines (v0.42): the bar's Wrap button, `w`, or `session overlay wrap
+  on|off|toggle`; per page, off at open and never saved, read back as tree `text.wrap`.
 - On a session presented on another machine (v0.41), image, Markdown and text pages open on the presenter, its
   viewer listing `page.content`; a log page stays a local one.
 - Status shapes (v0.41): triangle-down, play, seal, bolt and bell, drawn as outlines traced after SF Symbols on Linux,

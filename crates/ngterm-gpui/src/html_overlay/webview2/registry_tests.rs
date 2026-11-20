@@ -825,6 +825,50 @@ fn a_text_page_rebuilds_for_a_new_theme_and_stops_with_its_page(cx: &mut TestApp
     settle_until(cx, || true);
 }
 
+/// Upstream's `TextPageBridge.wrapped` and `apply`, on this engine's page: the renderer's own toggle reaches the model,
+/// and a later control unwrap reaches the renderer in its world.
+#[gpui_kit::test]
+fn a_text_pages_own_wrap_reaches_the_model_and_a_control_unwrap_reaches_its_renderer(cx: &mut TestAppContext) {
+    pumped(cx);
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("notes.txt");
+    std::fs::write(&path, "one\n").unwrap();
+    let source = overlay(HtmlSource::Text {
+        path: path.to_string_lossy().into_owned(),
+        line: None,
+    });
+    let mut model = Model::new(&source);
+    let (page, probe) = realized(&source, &model);
+    settle_until(cx, || probe.take().iter().any(|call| matches!(call, Call::Load(_))));
+    model.drain();
+    let text = page.text().lock().unwrap().clone().unwrap();
+    assert!(!text.contains("data-wrap"), "{text}");
+    let load = text
+        .split_once(" data-load=\"")
+        .unwrap()
+        .1
+        .split_once('"')
+        .unwrap()
+        .0
+        .to_owned();
+    cx.update(|cx| page.report(Report::TextPage(format!(r#"{{"ready":true,"load":{load}}}"#)), cx));
+    probe.take();
+
+    cx.update(|cx| page.report(Report::TextPage(r#"{"wrap":true}"#.to_owned()), cx));
+    model.drain();
+    assert!(model.overlay().text_wrap, "the toggle reached the model");
+    assert!(model.state.core.library_mut().set_text_wrap(source.id, false));
+    cx.update(|cx| page.apply(model.overlay(), true, cx));
+
+    assert!(
+        probe
+            .take()
+            .contains(&Call::Renderer("ngtermTextSetWrap(false)".to_owned())),
+        "the control unwrap reaches the renderer"
+    );
+    cx.update(|cx| page.close(cx));
+}
+
 #[test]
 fn a_document_read_without_a_pump_or_a_poster_does_nothing() {
     fake_native::install();

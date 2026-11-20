@@ -1,5 +1,5 @@
 //! The private attach bridge, enabled only on designated viewer panes.
-use crate::pane::{Pane, Worker};
+use crate::pane::{OpenRequest, Pane, Worker};
 use crate::{ClipboardAnswer, ClipboardLocation, ClipboardReadRequest, PaneEvent, ReadScope};
 use ngterm_core::attach_bridge::{Envelope, Message, VERSION};
 use ngterm_core::clipboard_wire as wire;
@@ -293,6 +293,7 @@ impl Worker {
             None
         };
         drop(peer);
+        let _open = fetched.is_none().then(|| OpenRequest::new(&self.shared));
         let reply = if let Some(reply) = fetched {
             reply
         } else {

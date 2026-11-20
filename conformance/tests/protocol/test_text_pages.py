@@ -469,3 +469,90 @@ def test_wrap_refuses_a_bad_mode_and_a_session_without_a_page(ctl):
         assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "no overlay")
     finally:
         ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "session.overlay.reload")
+def test_wrap_lives_on_its_page_and_starts_off(ctl):
+    path = _file(ctl, "wrap.txt", "long " * 400 + "\n")
+    markdown = _file(ctl, "wrap.md", "# notes\n")
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path)
+        _text(ctl, sid)
+        assert_ok(ctl.request("session.overlay.wrap", sid, mode="on"))
+        # a reload keeps the page's wrap
+        assert_ok(ctl.request("session.overlay.reload", sid))
+        _text(ctl, sid, lambda text: text.get("wrap") is True)
+        assert_ok(ctl.request("session.overlay.close", sid))
+        # the wrap is the page's: the file opened again starts unwrapped
+        _open_text(ctl, sid, path)
+        assert_absent(_text(ctl, sid), "wrap")
+        assert_ok(ctl.request("session.overlay.close", sid))
+        assert_ok(ctl.request("session.overlay.open", sid, markdownFile=str(markdown)))
+        assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "no text page")
+    finally:
+        ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "session.overlay.open", "field:tree.session.htmlOverlays")
+def test_wrap_reaches_a_pane_page_by_its_pane(ctl):
+    path = _file(ctl, "wrap.txt", "long " * 400 + "\n")
+    sid = _new(ctl)
+    try:
+        assert_ok(ctl.request("session.split", sid, mode="on"))
+        ctl.wait_mounted(sid, "right")
+        _open_text(ctl, sid, path, pane="right")
+        _text(ctl, sid)
+        # the other pane and the session-wide slot hold no page
+        for args in ({"pane": "left"}, {}):
+            assert_error(ctl.request("session.overlay.wrap", sid, mode="on", **args), "no overlay")
+        assert_absent(_text(ctl, sid), "wrap")
+        for mode, state in [("on", "wrapped"), ("toggle", "unwrapped")]:
+            response = ctl.request("session.overlay.wrap", sid, mode=mode, pane="right")
+            assert assert_ok(response) == {"id": sid, "text": state}, mode
+            assert _text(ctl, sid).get("wrap") is (True if state == "wrapped" else None), mode
+    finally:
+        ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "session.overlay.open", "field:tree.session.htmlOverlays")
+def test_a_wrapped_log_page_keeps_following_its_growing_file(ctl):
+    path = _file(ctl, "wrap.log", "".join(f"line {n} " + "long " * 100 + "\n" for n in range(1, 21)))
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path, followFile=True)
+        _text(ctl, sid, lambda text: text.get("following") is True and text.get("lines") == 20)
+        assert assert_ok(ctl.request("session.overlay.wrap", sid, mode="on")) == {"id": sid, "text": "wrapped"}
+        with path.open("a", encoding="utf-8") as log:
+            log.write("".join(f"line {n} " + "grown " * 100 + "\n" for n in range(21, 31)))
+        text = _text(ctl, sid, lambda text: text.get("lines") == 30)
+        assert text.get("following") is True and text.get("wrap") is True, text
+    finally:
+        ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap", "theme.set", "field:tree.session.htmlOverlays")
+def test_a_diff_page_wraps_and_a_theme_change_keeps_it(ctl):
+    path = _file(ctl, "wrap.diff", DIFF.replace("+TWO\n", "+TWO " + "wide " * 200 + "\n", 1))
+    found = assert_ok(ctl.request("theme.list"))
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path)
+        _text(ctl, sid, lambda text: "changes" in text)
+        assert assert_ok(ctl.request("session.overlay.wrap", sid)) == {"id": sid, "text": "wrapped"}
+        other = next(name for name in found["themes"] if name != found.get("theme"))
+        assert_ok(ctl.request("theme.set", name=other, dark="none"))
+        text = _text(ctl, sid)
+        assert text.get("wrap") is True and "changes" in text, text
+    finally:
+        ctl.request("session.close", sid)
+        if found.get("sync"):
+            ctl.request("theme.set", light=found["light"], dark=found["dark"])
+        elif found.get("theme"):
+            ctl.request("theme.set", name=found["theme"], dark="none")
+        else:
+            ctl.request("theme.set")

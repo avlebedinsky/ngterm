@@ -610,3 +610,21 @@ fn a_built_document_carries_its_search() {
     follower.renderer_ready(load, &sink);
     assert!(!follower.document_pending());
 }
+
+/// Upstream's `loadDocument(wrap:)`: a log document starts with the wrap it was given, so a rebuild keeps it.
+#[test]
+fn a_built_document_carries_its_wrap() {
+    let (log, sink) = (Log::new(), Sink::default());
+    let mut follower = log.follower(false);
+    let read = follower.load_document(true, &sink).unwrap();
+    let result = read.run();
+    follower.finish(&read, result, &sink);
+    follower.set_wrap(true);
+    assert!(follower.load_document(false, &sink).is_none());
+    follower.set_wrap(false);
+    assert!(follower.load_document(false, &sink).is_none());
+    let loads = sink.loads.borrow();
+    assert!(!loads[0].contains("data-wrap"));
+    assert!(loads[1].contains(" data-wrap"));
+    assert!(!loads[2].contains("data-wrap"));
+}

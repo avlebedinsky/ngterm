@@ -303,3 +303,68 @@ fn every_native_read_failure_reaches_the_program_as_its_status() {
         assert!(!String::from_utf8(sent).unwrap().contains("DATA"));
     }
 }
+
+/// What the pane queued for the program once it has no clipboard request open.
+fn sent_once_settled(fixture: &Fixture) -> Vec<u8> {
+    let deadline = Instant::now() + DEADLINE;
+    while fixture.pane.clipboard_open() {
+        assert!(Instant::now() < deadline, "the request stayed open");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    match fixture.out.next(Some(Duration::ZERO)) {
+        Ok(Some(Outgoing::Bytes(bytes))) => bytes,
+        other => panic!("nothing was queued once no request was open: {other:?}"),
+    }
+}
+
+#[test]
+fn a_clipboard_request_is_open_until_its_reply_is_queued() {
+    let fixture = stream(PaneConfig::new(SIZE));
+    assert!(!fixture.pane.clipboard_open());
+
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    let pending = read(&fixture);
+    assert!(fixture.pane.clipboard_open(), "the read waits for the frontend");
+    fixture.pane.answer_clipboard_read(pending.id, ClipboardAnswer::Denied);
+    assert_eq!(sent_once_settled(&fixture), b"\x1b]52;c;\x07");
+
+    fixture.feed.deliver(&transaction("closed", "", &[]));
+    let pending = write(&fixture);
+    assert!(fixture.pane.clipboard_open(), "the write waits for the frontend");
+    finish(&fixture, &pending, ClipboardWriteResult::Denied, false);
+    assert_eq!(
+        sent_once_settled(&fixture),
+        b"\x1b]5522;type=write:status=EPERM:id=closed\x1b\\"
+    );
+}
+
+#[test]
+fn once_its_requests_are_denied_the_terminal_answers_each_one_at_once() {
+    let fixture = stream(PaneConfig::new(SIZE));
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    read(&fixture);
+    fixture.pane.deny_clipboard_requests();
+    assert_eq!(
+        sent_once_settled(&fixture),
+        b"\x1b]52;c;\x07",
+        "the read that waits is denied"
+    );
+
+    // with nobody to answer, a later read would wait the terminal's 30 s for its deny
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    fixture.sent_until(b"\x1b]52;c;\x07");
+    fixture.feed.deliver(&transaction("late", "", &[]));
+    fixture.sent_until(b"\x1b]5522;type=write:status=EPERM:id=late\x1b\\");
+}
+
+#[test]
+fn an_answer_given_just_before_the_deny_still_reaches_the_program() {
+    let fixture = stream(PaneConfig::new(SIZE));
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    let pending = read(&fixture);
+    fixture
+        .pane
+        .answer_clipboard_read(pending.id, ClipboardAnswer::Text(Some("hi".to_owned())));
+    fixture.pane.deny_clipboard_requests();
+    assert_eq!(sent_once_settled(&fixture), b"\x1b]52;c;aGk=\x07");
+}

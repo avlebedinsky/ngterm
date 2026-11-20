@@ -565,6 +565,15 @@ def test_page_commands_need_a_page(ctl, lines):
         _closed(ctl, sid)
 
 
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.overlay.wrap")
+def test_wrap_refuses_a_program_overlay(ctl, lines):
+    sid = _new(ctl)
+    _open(ctl, sid, lines.hold())
+    assert_error(ctl.request("session.overlay.wrap", sid, mode="on"), "the overlay is not an html page")
+    _closed(ctl, sid)
+
+
 @pytest.mark.covers("session.overlay.open", "field:tree.session.htmlOverlays", "field:tree.session.overlaySizePercent")
 def test_page_flags_read_back(ctl):
     sid = _new(ctl)
@@ -1044,6 +1053,7 @@ def test_open_refusals(ctl, args, error):
     "session.overlay.follow",
     "session.overlay.search",
     "session.overlay.changes",
+    "session.overlay.wrap",
 )
 @pytest.mark.parametrize(
     ("cmd", "args"),
@@ -1059,6 +1069,7 @@ def test_open_refusals(ctl, args, error):
         pytest.param("session.overlay.follow", {"pane": "scratch"}, marks=pytest.mark.since("0.41.0")),
         pytest.param("session.overlay.search", {"pane": "scratch", "text": "a"}, marks=pytest.mark.since("0.41.0")),
         pytest.param("session.overlay.changes", {"pane": "scratch", "to": "next"}, marks=pytest.mark.since("0.41.1")),
+        pytest.param("session.overlay.wrap", {"pane": "scratch", "mode": "on"}, marks=pytest.mark.since("0.42.0")),
     ],
 )
 def test_overlay_pane_selector_refusals(ctl, cmd, args):
@@ -1079,6 +1090,7 @@ def test_overlay_pane_selector_refusals(ctl, cmd, args):
     "session.overlay.follow",
     "session.overlay.search",
     "session.overlay.changes",
+    "session.overlay.wrap",
 )
 @pytest.mark.parametrize(
     ("cmd", "args"),
@@ -1097,6 +1109,7 @@ def test_overlay_pane_selector_refusals(ctl, cmd, args):
         pytest.param("session.overlay.follow", {"mode": "on"}, marks=pytest.mark.since("0.41.0")),
         pytest.param("session.overlay.search", {"text": "a"}, marks=pytest.mark.since("0.41.0")),
         pytest.param("session.overlay.changes", {"to": "next"}, marks=pytest.mark.since("0.41.1")),
+        pytest.param("session.overlay.wrap", {"mode": "on"}, marks=pytest.mark.since("0.42.0")),
     ],
 )
 def test_unknown_session_target(ctl, cmd, args):

@@ -537,6 +537,9 @@ pub struct HtmlOverlay {
     /// A diff page's last report on its changes (upstream's `textChanges`), `None` until it reports and on any other
     /// page; never emitted, and a snapshot never writes it.
     pub text_changes: Option<text_page::TextChanges>,
+    /// Whether a text page wraps its long lines (upstream's `textWrap`): off at open, never in a snapshot; a page shown
+    /// here for another machine keeps its own in the page.
+    pub text_wrap: bool,
 }
 
 impl HtmlOverlay {
@@ -575,6 +578,7 @@ impl HtmlOverlay {
             text_search: None,
             search_revision: 0,
             text_changes: None,
+            text_wrap: false,
         }
     }
 

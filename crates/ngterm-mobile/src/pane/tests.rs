@@ -2,14 +2,17 @@
 //! The attach, its threads and how it ends run through the actor (`actor/pane_tests.rs`).
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::thread;
 
 use ngterm_core::remote::ssh::SESSION_GONE;
 use std::time::{Duration, Instant};
 
-use ngterm_term::{GridSize, Outgoing};
+use ngterm_term::{ClipboardAnswer, GridSize, Outgoing, PaneEvent, StreamOut};
 
 use super::{Tail, config};
 use crate::api::PaneSlot;
+use crate::transport::{Channel, ChannelInput};
 
 #[test]
 fn a_shown_panes_terminal_has_kitty_images_off_and_wakes_its_owner() {
@@ -182,4 +185,64 @@ fn escape_sequences_are_dropped_whole_and_an_unfinished_one_at_the_end_too() {
         "a CSI with no final byte"
     );
     assert_eq!(super::without_escapes(b"gone\x1b]110"), b"gone", "an OSC with no end");
+}
+
+/// A stream pane's terminal with an OSC 52 read the frontend was asked about and did not answer: the terminal, its
+/// output and the read's id.
+fn with_a_read_open() -> (Arc<ngterm_term::Pane>, StreamOut, u64) {
+    let size = GridSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 9,
+        cell_height: 18,
+    };
+    let (terminal, feed, out) = ngterm_term::Pane::stream(&config(size, Arc::new(|| {}))).unwrap();
+    assert!(feed.deliver(b"\x1b]52;c;?\x07"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(id) = terminal.take_events().into_iter().find_map(|event| match event {
+            PaneEvent::ClipboardRead(request) => Some(request.id),
+            _ => None,
+        }) {
+            return (Arc::new(terminal), out, id);
+        }
+        assert!(Instant::now() < deadline, "the read never reached the frontend");
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_stopped_writer_closes_the_channel_only_after_the_reply_to_a_clipboard_read_still_open() {
+    let (terminal, out, read) = with_a_read_open();
+    let (channel, mut peer) = Channel::pair();
+    let writer = thread::spawn({
+        let terminal = Arc::clone(&terminal);
+        move || super::write_pane(&out, &channel.writer, &AtomicBool::new(true), terminal)
+    });
+
+    // the terminal's worker answers late, as on a loaded machine
+    thread::sleep(super::WRITER_POLL * 3);
+    assert_eq!(peer.try_input(), None, "the channel waits for the read's reply");
+    terminal.answer_clipboard_read(read, ClipboardAnswer::Denied);
+    writer.join().unwrap();
+    assert_eq!(
+        peer.try_input(),
+        Some(ChannelInput::Data(b"\x1b]52;c;\x07".to_vec())),
+        "the read is denied"
+    );
+    assert_eq!(peer.try_input(), Some(ChannelInput::Close), "then the channel closes");
+}
+
+#[test]
+fn a_stopped_writer_closes_the_channel_after_its_longest_wait_with_a_clipboard_read_still_open() {
+    let (terminal, out, _read) = with_a_read_open();
+    let (channel, mut peer) = Channel::pair();
+    let started = Instant::now();
+    super::write_pane(&out, &channel.writer, &AtomicBool::new(true), terminal);
+    assert!(started.elapsed() >= super::STOPPED_WAIT, "it waits for the reply first");
+    assert_eq!(
+        peer.try_input(),
+        Some(ChannelInput::Close),
+        "the channel closes before the terminal's own deny, which comes after 30 s"
+    );
 }

@@ -1143,14 +1143,13 @@ fn the_v042_leaves_reach_the_app_and_print_its_refusal() -> TestResult {
     let dir = short_dir()?;
     let socket = dir.path().join("ngterm.sock");
     let _server = serve_core(&socket)?;
-    let leaves: [(&[&str], &str); 9] = [
+    let leaves: [(&[&str], &str); 8] = [
         (&["session", "detach"], "session.detach"),
         (&["session", "reattach", "--target", "ab12"], "session.reattach"),
         (&["workspace", "detach"], "workspace.detach"),
         (&["workspace", "reattach", "--target", "ab12"], "workspace.reattach"),
         (&["window", "remote", "open", "buildbox"], "window.remote.open"),
         (&["window", "remote", "dismiss"], "window.remote.dismiss"),
-        (&["session", "overlay", "wrap", "on"], "session.overlay.wrap"),
         (&["session", "convert", "--companion"], "session.companion.convert"),
         (
             &["session", "overlay", "open", "--url", "http://localhost:1/", "--page"],
@@ -1168,6 +1167,11 @@ fn the_v042_leaves_reach_the_app_and_print_its_refusal() -> TestResult {
             "{argv:?}"
         );
     }
+    // `session overlay wrap` has its handler, which resolves the session: this core has none active
+    assert_eq!(
+        outcome(&run_on(dir.path(), &socket, &["session", "overlay", "wrap", "on"])?),
+        (Some(1), String::new(), "error: no such session: active\n".to_owned())
+    );
     assert_eq!(
         outcome(&run_on(dir.path(), &socket, &["catalog", "op", "op-1"])?),
         (

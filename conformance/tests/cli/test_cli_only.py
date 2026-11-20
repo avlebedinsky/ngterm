@@ -508,7 +508,7 @@ def test_duplicate_no_select_needs_companion(cli):
     _usage(cli("session", "duplicate", "--no-select"), "--no-select needs --companion")
 
 
-# -- session overlay follow, search and changes, and the log options of open
+# -- session overlay follow, search, changes and wrap, and the log options of open
 
 TAIL_NEEDS_TEXT = "--tail and --follow-file require --text"
 TAIL_WITH_LINE = "--tail and --follow-file cannot be combined with --line"
@@ -569,3 +569,18 @@ def test_overlay_search_validation(cli, args, message):
 def test_overlay_changes_validation(cli, args, message):
     """`changes` takes exactly one step, before any connection."""
     _usage(cli("session", "overlay", "changes", *args), message)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("cli:session overlay wrap")
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        pytest.param(["maybe"], "mode must be on, off or toggle", id="mode"),
+        pytest.param([], None, id="needs-a-mode"),
+        pytest.param(["on", "--pane", "scratch"], PANE, id="pane"),
+    ],
+)
+def test_overlay_wrap_validation(cli, args, message):
+    """`wrap` needs its mode and a pane overlay's pane, before any connection."""
+    _usage(cli("session", "overlay", "wrap", *args), message)

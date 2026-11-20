@@ -136,8 +136,16 @@ pub struct LogFollower {
     /// nothing is pushed, since the old document or a renderer not yet running would drop it, and the ready report
     /// delivers the latest state instead.
     document_pending: bool,
-    /// The search a built document starts with (upstream's `loadDocument(search:)`).
+    /// What a built document starts with beyond the file.
+    start: DocumentStart,
+}
+
+/// What a log page's built document starts with beyond its file: the search (upstream's `loadDocument(search:)`) and
+/// whether its long lines wrap (`loadDocument(wrap:)`).
+#[derive(Default)]
+struct DocumentStart {
     search: SearchState,
+    wrap: bool,
 }
 
 impl LogFollower {
@@ -163,7 +171,7 @@ impl LogFollower {
             pause_epoch: 0,
             document_load: 0,
             document_pending: false,
-            search: SearchState::default(),
+            start: DocumentStart::default(),
         }
     }
 
@@ -214,7 +222,12 @@ impl LogFollower {
 
     /// The search the next built document starts with, so a rebuild keeps the query and the current match.
     pub fn set_search(&mut self, search: SearchState) {
-        self.search = search;
+        self.start.search = search;
+    }
+
+    /// Whether the next built document starts with its long lines wrapped, so a rebuild keeps the page's wrap.
+    pub fn set_wrap(&mut self, wrap: bool) {
+        self.start.wrap = wrap;
     }
 
     /// Whether the frontend should tick the follower now: it follows and is on screen. When this turns true the first
@@ -431,9 +444,10 @@ impl LogFollower {
             log: Some(&log),
             anchor: if self.following { None } else { self.anchor },
             load: Some(self.document_load),
-            search: Some(&self.search),
+            search: Some(&self.start.search),
             // a log page steps no changes
             change: None,
+            wrap: self.start.wrap,
         };
         let html = text_page::html(&shown.text, text_page::language(&self.path), None, &self.style, &state);
         self.page_snapshot.clone_from(&self.snapshot);

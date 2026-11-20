@@ -81,7 +81,7 @@ pub(crate) enum Mail {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
     Given(ClipboardAnswer),
-    /// The child exited: nobody is left to read an answer.
+    /// Nobody answers any more: the child exited, or the embedder detached the pane.
     ChildExited,
     Shutdown,
     /// The deadline passed first.
@@ -180,7 +180,9 @@ impl Mailbox {
         });
     }
 
-    /// The child exited: a clipboard read waiting now, or waited on later, is denied.
+    /// Nobody answers clipboard requests any more (the child exited, or the embedder detached the pane): the read or
+    /// write that waits now gets the answer already posted for it, if any, and is denied otherwise; each later one is
+    /// denied at once.
     pub(crate) fn child_exited(&self) {
         self.post(|state| state.child_exited = true);
     }
@@ -299,22 +301,23 @@ impl Mailbox {
         false
     }
 
-    /// The worker waits on the clipboard read `id` until `deadline`; answers to any other read are dropped.
+    /// The worker waits on the clipboard read `id` until `deadline`; answers to any other read are dropped. An answer
+    /// posted before the deny or the deadline still wins.
     pub(crate) fn await_answer(&self, id: u64, deadline: Option<Instant>) -> Answer {
         let mut state = self.lock();
         loop {
             if state.shutdown {
                 return Answer::Shutdown;
             }
+            let answers = std::mem::take(&mut state.answers);
+            if let Some((_, answer)) = answers.into_iter().find(|(answered, _)| *answered == id) {
+                return Answer::Given(answer);
+            }
             if state.child_exited {
                 return Answer::ChildExited;
             }
             if Self::expired(&mut state, deadline) {
                 return Answer::Idle;
-            }
-            let answers = std::mem::take(&mut state.answers);
-            if let Some((_, answer)) = answers.into_iter().find(|(answered, _)| *answered == id) {
-                return Answer::Given(answer);
             }
             state = self.wait(state, deadline);
         }
@@ -425,7 +428,18 @@ mod tests {
         };
         mailbox.child_exited();
         assert_eq!(waiter.join().unwrap(), Answer::ChildExited);
-        mailbox.answer(2, ClipboardAnswer::Denied);
+        assert_eq!(mailbox.await_answer(2, None), Answer::ChildExited);
+    }
+
+    #[test]
+    fn an_answer_posted_before_the_deny_still_reaches_its_read() {
+        let (mailbox, _) = mailbox();
+        mailbox.answer(1, ClipboardAnswer::Text(Some("granted".to_owned())));
+        mailbox.child_exited();
+        assert_eq!(
+            mailbox.await_answer(1, None),
+            Answer::Given(ClipboardAnswer::Text(Some("granted".to_owned())))
+        );
         assert_eq!(mailbox.await_answer(2, None), Answer::ChildExited);
     }
 

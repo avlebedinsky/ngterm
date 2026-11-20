@@ -130,6 +130,28 @@ impl TextChangesFailure {
     }
 }
 
+/// Why a `session.overlay.wrap` request was refused (upstream's `TextWrapFailure`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextWrapFailure {
+    Page(HtmlOverlayCommandFailure),
+    /// The slot holds a page that is not a local text page, a replica included.
+    NotText,
+    /// The slot is the presenting machine's, which alone shows the page.
+    Remote,
+}
+
+impl TextWrapFailure {
+    /// The control error for this refusal (upstream's `message`).
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Page(failure) => failure.message(),
+            Self::NotText => "no text page",
+            Self::Remote => "remote page: wrap it on the Mac that shows it",
+        }
+    }
+}
+
 /// Where a page sits: its window, its session, and the pane slot holding it (`None` for the session-wide one).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HtmlPageSlot {
@@ -615,6 +637,23 @@ impl WindowLibrary {
                 page.text_changes = changes;
             }
         });
+    }
+
+    /// Records whether text page `id` wraps its long lines, from control or the page's own toggle, wherever its slot now
+    /// is (upstream's `setTextWrap(_:wrapped:)`). A change emits `tree.changed`; any other page is left alone. Whether
+    /// it changed.
+    pub fn set_text_wrap(&mut self, id: Uuid, wrapped: bool) -> bool {
+        let mut changed = false;
+        self.update_html_overlay(id, |page| {
+            if matches!(page.source, HtmlSource::Text { .. }) && page.text_wrap != wrapped {
+                page.text_wrap = wrapped;
+                changed = true;
+            }
+        });
+        if changed && let Some(session) = self.session_holding_page(id) {
+            self.schedule_tree_changed_for(session);
+        }
+        changed
     }
 
     /// Reloads page `id` wherever it sits (the toolbar's reload; upstream's `HtmlOverlayRegistry.reload(_:target:)`).
