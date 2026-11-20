@@ -24,9 +24,9 @@ wctl() {
 
 tree=$(wctl tree --json | jq -c '.result.tree')
 
-# The branch checked out in each local session's directory; the page shows its workspace's first one.
+# The branch checked out in each local session's directories.
 branches=$(
-  jq -r '.workspaces[].sessions[] | select(.remoteHost == null and .cwd != null) | .cwd' <<<"$tree" |
+  jq -r '.workspaces[].sessions[] | select(.remoteHost == null) | .cwd, .splitCwd | select(. != null)' <<<"$tree" |
     sort -u |
     while IFS= read -r dir; do
       [ -d "$dir" ] || continue
@@ -39,7 +39,8 @@ build_page() {
   local out=$1
   # Every `<` is encoded, so no name, title, cwd or branch can open a comment or tag inside the <script> holding it;
   # jq writes `<` only inside strings, where \u003c is the same character.
-  jq -nc --argjson tree "$tree" --argjson branches "$branches" '{tree: $tree, branches: $branches}' |
+  jq -nc --argjson tree "$tree" --argjson branches "$branches" --arg home "${HOME:-}" \
+    --arg session "${AGT_SESSION_ID:-}" '{tree: $tree, branches: $branches, home: $home, session: $session}' |
     sed 's#<#\\u003c#g; s#^#const GOTO = #; s#$#;#' >"$out.data"
   awk -v data="$out.data" -v js="$here/assets/go-to.js" '
     /\/\*GOTO_DATA\*\// { while ((getline line < data) > 0) print line; next }
