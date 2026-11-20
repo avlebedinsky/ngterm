@@ -374,6 +374,15 @@ impl Harness<'_> {
             .map_or(0, |pane| pane.frame().frame.cols)
     }
 
+    fn wait_for_cols(&mut self, session: Uuid, token: &str) -> u16 {
+        let mut cols = 0;
+        self.until("the pane's first frame", |h| {
+            cols = h.cols(session, token);
+            cols > 0
+        });
+        cols
+    }
+
     fn dispatch(&mut self, cmd: Command, session: Uuid, edit: impl FnOnce(&mut Args)) {
         let mut args = Args::default();
         edit(&mut args);
@@ -1755,6 +1764,25 @@ fn the_platform_link_modifier_opens_a_hud_link_and_a_plain_click_reaches_the_pan
     assert!(h.state.take_frontend_work().open_urls.is_empty());
 }
 
+#[gpui_kit::test]
+fn a_realized_pane_waits_for_its_first_frame_after_a_busy_capture(cx: &mut TestAppContext) {
+    let (library, window, ids) = three_sessions();
+    let mut h = harness(cx, core_of(library), window);
+    let hidden = ids[1];
+    h.until("the hidden pane to start", |h| h.realized(hidden, StatusPane::Left));
+    let token = h.token(hidden, StatusPane::Left);
+    assert!(!h.shown(hidden, &token));
+    let pane = h.shared(hidden, &token).pane().unwrap();
+    pane.stall_next_paint();
+    let first = pane.frame();
+    assert!(first.stale);
+    assert_eq!(first.frame.cols, 0, "a busy first capture has no published grid");
+
+    pane.stall_next_paint();
+    assert_eq!(h.wait_for_cols(hidden, &token), 79, "the hidden pane has the full grid");
+    assert!(!h.shown(hidden, &token));
+}
+
 /// Upstream's #747 (launch with many restored sessions): every hidden page's terminal is laid out at the deck's own
 /// bounds, never probed at other sizes, and a selection or a size change re-creates no terminal view.
 #[gpui_kit::test]
@@ -1785,7 +1813,7 @@ fn many_pages_lay_out_at_the_decks_bounds_and_a_selection_or_resize_keeps_their_
     };
     let grids =
         |h: &mut Harness<'_>| -> Vec<u16> { ids.iter().zip(&tokens).map(|(id, token)| h.cols(*id, token)).collect() };
-    let shown_cols = h.cols(ids[0], &tokens[0]);
+    let shown_cols = h.wait_for_cols(ids[0], &tokens[0]);
     assert_ne!(shown_cols, 0, "the shown page is laid out");
     h.until("every hidden page laid out at the deck's bounds", |h| {
         grids(h).iter().all(|cols| *cols == shown_cols)
