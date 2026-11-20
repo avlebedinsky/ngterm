@@ -458,7 +458,9 @@ def _content_size(ctl):
 @pytest.mark.covers("quick", "surface.zoom")
 def test_quick_panel_has_no_title_bar_its_content_fills_its_frame(adapter, ctl):
     """Upstream's `QuickTerminalPanel` is `[.borderless, .nonactivatingPanel]`: no system title bar, so the panel's
-    frame is its content's size, shown, zoomed and unzoomed."""
+    frame is its content's size, shown, zoomed and unzoomed. This does not tell the borderless mask from GPUI's
+    titled one with a full-size transparent title bar, whose content also fills the frame: `scripts/vendor-gpui.sh
+    --check` guards the patch that gives the mask (gpui-pre-macos 0002)."""
     if adapter.name != "rust":
         pytest.skip("the content size is read from ngterm's log")
     pid = ctl.instance.pid

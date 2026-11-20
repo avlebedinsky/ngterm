@@ -176,50 +176,34 @@ static void keyboard(void) {
   assert(mods & 4); // US Option+E starts composition; AppKit must receive it.
   assert(!strcmp(without, "e"));
 }
-// The quick terminal's panel is not resizable, so AppKit's zoom never resizes
-// it: its zoom is these frame calls.
+// The quick terminal's panel: its mask is GPUI patch gpui-pre-macos 0002,
+// upstream's `[.borderless, .nonactivatingPanel]`. It is not resizable, so
+// AppKit's zoom never resizes it (it can move it): its zoom is these frame
+// calls. Its content fills its frame, also after the two calls fill and
+// restore it.
 static void panelFrame(void) {
+  NSRect was = NSMakeRect(200, 200, 400, 300);
   NSPanel *panel = [[NSPanel alloc]
-      initWithContentRect:NSMakeRect(200, 200, 400, 300)
-                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                          NSWindowStyleMaskNonactivatingPanel
-                  backing:NSBackingStoreBuffered
-                    defer:NO];
-  [panel orderFrontRegardless];
-  NSSize size = panel.frame.size;
-  [panel zoom:nil];
-  assert(NSEqualSizes(panel.frame.size, size));
-  void *view = (__bridge void *)panel.contentView;
-  NSRect was = panel.frame;
-  double frame[4], visible[4];
-  assert(ngterm_window_frames(view, frame, visible));
-  assert(NSEqualRects(NSMakeRect(frame[0], frame[1], frame[2], frame[3]), was));
-  ngterm_window_set_frame(view, visible);
-  assert(NSEqualRects(panel.frame, panel.screen.visibleFrame));
-  ngterm_window_set_frame(view, frame);
-  assert(NSEqualRects(panel.frame, was));
-  [panel orderOut:nil];
-}
-// The quick panel's mask (GPUI patch gpui-pre-macos 0002, upstream's
-// `[.borderless, .nonactivatingPanel]`): its content fills its frame, also
-// after the two frame calls fill and restore it.
-static void borderlessPanel(void) {
-  NSPanel *panel = [[NSPanel alloc]
-      initWithContentRect:NSMakeRect(200, 200, 400, 300)
+      initWithContentRect:was
                 styleMask:NSWindowStyleMaskBorderless |
                           NSWindowStyleMaskNonactivatingPanel
                   backing:NSBackingStoreBuffered
                     defer:NO];
   [panel orderFrontRegardless];
-  assert(NSEqualRects(panel.frame, NSMakeRect(200, 200, 400, 300)));
+  assert(NSEqualRects(panel.frame, was));
+  assert(NSEqualSizes(panel.contentView.frame.size, panel.frame.size));
+  [panel zoom:nil];
+  assert(NSEqualSizes(panel.frame.size, was.size));
+  was = panel.frame;
   void *view = (__bridge void *)panel.contentView;
   double frame[4], visible[4];
   assert(ngterm_window_frames(view, frame, visible));
+  assert(NSEqualRects(NSMakeRect(frame[0], frame[1], frame[2], frame[3]), was));
   ngterm_window_set_frame(view, visible);
   assert(NSEqualRects(panel.frame, panel.screen.visibleFrame));
   assert(NSEqualSizes(panel.contentView.frame.size, panel.frame.size));
   ngterm_window_set_frame(view, frame);
-  assert(NSEqualRects(panel.frame, NSMakeRect(200, 200, 400, 300)));
+  assert(NSEqualRects(panel.frame, was));
   assert(NSEqualSizes(panel.contentView.frame.size, panel.frame.size));
   [panel orderOut:nil];
 }
@@ -227,7 +211,6 @@ static void checkServices(void) {
   @autoreleasepool {
     keyboard();
     panelFrame();
-    borderlessPanel();
     assert(ngterm_reduce_transparency() ==
            NSWorkspace.sharedWorkspace
                .accessibilityDisplayShouldReduceTransparency);
