@@ -1125,6 +1125,8 @@ mod tests {
     fn the_profile_selects_the_actual_receiver_before_the_current_host() {
         use ngterm_core::shell_profiles::ShellProfile;
 
+        // a profile's executable must be absolute on the host OS, or the login shell replaces it
+        let root = if cfg!(windows) { "C:" } else { "" };
         for (profile, shell, replay) in [
             ("/bin/tcsh", "/bin/bash", false),
             ("/bin/bash", "/bin/tcsh", true),
@@ -1136,7 +1138,7 @@ mod tests {
                 ..host(None)
             };
             let launch = Launch {
-                shell_profile: Some(ShellProfile::new("test", "test", profile.into(), &[])),
+                shell_profile: Some(ShellProfile::new("test", "test", format!("{root}{profile}"), &[])),
                 initial_input: Some(PaneInput::Replay(vec!["echo".into(), "!".into()])),
                 ..Launch::default()
             };

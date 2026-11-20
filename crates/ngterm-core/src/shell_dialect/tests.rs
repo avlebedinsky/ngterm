@@ -6,6 +6,11 @@ use base64::Engine as _;
 
 use super::*;
 
+/// The dialect of a shell line, as a pane that runs it through `/bin/sh` reads it.
+fn of_shell(shell: &str) -> ShellDialect {
+    shell_program(shell).map_or(ShellDialect::Unknown, |program| ShellDialect::of_program(&program))
+}
+
 /// Arguments each dialect must hand on whole: spaces, both quotes and PowerShell's typographic ones, backslashes
 /// before a quote and at the end, an empty one, every shell's operators and what each would expand unquoted.
 const NASTY: [&str; 29] = [
@@ -148,7 +153,7 @@ fn a_configured_shell_is_read_through_its_spaces_and_arguments() {
         ]);
     }
     for (shell, dialect) in cases {
-        assert_eq!(ShellDialect::of_shell(shell), dialect, "{shell}");
+        assert_eq!(of_shell(shell), dialect, "{shell}");
     }
 }
 
@@ -215,7 +220,7 @@ fn env_reads_the_words_that_the_shell_hands_it() {
         (r#"env NOTE="use\"#, ShellDialect::Unknown),
         ("env -S \"'fish\"", ShellDialect::Unknown),
     ] {
-        assert_eq!(ShellDialect::of_shell(shell), dialect, "{shell}");
+        assert_eq!(of_shell(shell), dialect, "{shell}");
     }
 }
 
@@ -264,7 +269,7 @@ fn unsupported_env_expansions_leave_the_receiver_unknown() {
         "env # x\nbash",
     ] {
         assert_eq!(shell_program(shell), None, "{shell}");
-        let dialect = ShellDialect::of_shell(shell);
+        let dialect = of_shell(shell);
         assert_eq!(dialect, ShellDialect::Unknown, "{shell}");
         assert_eq!(dialect.typed(&["grep", "!needle"]), None, "{shell}");
     }
@@ -309,15 +314,11 @@ fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
             assert!(program.is_some(), "{shell}");
         } else {
             assert_eq!(program, None, "{shell}");
-            assert_eq!(
-                ShellDialect::of_shell(shell).typed(&["grep", "!needle"]),
-                None,
-                "{shell}"
-            );
+            assert_eq!(of_shell(shell).typed(&["grep", "!needle"]), None, "{shell}");
         }
     }
     for shell in ["bash -l 2>/dev/null", "fish -C 'source x; y' # z", "zsh -l\n"] {
-        assert_ne!(ShellDialect::of_shell(shell), ShellDialect::Unknown, "{shell}");
+        assert_ne!(of_shell(shell), ShellDialect::Unknown, "{shell}");
     }
 }
 
@@ -325,7 +326,7 @@ fn a_shell_followed_by_another_command_is_unknown_outside_windows() {
 #[cfg(not(windows))]
 #[test]
 fn the_shell_is_the_word_after_its_assignments() {
-    use crate::command_restore::should_restore_in_shell;
+    use crate::command_restore::should_restore_in_program;
 
     for (shell, program) in [
         ("X=/bin/bash tcsh", "tcsh"),
@@ -336,12 +337,12 @@ fn the_shell_is_the_word_after_its_assignments() {
     ] {
         assert_eq!(shell_program(shell).as_deref(), Some(program), "{shell}");
     }
-    assert_eq!(ShellDialect::of_shell("FOO=/bin/bash fish"), ShellDialect::Fish);
+    assert_eq!(of_shell("FOO=/bin/bash fish"), ShellDialect::Fish);
     let history = ["grep".to_owned(), "!needle".to_owned()];
-    assert!(!should_restore_in_shell(
+    assert!(!should_restore_in_program(
         &history,
         &[] as &[&str],
-        Some("X=/bin/bash tcsh")
+        shell_program("X=/bin/bash tcsh").as_deref()
     ));
     for shell in ["X=1", "X=$(tcsh) bash", "X=1;tcsh bash", "X=1 Y=2"] {
         assert_eq!(shell_program(shell), None, "{shell}");

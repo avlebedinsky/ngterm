@@ -544,18 +544,8 @@ pub fn should_restore<S: AsRef<str>>(argv: &[String], denylist: &[S]) -> bool {
     !denylist.iter().any(|entry| same_program(name, entry.as_ref()))
 }
 
-/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes. `shell` is a
-/// shell value as [`crate::shell_dialect::ShellDialect::of_shell`] reads it.
-#[must_use]
-pub fn should_restore_in_shell<S: AsRef<str>>(argv: &[String], denylist: &[S], shell: Option<&str>) -> bool {
-    should_restore_in_program(
-        argv,
-        denylist,
-        shell.and_then(crate::shell_dialect::shell_program).as_deref(),
-    )
-}
-
-/// [`should_restore_in_shell`] for a shell that runs directly: `program` is its executable, not a `/bin/sh` line.
+/// Refuse a captured command with `!` when the receiving shell expands history inside single quotes. `program` is
+/// the shell's executable ([`crate::shell_dialect::shell_program`] reads it off a `/bin/sh` line).
 #[must_use]
 pub fn should_restore_in_program<S: AsRef<str>>(argv: &[String], denylist: &[S], program: Option<&str>) -> bool {
     should_restore(argv, denylist)
@@ -754,6 +744,15 @@ fn is_unreplayable(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`should_restore_in_program`] for a shell line that `/bin/sh` runs.
+    fn restores_in_shell(argv: &[String], denylist: &[&str], shell: Option<&str>) -> bool {
+        should_restore_in_program(
+            argv,
+            denylist,
+            shell.and_then(crate::shell_dialect::shell_program).as_deref(),
+        )
+    }
 
     fn argv(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_owned()).collect()
@@ -1639,9 +1638,9 @@ mod tests {
             "env NOTE=1\u{a0}bash /bin/tcsh",
         ] {
             for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
-                assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
+                assert!(!restores_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
             }
-            assert!(should_restore_in_shell(&argv(&["grep", "needle"]), &none, Some(shell)));
+            assert!(restores_in_shell(&argv(&["grep", "needle"]), &none, Some(shell)));
         }
         for shell in [
             None,
@@ -1651,8 +1650,8 @@ mod tests {
             Some("env NOTE='use tcsh' /bin/bash"),
             Some("env -C '/tmp/use tcsh' /bin/bash"),
         ] {
-            assert!(should_restore_in_shell(&argv(&["grep", "!needle"]), &none, shell));
-            assert!(!should_restore_in_shell(&argv(&["vim", "!x"]), &["vim"], shell));
+            assert!(restores_in_shell(&argv(&["grep", "!needle"]), &none, shell));
+            assert!(!restores_in_shell(&argv(&["vim", "!x"]), &["vim"], shell));
         }
     }
 

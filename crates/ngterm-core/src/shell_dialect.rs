@@ -3,8 +3,8 @@
 //! whatever the shell; a Rust-only extension for the shells a Windows pane runs), and the PowerShell call a live
 //! replay runs ([`crate::live::replay`]).
 //!
-//! The dialect is the pane's shell's, read off its program's name ([`ShellDialect::of_shell`], past an `env` that
-//! runs it), a Windows `.exe` dropped in any case:
+//! The dialect is the pane's shell's, read off its program's name ([`ShellDialect::of_program`], of a `/bin/sh` line's
+//! program as [`shell_program`] reads it, past an `env` that runs it), a Windows `.exe` dropped in any case:
 //!
 //! - **POSIX** (`sh`, `bash`, `zsh`, `dash`, `ksh` and kin, `tcsh`, `csh`): upstream's line, each word single-quoted
 //!   ([`shell_quoted_line`]), a line feed after it. Git for Windows' `sh` and `bash` are POSIX shells too.
@@ -383,21 +383,6 @@ impl ShellDialect {
         }
     }
 
-    /// The dialect of a pane's shell as its config names it: a program and its arguments (`pwsh -NoLogo`,
-    /// `/usr/bin/fish -l`). Outside Windows, `/bin/sh` runs the value, so the program is its first word as `/bin/sh`
-    /// reads it (`'/opt/my tools/fish' -l`), past the variable assignments before it (`X=1 fish`); [`Self::Unknown`]
-    /// when an expansion could change that word, or when `/bin/sh` could run another command after it (`;`, `|`, `&`,
-    /// a newline, `$(…)`: `bash -c : ; tcsh`). A shell's own `-c` command is taken as that shell's. A shell that runs
-    /// directly, not through `/bin/sh` (a profile's executable, Live's `SHELL`), is [`Self::of_program`]'s. Windows
-    /// runs the value directly, so there the program is the value's shortest run of leading words that names a known
-    /// shell or `env`: a path with spaces is read whole (`C:\Program Files\PowerShell\7\pwsh.exe`) and a shell's
-    /// argument never stands for it (`pwsh -File C:\scripts\bash`). A program `env` is the program it runs
-    /// ([`env_program`]: `/usr/bin/env zsh`, `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
-    #[must_use]
-    pub fn of_shell(shell: &str) -> Self {
-        shell_program(shell).map_or(Self::Unknown, |program| Self::of_program(&program))
-    }
-
     /// What submits a typed line: upstream's line feed for POSIX shells and fish, else a carriage return, the Enter
     /// key's own code.
     #[must_use]
@@ -433,7 +418,17 @@ impl ShellDialect {
     }
 }
 
-/// The shell program after the same path and `env` rules as [`ShellDialect::of_shell`].
+/// The program of a pane's shell as its config names it: a program and its arguments (`pwsh -NoLogo`,
+/// `/usr/bin/fish -l`); its dialect is [`ShellDialect::of_program`]'s. Outside Windows, `/bin/sh` runs the value, so
+/// the program is its first word as `/bin/sh` reads it (`'/opt/my tools/fish' -l`), past the variable assignments
+/// before it (`X=1 fish`); `None` when an expansion could change that word, or when `/bin/sh` could run another
+/// command after it (`;`, `|`, `&`, a newline, `$(…)`: `bash -c : ; tcsh`). A shell's own `-c` command is taken as
+/// that shell's. A shell that runs directly, not through `/bin/sh` (a profile's executable, Live's `SHELL`), is its
+/// own program: do not read it here. Windows runs the value directly, so there the program is the value's shortest
+/// run of leading words that names a known shell or `env`: a path with spaces is read whole
+/// (`C:\Program Files\PowerShell\7\pwsh.exe`) and a shell's argument never stands for it
+/// (`pwsh -File C:\scripts\bash`). A program `env` is the program it runs (`env_program`: `/usr/bin/env zsh`,
+/// `env -S 'zsh -l'`, `C:\Program Files\Git\usr\bin\env.exe bash`).
 #[must_use]
 pub fn shell_program(shell: &str) -> Option<Cow<'_, str>> {
     let mut rest = shell.trim_start_matches(BLANKS);
