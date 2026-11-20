@@ -1605,13 +1605,29 @@ mod tests {
             "env -i FOO=bar env /bin/csh",
             "env -u SHELL --chdir /tmp -- tcsh",
             "env --split-string=tcsh -l",
+            "/usr/bin/env NOTE='use bash' /bin/tcsh",
+            "/usr/bin/env NOTE=\"use bash\" /bin/tcsh",
+            r"env NOTE=use\ bash /bin/tcsh",
+            "env -C '/tmp/use bash' /bin/tcsh",
+            "env --chdir \"/tmp/use bash\" /bin/tcsh",
+            "env -- NOTE='use bash' /bin/tcsh",
+            "env NOTE='use bash' env -u 'use bash' /bin/tcsh",
+            "env -S 'NOTE=\"use bash\" /bin/tcsh -l'",
+            "env --split-string='NOTE=\"use bash\" /bin/tcsh -l'",
         ] {
             for words in [["grep", "!needle", "log"], ["fix!x", "plain", "log"]] {
                 assert!(!should_restore_in_shell(&argv(&words), &none, Some(shell)), "{shell}");
             }
             assert!(should_restore_in_shell(&argv(&["grep", "needle"]), &none, Some(shell)));
         }
-        for shell in [None, Some("/bin/zsh"), Some("/bin/bash"), Some("/usr/bin/fish")] {
+        for shell in [
+            None,
+            Some("/bin/zsh"),
+            Some("/bin/bash"),
+            Some("/usr/bin/fish"),
+            Some("env NOTE='use tcsh' /bin/bash"),
+            Some("env -C '/tmp/use tcsh' /bin/bash"),
+        ] {
             assert!(should_restore_in_shell(&argv(&["grep", "!needle"]), &none, shell));
             assert!(!should_restore_in_shell(&argv(&["vim", "!x"]), &["vim"], shell));
         }

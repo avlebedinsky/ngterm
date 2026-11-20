@@ -54,54 +54,105 @@ fn is_env(word: &str) -> bool {
     shell_name(basename(word)).eq_ignore_ascii_case("env")
 }
 
-/// The program `env` runs, given the words after `env`: past its options (GNU's and BSD's: switches, bundled or not,
-/// `-u`/`-C`/`-P` and their long forms with their values, joined or the next word, `--` ending them), its
-/// `NAME=value` assignments, and the words `-S` (`--split-string`) splits, which `env` reads as more of its own
-/// arguments; another `env` it runs read the same way. Quotes around the program's word are dropped (`-S 'zsh -l'`
-/// splits on whitespace here into `'zsh` and `-l'`). `None` when no program follows.
-fn env_program<'a>(mut words: impl Iterator<Item = &'a str>) -> Option<&'a str> {
-    let mut pending: Option<&'a str> = None;
-    loop {
-        let word = pending.take().or_else(|| words.next())?;
-        if word == "--" {
-            // options end here, but not env's own `-` and its assignments, which it still reads before the program
-            let mut program = words.next()?;
-            if program == "-" {
-                program = words.next()?;
-            }
-            while program.contains('=') {
-                program = words.next()?;
-            }
-            let program = program.trim_matches(['\'', '"']);
-            return if is_env(program) {
-                env_program(words)
-            } else {
-                Some(program)
-            };
-        }
+/// The program that `env` runs after its options, assignments, split strings and nested wrappers.
+fn env_program(arguments: &str) -> Option<&str> {
+    let mut words = std::collections::VecDeque::from(env_words(arguments)?);
+    while let Some(word) = words.pop_front() {
+        let word = unquote(word);
         if word == "-" || (word.contains('=') && !word.starts_with('-')) {
             continue;
         }
-        if let Some(long) = word.strip_prefix("--") {
-            if ["unset", "chdir"].contains(&long) {
-                words.next();
+        if word == "--" {
+            let mut program = unquote(words.pop_front()?);
+            if program == "-" {
+                program = unquote(words.pop_front()?);
             }
-            pending = long.strip_prefix("split-string=").filter(|rest| !rest.is_empty());
-            continue;
-        }
-        if let Some(bundle) = word.strip_prefix('-') {
-            let (takes_next, split) = env_short_options(bundle);
-            if takes_next {
-                words.next();
+            while program.contains('=') {
+                program = unquote(words.pop_front()?);
             }
-            pending = split;
-            continue;
-        }
-        let program = word.trim_matches(['\'', '"']);
-        if !is_env(program) {
-            return Some(program);
+            if !is_env(program) {
+                return Some(program);
+            }
+        } else if word.starts_with('-') {
+            env_option(word, &mut words)?;
+        } else if !is_env(word) {
+            return Some(word);
         }
     }
+    None
+}
+
+fn env_option<'a>(word: &'a str, words: &mut std::collections::VecDeque<&'a str>) -> Option<()> {
+    let split = if let Some(long) = word.strip_prefix("--") {
+        if ["unset", "chdir"].contains(&long) {
+            words.pop_front()?;
+        }
+        if long == "split-string" {
+            Some(words.pop_front()?)
+        } else {
+            long.strip_prefix("split-string=")
+        }
+    } else {
+        let (takes_next, split) = env_short_options(word.strip_prefix('-')?);
+        if takes_next {
+            words.pop_front()?;
+        }
+        match split {
+            Some("") => Some(words.pop_front()?),
+            split => split,
+        }
+    };
+    if let Some(split) = split {
+        // The shell and `env -S` can each change an escape before the program name.
+        if split.contains('\\') {
+            return None;
+        }
+        for part in env_words(unquote(split))?.into_iter().rev() {
+            words.push_front(part);
+        }
+    }
+    Some(())
+}
+
+fn unquote(word: &str) -> &str {
+    for quote in ['\'', '"'] {
+        if let Some(inner) = word.strip_prefix(quote).and_then(|rest| rest.strip_suffix(quote)) {
+            return inner;
+        }
+    }
+    word
+}
+
+fn env_words(mut arguments: &str) -> Option<Vec<&str>> {
+    let mut words = Vec::new();
+    loop {
+        arguments = arguments.trim_start();
+        if arguments.is_empty() {
+            return Some(words);
+        }
+        let end = env_word_end(arguments)?;
+        words.push(&arguments[..end]);
+        arguments = &arguments[end..];
+    }
+}
+
+fn env_word_end(arguments: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    for (at, character) in arguments.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (None, '\'' | '"') => quote = Some(character),
+            (None | Some('"'), '\\') => escaped = true,
+            (None, character) if character.is_whitespace() => return Some(at),
+            _ => {}
+        }
+    }
+    (quote.is_none() && !escaped).then_some(arguments.len())
 }
 
 /// What a bundle of `env`'s short options (`-iu`, `-uNAME`, `-Szsh`, without the `-`) leaves: whether the next word
@@ -115,7 +166,7 @@ fn env_short_options(bundle: &str) -> (bool, Option<&str>) {
             return (rest.is_empty(), None);
         }
         if option == 'S' {
-            return (false, Some(rest).filter(|rest| !rest.is_empty()));
+            return (false, Some(rest));
         }
     }
     (false, None)
@@ -208,7 +259,7 @@ pub(crate) fn shell_program(shell: &str) -> Option<&str> {
         end += rest.len() - word.len() + word.find(char::is_whitespace).unwrap_or(word.len());
         let program = &shell[..end];
         if is_env(program) {
-            return env_program(shell[end..].split_whitespace());
+            return env_program(&shell[end..]);
         }
         if ShellDialect::of_program(program) != ShellDialect::Unknown {
             return Some(program);

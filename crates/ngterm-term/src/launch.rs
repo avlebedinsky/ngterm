@@ -996,19 +996,20 @@ mod tests {
     }
 
     #[test]
-    fn a_restored_capture_uses_the_current_host_after_a_config_reload() {
+    fn a_seed_carries_the_capture_until_the_host_prepares_it() {
         use ngterm_core::model::{Session, SessionSeed, StatusPane};
         use ngterm_core::restore::spawn_plan::{LaunchSeedPolicy, resolve_seed};
 
         for pane in [StatusPane::Left, StatusPane::Right] {
-            for (previous, current, replay) in [
-                ("/bin/bash", "/bin/tcsh", false),
-                ("/bin/tcsh", "/bin/bash", true),
-                ("/bin/bash", "/usr/bin/env tcsh", false),
-                ("/bin/tcsh", "/usr/bin/env bash", true),
+            for (shell, replay) in [
+                ("/bin/tcsh", false),
+                ("/bin/bash", true),
+                ("/usr/bin/env tcsh", false),
+                ("/usr/bin/env bash", true),
+                (r#"env -S "NOTE=\"use bash here\" /bin/tcsh""#, false),
             ] {
-                let mut receiver = Host {
-                    shell: previous.into(),
+                let receiver = Host {
+                    shell: shell.into(),
                     ..host(None)
                 };
                 let mut session = Session::new(SessionSeed::default());
@@ -1035,12 +1036,11 @@ mod tests {
                 assert_eq!(seed.command, None);
                 assert_eq!(seed.initial_input, Some(PaneInput::Replay(capture)));
                 assert!(session.pane_restore(pane).unwrap().pending_foreground.is_none());
-                receiver.shell = current.into();
                 let prepared = receiver.prepare(&Launch::from_seed(&seed, None, &[]), &MapEnv::new());
                 assert_eq!(
                     prepared.initial_input,
                     replay.then(|| b"'echo' '!needle'\n".to_vec()),
-                    "{pane:?} {previous} -> {current}"
+                    "{pane:?} {shell}"
                 );
                 assert!(!prepared.command.args.iter().any(|arg| arg == "stale-command"));
             }
@@ -1049,7 +1049,15 @@ mod tests {
 
     #[test]
     fn the_current_receiver_refuses_bangs_only_in_captured_commands_for_csh() {
-        for shell in ["/bin/csh", "/bin/tcsh -l", "/usr/bin/env tcsh", "env -S 'tcsh -l'"] {
+        for shell in [
+            "/bin/csh",
+            "/bin/tcsh -l",
+            "/usr/bin/env tcsh",
+            "env -S 'tcsh -l'",
+            "env NOTE='use bash' /bin/tcsh",
+            "env -C '/tmp/use bash' /bin/tcsh",
+            "env --split-string='NOTE=\"use bash\" /bin/tcsh -l'",
+        ] {
             let receiver = Host {
                 shell: shell.into(),
                 ..host(None)
