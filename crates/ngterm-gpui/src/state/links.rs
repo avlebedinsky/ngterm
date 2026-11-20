@@ -49,8 +49,8 @@ impl AppState {
     }
 
     /// A link clicked in a session's pane or scratch terminal: a detected link (`LinkKind::Url`) resolves a relative
-    /// path against the still-live local pane's reported OSC 7 directory, never the model's cwd; an OSC 8 URI stays as
-    /// written, as Ghostty's `processLinks` keeps it. A remote pane's paths name files on the origin.
+    /// path against the local pane's reported directory, or the scratch's start or reported directory.
+    /// An OSC 8 URI stays as written. A remote pane's paths name files on the origin.
     pub fn follow_pane_link(
         &mut self,
         raw: &str,
@@ -71,7 +71,7 @@ impl AppState {
             return;
         };
         let scratch = role == ngterm_core::model::StatusPane::Scratch;
-        let remote = !scratch && found.remote_host().is_some();
+        let remote = found.remote_host_for(role).is_some();
         let origin = if scratch {
             ClickOrigin::Scratch(session)
         } else if remote {
@@ -80,7 +80,13 @@ impl AppState {
             ClickOrigin::Pane(session)
         };
         let cwd = (kind == crate::terminal::LinkKind::Url)
-            .then(|| self.link_directories.get(&(session, token.to_owned())).cloned())
+            .then(|| {
+                if scratch {
+                    Some(found.cwd_for(role).to_owned())
+                } else {
+                    self.link_directories.get(&(session, token.to_owned())).cloned()
+                }
+            })
             .flatten();
         self.follow_link_at(raw, origin, cwd.as_deref(), intent);
     }

@@ -517,6 +517,55 @@ fn typed_in(owner: SurfaceOwner, selection: Option<&str>) -> TypingSurface {
 }
 
 #[test]
+fn a_scratch_command_uses_its_local_directory_and_no_attach_host() {
+    let (mut host, command, _) = chord_host();
+    let window = host.fixture.window;
+    let store = host.fixture.store_mut().unwrap();
+    let workspace = store.workspaces()[0].id();
+    let id = store
+        .add_session(
+            workspace,
+            crate::model::NewSession {
+                remote_host: Some("box".to_owned()),
+                ..crate::model::NewSession::at_cwd("/srv")
+            },
+        )
+        .unwrap();
+    let pane = crate::keymap::CommandPane::Scratch;
+    assert_eq!(
+        host.fixture
+            .core
+            .run_custom_command_in(&command, window, id, pane, None),
+        None
+    );
+    assert_eq!(last_env(&host, "AGT_SESSION_PWD").as_deref(), Some("/srv"));
+    assert_eq!(last_env(&host, "AGT_SESSION_HOST").as_deref(), Some(""));
+    let directory = tempfile::tempdir().unwrap();
+    let cwd = directory.path().to_string_lossy().into_owned();
+    let session = host.fixture.store_mut().unwrap().session_mut(id).unwrap();
+    session.scratch_cwd = Some(cwd.clone());
+    session.scratch_active = true;
+    session.scratch_surface.replace(Box::new(FakeSurface::new("S")));
+    let owner = SurfaceOwner::Pane {
+        session: id,
+        token: "S".to_owned(),
+    };
+    host.fixture
+        .core
+        .run_custom_command_from_keybind(&command, Some(window), Some(typed_in(owner, None)));
+    assert_eq!(last_env(&host, "AGT_SESSION_PWD"), Some(cwd));
+    assert_eq!(last_env(&host, "AGT_SESSION_HOST").as_deref(), Some(""));
+    assert_eq!(
+        host.launcher.launches().last().unwrap().cwd.as_deref(),
+        Some(directory.path())
+    );
+    assert_eq!(host.fixture.core.run_custom_command(&command, window, id), None);
+    assert_eq!(last_env(&host, "AGT_SESSION_PWD").as_deref(), Some("/srv"));
+    assert_eq!(last_env(&host, "AGT_SESSION_HOST").as_deref(), Some("box"));
+    assert_eq!(last_env(&host, "AGT_PANE").as_deref(), Some("left"));
+}
+
+#[test]
 fn a_chord_runs_for_the_terminal_typed_in_not_the_selected_session() {
     // a zoomed session shows and takes the keyboard without being selected: the chord is its own
     let (mut host, command, typed) = chord_host();

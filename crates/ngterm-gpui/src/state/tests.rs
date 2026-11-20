@@ -1112,6 +1112,36 @@ fn remote_primary_paths_stay_remote_while_scratch_paths_stay_local() {
 }
 
 #[test]
+fn scratch_relative_links_use_the_start_directory_before_a_pwd_report() {
+    let (mut state, _, session) = state_with_terminal();
+    let (main_loop, _held) = record(&mut state);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("scratch.bin");
+    std::fs::write(&path, "scratch file").unwrap();
+    let found = state
+        .core
+        .library_mut()
+        .store_for_session_mut(session)
+        .unwrap()
+        .session_mut(session)
+        .unwrap();
+    found.scratch_cwd = Some(directory.path().to_string_lossy().into_owned());
+    found.scratch_surface.replace(Box::new(FakeSurface::new("S")));
+    click(&mut state, &main_loop, "./scratch.bin", session, "S");
+    assert_eq!(state.frontend.reveals, [path]);
+    assert!(
+        state
+            .core
+            .library_mut()
+            .store_for_session_mut(session)
+            .unwrap()
+            .close_scratch(session, false)
+    );
+    click(&mut state, &main_loop, "./scratch.bin", session, "S");
+    assert_eq!(state.frontend.reveals.len(), 1);
+}
+
+#[test]
 fn only_detected_existing_relative_links_with_an_osc7_directory_resolve() {
     let (mut state, _, session) = state_with_terminal();
     let (main_loop, _held) = record(&mut state);

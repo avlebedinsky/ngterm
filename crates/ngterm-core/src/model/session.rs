@@ -272,6 +272,8 @@ pub struct Session {
     pub split_surface: SurfaceSlot,
     /// The scratch terminal, created on its first show and kept while hidden; freed when its shell exits.
     pub scratch_surface: SurfaceSlot,
+    /// The scratch shell's start or reported directory. Cleared when the scratch closes.
+    pub scratch_cwd: Option<String>,
     /// The in-terminal search. Ephemeral.
     pub search: SearchState,
     /// The session-wide overlay slot and the HUD in it. A HUD or program in it is ephemeral; a page persists with the
@@ -369,6 +371,7 @@ impl Session {
             surface: SurfaceSlot::default(),
             split_surface: SurfaceSlot::default(),
             scratch_surface: SurfaceSlot::default(),
+            scratch_cwd: None,
             search: SearchState::default(),
             overlay: OverlaySlot::default(),
             pane_overlays: PaneOverlays::default(),
@@ -581,7 +584,7 @@ impl Session {
         }
     }
 
-    /// The working directory of a pane role: the split pane's for [`StatusPane::Right`], else the primary's.
+    /// The pane's own directory, with the primary directory as the fallback.
     #[must_use]
     pub fn cwd_for(&self, pane: StatusPane) -> &str {
         match pane {
@@ -590,17 +593,28 @@ impl Session {
                 .as_deref()
                 .or(self.initial_split_cwd.as_deref())
                 .unwrap_or_else(|| self.effective_cwd()),
-            StatusPane::Left | StatusPane::Scratch => self.effective_cwd(),
+            StatusPane::Scratch => self.scratch_cwd.as_deref().unwrap_or_else(|| self.effective_cwd()),
+            StatusPane::Left => self.effective_cwd(),
         }
     }
 
-    /// The latest working directory a pane role reported (OSC 7): the split pane's for [`StatusPane::Right`], else
-    /// the primary's; `None` before its first report, where [`Session::cwd_for`] falls back to where it started.
+    /// The pane's recorded directory, before the fallback to the primary directory.
     #[must_use]
     pub fn reported_cwd_for(&self, pane: StatusPane) -> Option<&str> {
         match pane {
             StatusPane::Right => self.split_cwd.as_deref(),
-            StatusPane::Left | StatusPane::Scratch => self.current_cwd.as_deref(),
+            StatusPane::Scratch => self.scratch_cwd.as_deref(),
+            StatusPane::Left => self.current_cwd.as_deref(),
+        }
+    }
+
+    /// The host of a pane's shell. A scratch shell runs locally, also on an attached session.
+    #[must_use]
+    pub fn remote_host_for(&self, pane: StatusPane) -> Option<&str> {
+        if pane == StatusPane::Scratch {
+            None
+        } else {
+            self.remote_host()
         }
     }
 
@@ -733,6 +747,7 @@ impl Session {
         self.surface.teardown();
         self.split_surface.teardown();
         self.scratch_surface.teardown();
+        self.scratch_cwd = None;
         self.search.clear();
     }
 }
@@ -879,6 +894,25 @@ mod tests {
         s.split_cwd = Some("/live".to_owned());
         assert_eq!(s.cwd_for(StatusPane::Right), "/live");
         assert_eq!(s.cwd_for(StatusPane::Scratch), "/main");
+        assert_eq!(s.reported_cwd_for(StatusPane::Scratch), None);
+        s.scratch_cwd = Some("/docs".to_owned());
+        assert_eq!(s.cwd_for(StatusPane::Scratch), "/docs");
+        assert_eq!(s.reported_cwd_for(StatusPane::Scratch), Some("/docs"));
+        assert_eq!(s.cwd_for(StatusPane::Left), "/main");
+        assert_eq!(s.focused_cwd(), "/main");
+    }
+
+    #[test]
+    fn an_attached_sessions_scratch_has_no_remote_host() {
+        let local = session("/main");
+        assert_eq!(local.remote_host_for(StatusPane::Scratch), None);
+        let remote = Session::new(SessionSeed {
+            remote_host: Some("box".to_owned()),
+            ..SessionSeed::default()
+        });
+        assert_eq!(remote.remote_host_for(StatusPane::Left), Some("box"));
+        assert_eq!(remote.remote_host_for(StatusPane::Right), Some("box"));
+        assert_eq!(remote.remote_host_for(StatusPane::Scratch), None);
     }
 
     #[test]
@@ -932,8 +966,10 @@ mod tests {
         s.surface.replace(Box::new(main));
         s.split_surface.replace(Box::new(split));
         s.scratch_surface.replace(Box::new(scratch));
+        s.scratch_cwd = Some("/docs".to_owned());
         s.teardown_surfaces();
         assert!(probes.iter().all(|probe| probe.teardowns() == 1));
+        assert_eq!(s.scratch_cwd, None);
     }
 
     #[test]

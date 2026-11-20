@@ -146,6 +146,10 @@ pub fn session_node(session: &Session, active: bool) -> ControlSessionNode {
     node.title.clone_from(&session.osc_title);
     node.active = active;
     node.scratch = session.scratch_active;
+    node.scratch_cwd = session
+        .scratch_surface
+        .is_present()
+        .then(|| session.cwd_for(StatusPane::Scratch).to_owned());
     node.flagged = session.flagged;
     node.context = session.effective_context().map(str::to_owned);
     if let Some(info) = session.effective_info() {
@@ -653,6 +657,29 @@ mod tests {
 
     fn session_mut_uncover(store: &mut AppStore, sid: Uuid) {
         store.session_mut(sid).unwrap().scratch_active = false;
+    }
+
+    #[test]
+    fn scratch_directory_reports_only_while_its_surface_exists_shown_or_hidden() {
+        let mut library = WindowLibrary::seeded("/primary");
+        let store = library.active_store_mut().unwrap();
+        let sid = store.sessions().next().unwrap().id();
+        let session = store.session_mut(sid).unwrap();
+        session.scratch_cwd = Some("/stale".to_owned());
+        let node = serde_json::to_value(session_node(session, true)).unwrap();
+        assert!(node.get("scratchCwd").is_none());
+        session.scratch_surface.replace(Box::new(FakeSurface::new("S")));
+        for shown in [false, true] {
+            session.scratch_active = shown;
+            for (cwd, expected) in [(None, "/primary"), (Some("/docs"), "/docs")] {
+                session.scratch_cwd = cwd.map(str::to_owned);
+                let projected = session_node(session, true);
+                let node = serde_json::to_value(&projected).unwrap();
+                assert_eq!(node["scratchCwd"], expected);
+                assert_eq!(node["cwd"], "/primary");
+                assert_eq!(serde_json::from_value::<ControlSessionNode>(node).unwrap(), projected);
+            }
+        }
     }
 
     /// Upstream's `hiddenUnrealizedSplitTakesThePrimarysBacking` and `realizedUnbackedSplitStillClearsTheSessionBacking`.

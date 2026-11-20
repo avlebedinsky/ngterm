@@ -843,3 +843,40 @@ fn pane_reports_land_on_the_reporting_panes_role() {
     install(&mut fixture, id, StatusPane::Scratch, "S");
     assert!(!fixture.core.report_pane(id, "S", &PaneReport::Title("scratch".into())));
 }
+
+#[test]
+fn scratch_pwd_changes_only_its_own_directory_and_a_departed_scratch_cannot_report() {
+    let (mut fixture, id) = split_fixture();
+    install(&mut fixture, id, StatusPane::Scratch, "S");
+    let before = session(&fixture, id);
+    let expected = (
+        before.current_cwd.clone(),
+        before.split_cwd.clone(),
+        before.osc_title.clone(),
+        before.display_name(),
+    );
+    assert!(
+        fixture
+            .core
+            .report_pane(id, "S", &PaneReport::Pwd("/tmp/\u{7}docs".into()))
+    );
+    assert!(
+        !fixture
+            .core
+            .report_pane(id, "S", &PaneReport::Title("scratch title".into()))
+    );
+    let found = session(&fixture, id);
+    assert_eq!(found.scratch_cwd.as_deref(), Some("/tmp/docs"));
+    assert_eq!(
+        (
+            found.current_cwd.clone(),
+            found.split_cwd.clone(),
+            found.osc_title.clone(),
+            found.display_name()
+        ),
+        expected
+    );
+    assert!(fixture.store_mut().unwrap().close_scratch(id, false));
+    assert!(!fixture.core.report_pane(id, "S", &PaneReport::Pwd("/old".into())));
+    assert_eq!(session(&fixture, id).scratch_cwd, None);
+}

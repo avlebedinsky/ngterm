@@ -63,7 +63,7 @@ fn remote_clipboard_destination_follows_both_session_panes() {
     }
     // Scratch panes run a local shell even when the session was attached from another machine.
     assert_eq!(
-        PaneSpec::scratch(window, workspace, &mut session)
+        PaneSpec::scratch(window, workspace, &mut session, "/local/home")
             .terminal_spec()
             .remote_host,
         None
@@ -216,15 +216,16 @@ fn each_scratch_terminal_gets_a_fresh_token_and_runs_its_command_once() {
     let workspace = store.workspaces()[0].id();
     let session = store.session_mut(ids[1]).unwrap();
     session.scratch_command = Some("lazygit".to_owned());
-    let first = PaneSpec::scratch(window, workspace, session);
+    let first = PaneSpec::scratch(window, workspace, session, "/local/home");
     assert_eq!(first.command.as_deref(), Some("lazygit"));
     assert_eq!(session.scratch_command, None, "taken: it runs once");
     let env = first.env(&context());
     assert_eq!(env["NGTERM_PANE"], "scratch");
     assert_eq!(env["NGTERM_PANE_ID"], first.token);
     assert_eq!(first.cwd, "/srv");
+    assert_eq!(session.scratch_cwd.as_deref(), Some("/srv"));
     assert!(!first.wait && !first.gated(), "the scratch starts from its spec");
-    let second = PaneSpec::scratch(window, workspace, session);
+    let second = PaneSpec::scratch(window, workspace, session, "/local/home");
     assert_eq!(second.command, None, "a respawn is a login shell");
     assert_ne!(second.token, first.token);
     assert_eq!(
@@ -232,6 +233,30 @@ fn each_scratch_terminal_gets_a_fresh_token_and_runs_its_command_once() {
         None,
         "no replacement spec for a scratch"
     );
+}
+
+#[test]
+fn a_scratch_records_its_local_start_directory_before_any_pwd_report() {
+    let home = tempfile::tempdir().unwrap();
+    let local = home.path().to_string_lossy().into_owned();
+    let missing = home.path().join("only-on-remote").to_string_lossy().into_owned();
+    let (window, workspace) = (Uuid::new_v4(), Uuid::new_v4());
+    for remote in [None, Some("box".to_owned())] {
+        let mut session = Session::new(ngterm_core::model::SessionSeed {
+            initial_cwd: "/start".to_owned(),
+            remote_host: remote.clone(),
+            ..ngterm_core::model::SessionSeed::default()
+        });
+        for reported in [&local, &missing] {
+            session.set_current_cwd(reported);
+            let spec = PaneSpec::scratch(window, workspace, &mut session, &local);
+            let expected = if remote.is_some() { &local } else { reported };
+            assert_eq!(&spec.cwd, expected);
+            assert_eq!(session.scratch_cwd.as_ref(), Some(expected));
+            assert_eq!(spec.launch(&context()).working_directory, Some(PathBuf::from(expected)));
+            assert_eq!(session.effective_cwd(), reported);
+        }
+    }
 }
 
 #[test]

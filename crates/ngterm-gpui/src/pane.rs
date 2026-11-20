@@ -89,17 +89,18 @@ impl PaneSpec {
         })
     }
 
-    /// A scratch terminal of `session`, in the primary's cwd, running the pending scratch command once (it is taken)
-    /// or a login shell.
+    /// A local scratch shell in the primary directory, or `home` if that directory exists only on the remote host.
     #[must_use]
-    pub fn scratch(window: Uuid, workspace: Uuid, session: &mut Session) -> Self {
+    pub fn scratch(window: Uuid, workspace: Uuid, session: &mut Session, home: &str) -> Self {
+        let cwd = session.local_working_directory(session.effective_cwd(), home);
+        session.scratch_cwd = Some(cwd.clone());
         Self {
             window,
             workspace,
             session: session.id(),
             pane: StatusPane::Scratch,
             token: pane_env::uuid_string(Uuid::new_v4()),
-            cwd: session.effective_cwd().to_owned(),
+            cwd,
             command: session.scratch_command.take(),
             wait: false,
             font_size: session.font_size,

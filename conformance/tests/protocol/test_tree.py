@@ -1,6 +1,7 @@
 """The `tree` and `window.list` projections of a fresh instance. Tests on the module's shared instance only read,
 so it stays fresh for all of them; a test that changes state takes an instance of its own."""
 
+import shlex
 import shutil
 import time
 
@@ -292,3 +293,42 @@ def test_last_selected_at_stamps_the_session_entered_and_left(app, ctl):
     assert left == entered
     assert before - 1 <= entered <= after + 1
     assert_absent(find_session(tree, never), "lastSelectedAt")
+
+
+@pytest.mark.since("0.42.1")
+@pytest.mark.requires("posix-command-line", reason="the scratch program emits OSC 7 with printf")
+@pytest.mark.covers("field:tree.session.scratchCwd", "session.scratch")
+def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(ctl):
+    primary = ctl.instance.root / "primary"
+    scratch = ctl.instance.root / "scratch"
+    primary.mkdir()
+    scratch.mkdir()
+    sid = assert_ok(ctl.request("session.new", cwd=str(primary), command="exec cat"))["id"]
+    try:
+        ctl.wait_mounted(sid, "left")
+        before = find_session(ctl.tree(), sid)
+        assert_absent(before, "scratchCwd")
+        command = (
+            "printf '\\033]7;file://localhost%s\\007\\033]0;scratch title\\007' "
+            f"{shlex.quote(str(scratch))}; exec cat"
+        )
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command=command))
+        node = find_session(
+            ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(scratch)), sid
+        )
+        assert (node["cwd"], node["name"], node.get("title")) == (before["cwd"], before["name"], before.get("title"))
+        assert_ok(ctl.request("session.scratch", sid, mode="off"))
+        node = find_session(ctl.tree(), sid)
+        assert node["scratch"] is False
+        assert node["scratchCwd"] == str(scratch)
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exit"))
+        ctl.wait_tree(
+            lambda tree: not find_session(tree, sid)["scratch"] and "scratchCwd" not in find_session(tree, sid)
+        )
+        assert_ok(ctl.request("session.scratch", sid, mode="on", command="exec cat"))
+        node = find_session(
+            ctl.wait_tree(lambda tree: find_session(tree, sid).get("scratchCwd") == str(primary)), sid
+        )
+        assert node["cwd"] == str(primary)
+    finally:
+        ctl.request("session.close", sid)

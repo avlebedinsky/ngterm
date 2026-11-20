@@ -339,6 +339,7 @@ impl AppStore {
         let removal = session.pane_text_removal(StatusPane::Scratch);
         session.pane_backgrounds.scratch = None;
         session.scratch_surface.teardown();
+        session.scratch_cwd = None;
         self.outbox.removed_watermarks.extend(removal);
         if was_shown && emit {
             self.emit_pane_visibility(EventKind::PaneScratch, id, false);

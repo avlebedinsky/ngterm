@@ -107,7 +107,7 @@ pub struct CommandContext {
     pub session_id: String,
     pub session_name: String,
     pub session_pwd: String,
-    /// The SSH destination of an attached remote session, empty for a local one.
+    /// The SSH destination of the pane's shell, empty for a local shell.
     pub session_host: String,
     pub workspace_id: String,
     pub workspace_name: String,

@@ -265,7 +265,7 @@ impl Core {
             session_name: state.display_name(),
             session_pwd: state.cwd_for(role).to_owned(),
             session_host: state
-                .remote_host()
+                .remote_host_for(role)
                 .map(crate::model::naming::sanitized)
                 .unwrap_or_default(),
             workspace_id: workspace

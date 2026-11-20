@@ -833,6 +833,7 @@ impl Deck {
     /// Brings page `id` in line with its session: the terminals the model dropped go, the panes it lays out and has
     /// no terminal for are created and installed in their slots, and the layout follows the session and the zoom.
     fn sync_page(&mut self, core: &mut Core, sync: &PageSync, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let home = core.library().home().to_owned();
         let shown = sync.shown == Some(id);
         let covers: Vec<(String, PaneCover)> = self
             .pages
@@ -871,7 +872,7 @@ impl Deck {
             mount_into(&self.env, page, session, &spec, window, cx);
         }
         if needs.scratch {
-            let spec = PaneSpec::scratch(sync.window, workspace, session);
+            let spec = PaneSpec::scratch(sync.window, workspace, session, &home);
             mount_into(&self.env, page, session, &spec, window, cx);
         }
         // the first layout of a shown split seeds an even ratio, so a shown split always reports one (upstream's

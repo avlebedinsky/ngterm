@@ -138,8 +138,8 @@ impl Core {
 
     /// Lands a pane's cwd or title report on the pane carrying `token` (upstream's `applyPwd`/`applyTitle`, routed by
     /// the pane's role now, so a swapped or promoted terminal reports into its new role's fields), wherever its session
-    /// lives: in a window's tree, or held by a pending soft close whose terminal still runs. The scratch reports into
-    /// nothing, as upstream's scratch is not wired to the session's fields. Nothing is saved. Whether it landed.
+    /// lives: in a window's tree, or held by a pending soft close whose terminal still runs.
+    /// The scratch reports only its directory. Nothing is saved. True if the pane accepts the report.
     pub fn report_pane(&mut self, session: Uuid, token: &str, report: &PaneReport) -> bool {
         // a live pane's attach reports its lead as a title under a reserved prefix, never shown as one
         if let PaneReport::Title(title) = report
@@ -159,7 +159,14 @@ impl Core {
         let split = match target.pane_role_for_token(token) {
             Some(StatusPane::Left) => false,
             Some(StatusPane::Right) => true,
-            Some(StatusPane::Scratch) | None => return false,
+            Some(StatusPane::Scratch) => {
+                if let PaneReport::Pwd(pwd) = report {
+                    target.scratch_cwd = Some(crate::model::naming::sanitized(pwd));
+                    return true;
+                }
+                return false;
+            }
+            None => return false,
         };
         match report {
             PaneReport::Pwd(pwd) => target.report_pwd(split, pwd),

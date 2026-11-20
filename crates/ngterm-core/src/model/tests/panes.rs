@@ -764,10 +764,16 @@ fn closing_the_scratch_tears_it_down_once() {
     let (mut store, id) = seeded();
     store.toggle_scratch(id, true);
     let scratch = install(&mut store, id, StatusPane::Scratch, "S");
+    get_mut(&mut store, id).scratch_cwd = Some("/scratch/docs".to_owned());
     store.take_outbox();
     assert!(store.close_scratch(id, true));
     assert!(!get(&store, id).scratch_active);
     assert!(!get(&store, id).scratch_surface.is_present());
+    assert_eq!(get(&store, id).scratch_cwd, None);
+    assert_eq!(
+        get(&store, id).cwd_for(StatusPane::Scratch),
+        get(&store, id).effective_cwd()
+    );
     assert_eq!(scratch.teardowns(), 1);
     assert!(!store.close_scratch(id, true));
     assert_eq!(visibility(&store, EventKind::PaneScratch), ["hidden"]);

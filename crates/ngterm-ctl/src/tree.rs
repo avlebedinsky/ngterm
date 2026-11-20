@@ -78,6 +78,7 @@ fn format_session(session: &ControlSessionNode) -> String {
 fn session_suffix(session: &ControlSessionNode) -> String {
     let labelled = |label: &str, value: Option<&String>| value.map(|value| format!("  {label}: {value}"));
     let split_cwd = session.split_cwd.as_ref().filter(|cwd| **cwd != session.cwd);
+    let scratch_cwd = session.scratch_cwd.as_ref().filter(|cwd| **cwd != session.cwd);
     let presentation = session.presentation.as_ref().map(|presentation| {
         let presenter = if presentation.mode == "presenter" {
             ", presenter"
@@ -106,6 +107,7 @@ fn session_suffix(session: &ControlSessionNode) -> String {
     });
     [
         labelled("split cwd", split_cwd),
+        labelled("scratch cwd", scratch_cwd),
         labelled("title", session.title.as_ref()),
         labelled("live attribution", session.live_attribution.as_ref()),
         labelled("split live attribution", session.split_live_attribution.as_ref()),
@@ -210,5 +212,18 @@ mod tests {
     #[test]
     fn an_empty_tree_prints_nothing() {
         assert_eq!(format_tree(&ControlTree::default()), "");
+    }
+
+    #[test]
+    fn only_a_different_scratch_directory_prints() {
+        for (cwd, expected) in [("/other", "  scratch cwd: /other"), ("/w", "")] {
+            let node = session("s", json!({"scratchCwd": cwd}));
+            let rendered = format_tree(&tree(json!({"workspaces": [{"id": "W", "name": "w", "active": false,
+                                                                     "sessions": [node]}]})));
+            assert_eq!(
+                rendered.lines().nth(1),
+                Some(format!("    s  [s]  /w{expected}").as_str())
+            );
+        }
     }
 }
