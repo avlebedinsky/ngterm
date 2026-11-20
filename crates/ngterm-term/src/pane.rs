@@ -1594,8 +1594,8 @@ impl Worker {
     }
 
     /// Ask the frontend about a clipboard read and wait for its answer without the VT lock, ending expired holds
-    /// meanwhile; `None` on shutdown. The child's exit denies the read (nobody is left to read the answer), and every
-    /// later one without asking.
+    /// meanwhile; `None` on shutdown. Once nobody answers any more (the child exited, or the embedder detached the
+    /// pane), the read is denied, and every later read or write without asking.
     fn park(&mut self, read: ReadCandidate) -> Option<ClipboardAnswer> {
         if self.child_exited {
             return Some(ClipboardAnswer::Denied);

@@ -356,3 +356,15 @@ fn once_its_requests_are_denied_the_terminal_answers_each_one_at_once() {
     fixture.feed.deliver(&transaction("late", "", &[]));
     fixture.sent_until(b"\x1b]5522;type=write:status=EPERM:id=late\x1b\\");
 }
+
+#[test]
+fn an_answer_given_just_before_the_deny_still_reaches_the_program() {
+    let fixture = stream(PaneConfig::new(SIZE));
+    fixture.feed.deliver(b"\x1b]52;c;?\x07");
+    let pending = read(&fixture);
+    fixture
+        .pane
+        .answer_clipboard_read(pending.id, ClipboardAnswer::Text(Some("hi".to_owned())));
+    fixture.pane.deny_clipboard_requests();
+    assert_eq!(sent_once_settled(&fixture), b"\x1b]52;c;aGk=\x07");
+}
