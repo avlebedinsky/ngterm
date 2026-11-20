@@ -26,6 +26,8 @@ KEYS = {
     "delete": ("\x7f", "\x08"),
     "up": ("\uf700",),
     "down": ("\uf701",),
+    # NSF1FunctionKey onward
+    **{f"f{n}": (chr(0xF703 + n),) for n in range(1, 21)},
 }
 # kAXMenuItemModifier*: Command is held unless the no-command bit is set
 SHIFT, OPTION, CONTROL, NO_COMMAND = 1, 2, 4, 8
@@ -43,7 +45,8 @@ def _expected(chord):
     mask = 0 if "cmd" in mods else NO_COMMAND
     for mod in mods:
         mask |= MODIFIERS.get(mod, 0)
-    return KEYS[key], mask
+    # AX reads a letter's key equivalent upper case, Shift or not
+    return KEYS.get(key, (key, key.upper())), mask
 
 
 def _menu_item(ui, path):
@@ -81,3 +84,68 @@ def test_menu_items_on_named_keys_show_their_chord(ctl, ui):
 
         shown.__qualname__ = f"{' ▸ '.join(path)} shows {chord}"
         wait_until(shown)
+
+
+def _app_menu_item(ui, prefix):
+    """The app menu's item whose title starts with `prefix` (its title names the app)."""
+    for top in ui.attribute(ui.attribute(ui.app, "AXMenuBar"), "AXChildren") or ():
+        for menu in ui.attribute(top, "AXChildren") or ():
+            for item in ui.attribute(menu, "AXChildren") or ():
+                if (ui.attribute(item, "AXTitle") or "").startswith(prefix):
+                    return item
+    raise AssertionError(f"no menu item {prefix}…")
+
+
+def test_quit_and_settings_show_their_command_chords(ui):
+    for prefix, key in (("Quit", "q"), ("Settings", ",")):
+
+        def shown(prefix=prefix, key=key):
+            item = _app_menu_item(ui, prefix)
+            shown = ui.attribute(item, "AXMenuItemCmdChar"), ui.attribute(item, "AXMenuItemCmdModifiers")
+            assert shown in ((key, 0), (key.upper(), 0)), f"{prefix}… shows {shown!r}, not Command-{key}"
+            return True
+
+        shown.__qualname__ = f"{prefix}… shows Command-{key}"
+        wait_until(shown)
+
+
+# a function key on a keyed item and on a keyless one (upstream's View ▸ Hide Sidebar, Navigate ▸ Last Session)
+FUNCTION_KEY_ITEMS = (
+    ("toggle_sidebar", "f5", ("View", "Hide Sidebar")),
+    ("last_session", "f12", ("Navigate", "Last Session")),
+)
+
+
+def _wait_shown(ui, path, chord):
+    def shown():
+        char, mask = _shown(ui, path)
+        if chord is None:
+            assert char is None, f"{' ▸ '.join(path)} still shows {(char, mask)!r}"
+        else:
+            want = _expected(chord)
+            assert char in want[0] and mask == want[1], (
+                f"{' ▸ '.join(path)} shows {(char, mask)!r}, its chord {chord} is one of {want[0]!r} with {want[1]!r}"
+            )
+        return True
+
+    shown.__qualname__ = f"{' ▸ '.join(path)} shows {chord}"
+    wait_until(shown)
+
+
+@pytest.mark.covers("keymap.reload", "keymap.list")
+def test_a_function_key_binding_shows_in_the_menu_until_it_is_removed(app, ctl, ui):
+    defaults = _chords(ctl)
+    keymap = ctl.instance.state_dir / "config" / "keymap.conf"
+    keymap.parent.mkdir(parents=True, exist_ok=True)
+    keymap.write_text("".join(f"map {key} {action}\n" for action, key, _ in FUNCTION_KEY_ITEMS))
+    assert assert_ok(ctl.request("keymap.reload")) == {"count": 0}
+    chords = _chords(ctl)
+    for action, key, path in FUNCTION_KEY_ITEMS:
+        assert chords[action] == key, (action, chords[action])
+        _wait_shown(ui, path, key)
+
+    keymap.write_text("")
+    assert assert_ok(ctl.request("keymap.reload")) == {"count": 0}
+    assert _chords(ctl) == defaults
+    for action, _, path in FUNCTION_KEY_ITEMS:
+        _wait_shown(ui, path, defaults[action])
