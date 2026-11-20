@@ -369,8 +369,22 @@ iOS's own: the keyboard's accessory, on the keyboard's own ground, not a Materia
     size, the widest's fitted to its key; `/`, `|` and `~` in JetBrains Mono at 18 pt (scaling to 26), the character as
     it will land; the arrows and the keyboard in SF Symbols. The label color on the keyboard's ground; the system's
     fill under a pressed key.
-  - **A key acts as it goes down**, with the keyboard's click (as the user set it) and a light tap; the arrows and the
-    page keys repeat while held (after 400 ms, every 50 ms), Esc, Tab and the symbols don't.
+  - **A key acts on a tap, not on a touch** (Android's rule). As the finger goes down, the key shows the system's fill
+    and gives the keyboard's click (as the user set it) and a light tap (a selection tick on Ctrl and Alt), so the bar
+    answers at once. The key itself goes as the finger lifts on the key. A touch that moves past 10 pt (a swipe, even
+    a short one inside its key), that slides off its key, or that the system takes for a gesture (`touchCancel`) sends
+    nothing: a swipe that starts on Esc can't interrupt a program by accident. The arrows and the page keys also go
+    once held 100 ms within the 10 pt, so a hold needs no lift, and repeat while held (400 ms after the touch, every
+    50 ms). Once its first key went, a held key may drift on itself, and stops as the touch leaves it. Esc, Tab and the
+    symbols don't repeat. VoiceOver's activation acts at once. The terminal defers no screen edge
+    (`preferredScreenEdgesDeferringSystemGestures`): the bar's keys end at the safe area, above the home indicator,
+    and a deferred edge would take two swipes to go home from every terminal.
+
+    | First pass | Why it was wrong | Revised to |
+    |---|---|---|
+    | A key acts as the finger goes down, as a hardware key does | a swipe or a system gesture that started on the bar typed Esc or an arrow into the program | the fill, click and tap on the touch, the key on the lift on it |
+    | A lift where UIKit says "inside" sends the key | UIKit counts a touch about 70 pt off a control as inside, so a swipe across keys sent the first one | the key's own bounds, and a move past 10 pt loses the touch |
+    | An arrow's first key on the lift too, like the others | a hold to move the cursor would wait for the repeat delay to move at all | its first key once held 100 ms, the repeat as before |
   - **Sticky Ctrl and Alt:** a tap holds the modifier for the next key, a second locks it, a third lets it go, each with
     a selection tick. Shape carries the state, never color alone: an outline 1.5 pt in the tint holds for the next key,
     a tint fill (`onTint` legend) locks. VoiceOver reads "Off", "On for the next key" or "Locked on"; each key is a

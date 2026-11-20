@@ -6,9 +6,11 @@ import UIKit
 /// Esc, Tab, a sticky Ctrl and Alt, `/`, `|` and `~`, Home and End, Page Up and Down, the arrows, and the soft
 /// keyboard's own key, going to the ``TerminalKeyboard``'s target. Two lines of eight on a phone held upright, one
 /// line of sixteen once the width gives each key 44 points, or two lines at every width when Settings asks for them
-/// (``TerminalKeyboard/layout``). A key acts as it goes down, with the keyboard's click and a light tap; the arrows and
-/// the page keys repeat while held. Ctrl and Alt hold for the next key (outlined in the tint), lock on a second tap
-/// (filled), and let go on a third, with a selection tick. The keyboard's key closes the soft keyboard and opens it
+/// (``TerminalKeyboard/layout``). A key acts on a tap, not on a touch: the keyboard's click, a light tap and the key's
+/// highlight come as the finger goes down, the key as it lifts on the key. A touch that moves past ``slop`` (a swipe),
+/// that slides off the key, or that the system takes for a gesture sends nothing. The arrows and the page keys also act
+/// once held 100 ms, and repeat while held. Ctrl and Alt hold for the next key (outlined in the tint), lock on a second
+/// tap (filled), and let go on a third, with a selection tick. The keyboard's key closes the soft keyboard and opens it
 /// again, the focus and the bar staying. It isn't shown while a hardware keyboard is attached, nor when Settings hides
 /// it.
 @preconcurrency
@@ -16,6 +18,9 @@ import UIKit
 public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
     /// A key's height, and the least width a key gets before the bar takes one line.
     public static let keyHeight = CGFloat(Spacing.hitTarget)
+    /// How far a touch on a key may move before the key acts: past it, the touch is a swipe, however short, and sends
+    /// nothing (Android's touch slop; a scroll view's pan starts at about as far).
+    public static let slop: CGFloat = 10
 
     // the share of a key's room the widest word takes, leaving its glyphs' overhang room
     private static let fit: CGFloat = 0.9
@@ -31,8 +36,13 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
     private weak var keyboard: TerminalKeyboard?
     private let content = UIView()
     private let repeats = KeyRepeat()
-    // the key held whose repeat runs
+    // the key held whose repeat runs, or whose hold waits to act
     private var repeatingKey: ExtraKey?
+    // the keys touched whose touch is still a tap: not slid off, not taken by the system, and, for a repeating key,
+    // not acted on by its hold yet
+    private var armed: Set<ExtraKey> = []
+    // where each key's touch went down, in the key's points
+    private var starts: [ExtraKey: CGPoint] = [:]
     private var buttons: [ExtraKey: ExtraKeyButton] = [:]
     private var height: NSLayoutConstraint?
 
@@ -68,11 +78,12 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
         height = keysHeight
         for key in ExtraKey.allCases {
             let button = ExtraKeyButton(key)
-            button.addTarget(self, action: #selector(down), for: .touchDown)
-            button.addTarget(self, action: #selector(up), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+            button.addTarget(self, action: #selector(down(_:event:)), for: .touchDown)
+            button.addTarget(self, action: #selector(moved(_:event:)), for: [.touchDragInside, .touchDragOutside])
+            button.addTarget(self, action: #selector(up(_:event:)), for: .touchUpInside)
+            button.addTarget(self, action: #selector(lost(_:)), for: [.touchDragExit, .touchUpOutside, .touchCancel])
             button.activate = { [weak self] in
                 self?.press(key)
-                self?.release(key)
             }
             content.addSubview(button)
             buttons[key] = button
@@ -97,49 +108,64 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
         return width >= keyHeight * CGFloat(ExtraKey.oneRow.count) ? [ExtraKey.oneRow] : ExtraKey.twoRows
     }
 
-    /// A key goes down: it acts, with the keyboard's click and a tap, and repeats while held if it does.
-    public func press(_ key: ExtraKey) {
-        guard let keyboard else {
+    // where `event`'s touch on `button` is, in its points: nil for an action sent with no touch
+    private static func location(of event: UIEvent?, in button: UIView) -> CGPoint? {
+        event?.touches(for: button)?.first?.location(in: button)
+    }
+
+    /// The finger goes down on `key`: its click and tap as it lights up, and no action yet.
+    ///
+    /// The tap is a selection tick for Ctrl and Alt. The key does not act yet, since a swipe or a system gesture can
+    /// still take the touch. A repeating key acts once held 100 ms, then repeats while held.
+    public func touch(_ key: ExtraKey) {
+        guard keyboard != nil else {
             return
         }
-        UIDevice.current.playInputClick()
-        switch key.action {
-        case .hold(let modifier):
-            keyboard.toggle(modifier)
-            UISelectionFeedbackGenerator(view: self).selectionChanged()
-
-        case .press(let name, let repeating):
-            keyboard.press(name)
-            tap()
-            if repeating {
-                repeatingKey = key
-                repeats.start { [weak self] in
-                    self?.keyboard?.press(name)
-                }
-            }
-
-        case .type(let text):
-            keyboard.type(text)
-            tap()
-
-        case .softKeyboard:
-            tap()
-            if let target = keyboard.target {
-                if target.softKeyboardWanted {
-                    target.hideSoftKeyboard()
-                } else {
-                    target.focus(showingKeyboard: true)
-                }
+        feedback(for: key)
+        armed.insert(key)
+        if case .press(let name, repeats: true) = key.action {
+            repeatingKey = key
+            repeats.startHeld { [weak self] in
+                self?.armed.remove(key)
+                self?.keyboard?.press(name)
             }
         }
     }
 
-    /// `key` goes up: its repeat stops, if it is the key repeating; a key pressed since repeats on.
-    public func release(_ key: ExtraKey) {
-        if repeatingKey == key {
-            repeats.stop()
-            repeatingKey = nil
+    /// The finger lifts on `key`: the key acts if its touch is still a tap, and its repeat stops.
+    public func lift(_ key: ExtraKey) {
+        stopRepeat(of: key)
+        if armed.remove(key) != nil {
+            act(key)
         }
+    }
+
+    /// The touch on `key` moved `travel` points from where it went down, on the key or off it (`onKey`).
+    ///
+    /// Off the key, the touch sends nothing more. Before the key acts, a move past ``slop`` makes the touch a swipe,
+    /// which sends nothing; a repeating key whose hold acted may drift on the key.
+    public func drag(_ key: ExtraKey, travel: CGFloat, onKey: Bool) {
+        let swipe = travel > Self.slop && armed.contains(key)
+        if !onKey || swipe {
+            cancel(key)
+        }
+    }
+
+    /// The touch on `key` is not a tap: it slid off the key, or the system took it for a gesture.
+    ///
+    /// The key sends nothing, and its repeat stops.
+    public func cancel(_ key: ExtraKey) {
+        stopRepeat(of: key)
+        armed.remove(key)
+    }
+
+    /// `key` acts at once, with its click and tap and no repeat: VoiceOver's activation, which has no touch.
+    public func press(_ key: ExtraKey) {
+        guard keyboard != nil else {
+            return
+        }
+        feedback(for: key)
+        act(key)
     }
 
     /// Shows each key as things stand: the sticky modifiers, and whether the soft keyboard is open.
@@ -207,19 +233,81 @@ public final class ExtraKeysBar: UIInputView, UIInputViewAudioFeedback {
         return (word.withSize(word.pointSize * scale), symbol)
     }
 
-    // a key's tap, as a keyboard's
-    private func tap() {
-        UIImpactFeedbackGenerator(style: .light, view: self).impactOccurred()
+    // what a key does, once it is a tap
+    private func act(_ key: ExtraKey) {
+        guard let keyboard else {
+            return
+        }
+        switch key.action {
+        case .hold(let modifier):
+            keyboard.toggle(modifier)
+
+        case .press(let name, _):
+            keyboard.press(name)
+
+        case .type(let text):
+            keyboard.type(text)
+
+        case .softKeyboard:
+            if let target = keyboard.target {
+                if target.softKeyboardWanted {
+                    target.hideSoftKeyboard()
+                } else {
+                    target.focus(showingKeyboard: true)
+                }
+            }
+        }
+    }
+
+    // a key's click and tap as the finger goes down, as a keyboard's; a selection tick for a modifier
+    private func feedback(for key: ExtraKey) {
+        UIDevice.current.playInputClick()
+        if case .hold = key.action {
+            UISelectionFeedbackGenerator(view: self).selectionChanged()
+        } else {
+            UIImpactFeedbackGenerator(style: .light, view: self).impactOccurred()
+        }
+    }
+
+    // `key`'s repeat or hold stops, if it is the key repeating; a key touched since repeats on
+    private func stopRepeat(of key: ExtraKey) {
+        if repeatingKey == key {
+            repeats.stop()
+            repeatingKey = nil
+        }
     }
 
     @objc
-    private func down(_ button: ExtraKeyButton) {
-        press(button.key)
+    private func down(_ button: ExtraKeyButton, event: UIEvent?) {
+        starts[button.key] = Self.location(of: event, in: button)
+        touch(button.key)
+    }
+
+    // UIKit counts a touch as inside a control up to some way off it: the key counts its own bounds
+    @objc
+    private func moved(_ button: ExtraKeyButton, event: UIEvent?) {
+        guard let point = Self.location(of: event, in: button) else {
+            return
+        }
+        let start = starts[button.key] ?? point
+        let travel = hypot(point.x - start.x, point.y - start.y)
+        drag(button.key, travel: travel, onKey: button.bounds.contains(point))
     }
 
     @objc
-    private func up(_ button: ExtraKeyButton) {
-        release(button.key)
+    private func up(_ button: ExtraKeyButton, event: UIEvent?) {
+        starts[button.key] = nil
+        if let point = Self.location(of: event, in: button), !button.bounds.contains(point) {
+            cancel(button.key)
+        } else {
+            lift(button.key)
+        }
+    }
+
+    @objc
+    private func lost(_ button: ExtraKeyButton) {
+        starts[button.key] = nil
+        cancel(button.key)
     }
 
     deinit {

@@ -11,7 +11,7 @@ internal final class ExtraKeyButton: UIControl {
 
     /// The key.
     internal let key: ExtraKey
-    /// What VoiceOver's activation does: a press and its release.
+    /// What VoiceOver's activation does: the key acts at once.
     internal var activate: (@MainActor () -> Void)?
 
     private let face = UIView()
@@ -108,7 +108,7 @@ internal final class ExtraKeyButton: UIControl {
         symbol.frame = inner
     }
 
-    /// VoiceOver's activation: the key goes down and up.
+    /// VoiceOver's activation: the key acts at once.
     override internal func accessibilityActivate() -> Bool {
         activate?()
         return activate != nil

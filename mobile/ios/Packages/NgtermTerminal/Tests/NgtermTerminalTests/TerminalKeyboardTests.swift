@@ -154,8 +154,8 @@ internal struct TerminalKeyboardTests {
         let rig = Self.rig()
         let bar = rig.view.keyboard.bar
         for key in [ExtraKey.escape, .tab, .pageDown, .pipe] {
-            bar.press(key)
-            bar.release(key)
+            bar.touch(key)
+            bar.lift(key)
         }
         #expect(Self.presses(rig.inputs) == [Self.press("escape"), Self.press("tab"), Self.press("page_down")])
         #expect(rig.inputs.last == .typed("|"))
@@ -176,8 +176,8 @@ internal struct TerminalKeyboardTests {
         bar.press(.alt)
         bar.press(.alt)
         #expect(keyboard.alt == .locked)
-        bar.press(.upArrow)
-        bar.release(.upArrow)
+        bar.touch(.upArrow)
+        bar.lift(.upArrow)
         bar.press(.slash)
         #expect(
             Self.presses(rig.inputs(after: before)) == [
@@ -208,17 +208,17 @@ internal struct TerminalKeyboardTests {
     internal func repeats() async throws {
         let rig = Self.rig()
         let bar = rig.view.keyboard.bar
-        bar.press(.leftArrow)
+        bar.touch(.leftArrow)
         try await Task.sleep(for: .milliseconds(700))
-        bar.release(.leftArrow)
+        bar.lift(.leftArrow)
         let lefts = Self.presses(rig.inputs).filter { $0.key == "arrow_left" }.count
-        #expect(lefts >= 3, "one press, then a repeat every 50 ms after 400 ms: \(lefts)")
+        #expect(lefts >= 3, "one press after 100 ms, then a repeat every 50 ms after 400 ms: \(lefts)")
         let before = rig.inputs.count
         try await Task.sleep(for: .milliseconds(200))
         #expect(rig.inputs.count == before, "it stops when let go")
-        bar.press(.escape)
+        bar.touch(.escape)
         try await Task.sleep(for: .milliseconds(600))
-        bar.release(.escape)
+        bar.lift(.escape)
         #expect(Self.presses(rig.inputs(after: before)) == [Self.press("escape")])
     }
 
@@ -229,8 +229,9 @@ internal struct TerminalKeyboardTests {
         weak let gone = keyboard
         keyboard = nil
         #expect(gone == nil, "the keyboard went")
+        bar?.touch(.leftArrow)
+        bar?.lift(.leftArrow)
         bar?.press(.leftArrow)
-        bar?.release(.leftArrow)
         bar?.refresh()
         bar?.layoutIfNeeded()
         #expect(bar?.rows == ExtraKey.twoRows)
@@ -242,16 +243,16 @@ internal struct TerminalKeyboardTests {
         let bar = rig.view.keyboard.bar
         let lefts = { Self.presses(rig.inputs).filter { $0.key == "arrow_left" }.count }
         let rights = { Self.presses(rig.inputs).filter { $0.key == "arrow_right" }.count }
-        bar.press(.leftArrow)
-        bar.press(.slash)
-        bar.release(.slash)
+        bar.touch(.leftArrow)
+        bar.touch(.slash)
+        bar.lift(.slash)
         try await Task.sleep(for: .milliseconds(600))
         #expect(lefts() >= 2, "a tap of / beside it left the arrow repeating: \(lefts())")
         // a second arrow takes the repeat over, and letting go of the first leaves it
-        bar.press(.rightArrow)
-        bar.release(.leftArrow)
+        bar.touch(.rightArrow)
+        bar.lift(.leftArrow)
         try await Task.sleep(for: .milliseconds(600))
-        bar.release(.rightArrow)
+        bar.lift(.rightArrow)
         let held = lefts()
         #expect(rights() >= 2, "the right arrow repeats on: \(rights())")
         try await Task.sleep(for: .milliseconds(200))
@@ -283,7 +284,6 @@ internal struct TerminalKeyboardTests {
         #expect(rig.inputs == [.typed("ls")], "the composition went out plain")
         #expect(keyboard.control == .once)
         keyboard.bar.press(.leftArrow)
-        keyboard.bar.release(.leftArrow)
         #expect(Self.presses(rig.inputs) == [Self.press("arrow_left", KeyMapping.control)])
         #expect(keyboard.control == .off)
 

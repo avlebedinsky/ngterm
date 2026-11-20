@@ -88,6 +88,11 @@ internal final class KeyboardTests: XCTestCase {
         Self.expect("bench-typed", reads: "l", in: app)
         keyboard.keys["s"].tap()
         Self.expect("bench-typed", reads: "ls", in: app)
+        // a swipe that starts on a key, here from Esc up over the terminal, sends no key: bench-keys below has one
+        // Escape, the tap's
+        let terminal = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let escape = Self.key("escape", in: app).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        escape.press(forDuration: 0.2, thenDragTo: terminal)
         Self.key("control", in: app).tap()
         XCTAssertEqual(Self.key("control", in: app).value as? String, "On for the next key")
         keyboard.keys["c"].tap()
@@ -101,6 +106,9 @@ internal final class KeyboardTests: XCTestCase {
         Self.key("keyboard", in: app).tap()
         FakeApp.expectGone(keyboard, "the soft keyboard", lasting: Self.wait)
         XCTAssertTrue(Self.key("escape", in: app).exists)
+        // at the screen's foot, over the home indicator, a tap on a key is the key's, not the system's
+        Self.key("downArrow", in: app).tap()
+        Self.expect("bench-keys", reads: "key_c/2 escape/0 arrow_up/0 arrow_down/0", in: app)
         Self.key("keyboard", in: app).tap()
         FakeApp.expect(keyboard, "the soft keyboard again", lasting: Self.wait)
     }

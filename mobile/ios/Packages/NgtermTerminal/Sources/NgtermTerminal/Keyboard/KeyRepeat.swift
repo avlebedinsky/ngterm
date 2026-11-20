@@ -2,6 +2,9 @@ import Foundation
 
 /// A held key's repeat: its action runs again after a moment, then steadily, until the key is let go (mobile/android's
 /// extra keys: after 400 ms, every 50 ms).
+///
+/// An extra key, which acts only once it is held a moment, starts it with its first action still to come
+/// (``startHeld(_:)``).
 @preconcurrency
 @MainActor
 internal final class KeyRepeat {
@@ -9,9 +12,13 @@ internal final class KeyRepeat {
     internal static let delay: TimeInterval = 0.4
     /// How often it repeats then.
     internal static let interval: TimeInterval = 0.05
+    /// How long an extra key is held before it acts, if it is not let go first (Android's tap timeout).
+    internal static let hold: TimeInterval = 0.1
 
     private var timer: Timer?
     private var action: (@MainActor () -> Void)?
+    // the waits before the steady interval: those still to come
+    private var waits: [TimeInterval] = []
 
     /// A repeat with no key held.
     internal init() {
@@ -23,9 +30,16 @@ internal final class KeyRepeat {
     /// A key held before is let go.
     @preconcurrency
     internal func start(_ action: @escaping @MainActor () -> Void) {
-        stop()
-        self.action = action
-        schedule(after: Self.delay)
+        begin(action, waits: [Self.delay])
+    }
+
+    /// A key went down that has not acted yet: `action` runs after ``hold``, again ``delay`` after the touch, then
+    /// every ``interval``.
+    ///
+    /// A key held before is let go.
+    @preconcurrency
+    internal func startHeld(_ action: @escaping @MainActor () -> Void) {
+        begin(action, waits: [Self.hold, Self.delay - Self.hold])
     }
 
     /// The key was let go.
@@ -33,9 +47,22 @@ internal final class KeyRepeat {
         timer?.invalidate()
         timer = nil
         action = nil
+        waits = []
     }
 
-    // one repeat, as the timer runs it: the action, and the next one an interval later
+    private func begin(_ action: @escaping @MainActor () -> Void, waits: [TimeInterval]) {
+        stop()
+        self.action = action
+        self.waits = waits
+        next()
+    }
+
+    // the timer of the next run: the next wait to come, or the interval once they are done
+    private func next() {
+        schedule(after: waits.isEmpty ? Self.interval : waits.removeFirst())
+    }
+
+    // one run, as the timer makes it: the action, and the next one
     private func fire() {
         guard let action else {
             return
@@ -43,7 +70,7 @@ internal final class KeyRepeat {
         action()
         // the action may have let the key go
         if self.action != nil {
-            schedule(after: Self.interval)
+            next()
         }
     }
 
