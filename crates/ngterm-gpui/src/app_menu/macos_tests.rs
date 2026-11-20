@@ -148,7 +148,7 @@ fn an_items_chord_and_state_reach_the_json() {
         .flatten()
         .find_map(|top| find_title(top, &with_chord.title))
         .unwrap_or_else(|| panic!("no {} in the JSON", with_chord.title));
-    assert_eq!(found["key"], chord.key.as_str());
+    assert_eq!(found["key"], key_equivalent(chord));
     assert_eq!(found["mods"], chord.mods.bits());
     assert_eq!(found["enabled"], with_chord.enabled);
     assert_eq!(found["checked"], with_chord.checked);
@@ -156,6 +156,51 @@ fn an_items_chord_and_state_reach_the_json() {
     let quit = entry(json["app"].as_array().unwrap(), "Quit");
     assert_eq!(quit["key"], "", "an item with no chord names no key");
     assert_eq!(quit["mods"], 0);
+}
+
+/// `AppKit`'s character for each named key the keymap can bind (upstream's `toShortcut` and
+/// `namedKey(forKeyEquivalent:)`), Shift as an uppercase character.
+#[test]
+fn each_bindable_key_gets_appkits_key_equivalent() {
+    let equivalent = |mods, key: &str| key_equivalent(&Chord::new(mods, key.to_owned()));
+    let cmd = Modifiers::COMMAND;
+    let named = [
+        ("return", "\r"),
+        ("tab", "\t"),
+        ("space", " "),
+        ("delete", "\u{7f}"),
+        ("up", "\u{f700}"),
+        ("down", "\u{f701}"),
+        ("left", "\u{f702}"),
+        ("right", "\u{f703}"),
+        ("f1", "\u{f704}"),
+        ("f12", "\u{f70f}"),
+        ("f20", "\u{f717}"),
+    ];
+    for (key, character) in named {
+        assert_eq!(equivalent(cmd, key), character, "{key}");
+    }
+    for key in ngterm_core::keymap::bindable_named_keys() {
+        let character = equivalent(cmd, key);
+        assert_eq!(
+            character.chars().count(),
+            1,
+            "{key} is one AppKit character, not {character:?}"
+        );
+    }
+    assert_eq!(equivalent(cmd, "k"), "k");
+    assert_eq!(equivalent(cmd, ","), ",");
+    assert_eq!(equivalent(cmd | Modifiers::SHIFT, "t"), "T");
+    assert_eq!(equivalent(Modifiers::CONTROL | Modifiers::SHIFT, "return"), "\r");
+}
+
+#[test]
+fn toggle_terminal_zoom_shows_its_return_chord() {
+    let core = seeded("/home/u");
+    let json = synced(&core).unwrap();
+    let zoom = entry(menu(&json, "View"), "Toggle Terminal Zoom");
+    assert_eq!(zoom["key"], "\r", "{zoom}");
+    assert_ne!(zoom["mods"], 0, "{zoom}");
 }
 
 fn find_title<'a>(value: &'a Value, title: &str) -> Option<&'a Value> {

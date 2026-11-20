@@ -6,6 +6,7 @@ use crate::{
 };
 use gpui_kit::App;
 use ngterm_core::Core;
+use ngterm_core::keymap::{Chord, FUNCTION_KEYS, Modifiers};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -63,8 +64,33 @@ fn item(item: &MenuItem, id: Uuid, actions: &mut Vec<(Uuid, MenuAction)>) -> Val
     let (key, mods) = item
         .chord
         .as_ref()
-        .map_or(("", 0), |chord| (chord.key.as_str(), chord.mods.bits()));
+        .map_or((String::new(), 0), |chord| (key_equivalent(chord), chord.mods.bits()));
     json!({"title":item.title,"enabled":item.enabled,"checked":item.checked,"tag":tag,"key":key,"mods":mods})
+}
+/// The `NSMenuItem` key equivalent of a chord (upstream's `toShortcut`): `AppKit`'s character for a named key
+/// (`NSCarriageReturnCharacter`, `NSTabCharacter`, `NSDeleteCharacter`, the `NSUpArrowFunctionKey` and
+/// `NSF1FunctionKey` families), else the key itself, uppercase when the chord holds Shift.
+fn key_equivalent(chord: &Chord) -> String {
+    let named = match chord.key.as_str() {
+        "return" => Some('\r'),
+        "tab" => Some('\t'),
+        "space" => Some(' '),
+        "delete" => Some('\u{7f}'),
+        "up" => Some('\u{f700}'),
+        "down" => Some('\u{f701}'),
+        "left" => Some('\u{f702}'),
+        "right" => Some('\u{f703}'),
+        key => FUNCTION_KEYS
+            .iter()
+            .position(|name| *name == key)
+            .and_then(|index| char::from_u32(0xf704 + u32::try_from(index).ok()?)),
+    };
+    let key = named.map_or_else(|| chord.key.clone(), String::from);
+    if chord.mods.contains(Modifiers::SHIFT) {
+        key.to_uppercase()
+    } else {
+        key
+    }
 }
 fn entries(items: &[Entry], id: Uuid, actions: &mut Vec<(Uuid, MenuAction)>) -> Vec<Value> {
     items

@@ -896,22 +896,8 @@ static NSMenu *ngtermMenu(NSArray *entries) {
                                            keyEquivalent:@""];
     item.enabled = entry[@"enabled"] ? [entry[@"enabled"] boolValue] : YES;
     if (entry[@"key"]) {
-      NSString *key = entry[@"key"];
-      NSDictionary *named = @{
-        @"enter" : @"\r",
-        @"tab" : @"\t",
-        @"space" : @" ",
-        @"escape" : @"\x1b",
-        @"backspace" : @"\x08",
-        @"delete" : @"\x7f",
-        @"left" : @"\uF702",
-        @"right" : @"\uF703",
-        @"up" : @"\uF700",
-        @"down" : @"\uF701"
-      };
-      NSString *equivalent = named[key] ?: (key.length == 1 ? key : @"");
+      item.keyEquivalent = entry[@"key"];
       unsigned mods = [entry[@"mods"] unsignedIntValue];
-      item.keyEquivalent = (mods & 8) ? equivalent.uppercaseString : equivalent;
       item.keyEquivalentModifierMask =
           ((mods & 1) ? NSEventModifierFlagControl : 0) |
           ((mods & 2) ? NSEventModifierFlagCommand : 0) |
@@ -957,10 +943,13 @@ void ngterm_menus_set(const char *json, void (*clicked)(NSUInteger)) {
   app.submenu = ngtermMenu(model[@"app"]);
   // Quit and Settings retain their normal AppKit key equivalents.
   for (NSMenuItem *item in app.submenu.itemArray) {
-    if ([item.title hasPrefix:@"Quit"])
-      item.keyEquivalent = @"q";
-    if ([item.title hasPrefix:@"Settings"])
-      item.keyEquivalent = @",";
+    NSString *key = [item.title hasPrefix:@"Quit"]       ? @"q"
+                    : [item.title hasPrefix:@"Settings"] ? @","
+                                                         : nil;
+    if (key) {
+      item.keyEquivalent = key;
+      item.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    }
   }
   [app.submenu addItem:NSMenuItem.separatorItem];
   NSMenuItem *services = [[NSMenuItem alloc] initWithTitle:@"Services"
