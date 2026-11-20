@@ -371,6 +371,34 @@ def test_refused_launch_spawns_nothing_and_removes_its_root(roots: list[Path], t
 # -- launch and stop against the fake app
 
 
+def await_signals(instance: Instance, recorded: str) -> None:
+    """Waits until the fake app in ignore-term mode recorded exactly the signals `recorded` lists."""
+    signals, deadline = instance.state_dir / "fake-signals", time.monotonic() + 30
+    while not signals.exists() or signals.read_text() != recorded:
+        seen = signals.read_text() if signals.exists() else None
+        assert time.monotonic() < deadline, f"the fake app recorded {seen!r}, not {recorded!r}"
+        threading.Event().wait(0.01)
+
+
+def record_each_signal_before_the_next(instance: Instance, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Holds the stop's SIGABRT until the fake app recorded SIGTERM, and its SIGKILL until it recorded SIGABRT.
+
+    The stop escalates on its clock alone, but the fake records a signal only when its handler runs. Under load the
+    fake can get no CPU for that time. Then Python runs SIGABRT's handler first (it takes pending signals in number
+    order), or SIGKILL ends the fake before it records a signal.
+    """
+    process = instance.process
+    send = process.send_signal
+    awaited = {signal.SIGABRT: "TERM\n", signal.SIGKILL: "TERM\nABRT\n"}
+
+    def held(sig: int) -> None:
+        if sig in awaited:
+            await_signals(instance, awaited[sig])
+        send(sig)
+
+    monkeypatch.setattr(process, "send_signal", held)
+
+
 def test_launch_isolates_and_stop_cleans_up(roots: list[Path], fake_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGTERM_SOCKET", "/live/agterm.sock")
     monkeypatch.setenv("ZMX_DIR", "/tmp/live-zmx")
@@ -838,6 +866,7 @@ def test_relaunch_of_an_app_ignoring_sigterm_fails_and_frees_its_app_id(
     adapter = UpstreamVocabularyAdapter(fake_bin)
     app_id = f"{DEFAULT_APP_ID}.conformance.relaunch"
     instance = adapter.launch(app_id=app_id)
+    record_each_signal_before_the_next(instance, monkeypatch)
     with pytest.raises(StopError, match=rf"pid {instance.pid} did not exit within 0.5s of SIGTERM"):
         adapter.relaunch(instance)
     assert instance.process.returncode == -9
@@ -958,6 +987,7 @@ def test_app_ignoring_sigterm_is_killed_and_reported(
     monkeypatch.setattr(base, "STOP_TIMEOUT", 0.5)
     adapter = UpstreamVocabularyAdapter(fake_bin)
     instance = adapter.launch()
+    record_each_signal_before_the_next(instance, monkeypatch)
     hint = (
         f"a crash report for pid {instance.pid} in ~/Library/Logs/DiagnosticReports"
         if sys.platform == "darwin"
@@ -988,6 +1018,7 @@ def test_app_ending_on_sigabrt_is_not_killed_and_still_reported(
     monkeypatch.setattr(base, "ABORT_GRACE", 30.0)
     adapter = UpstreamVocabularyAdapter(fake_bin)
     instance = adapter.launch()
+    record_each_signal_before_the_next(instance, monkeypatch)
     started = time.monotonic()
     with pytest.raises(StopError, match=r"did not exit within 0.5s of SIGTERM; .*; core requested"):
         adapter.stop(instance)
@@ -1004,6 +1035,7 @@ def test_a_failed_thread_snapshot_still_aborts_kills_and_reports(
     monkeypatch.setattr(base, "PROC_ROOT", tmp_path / "no-proc")
     adapter = UpstreamVocabularyAdapter(fake_bin)
     instance = adapter.launch()
+    record_each_signal_before_the_next(instance, monkeypatch)
     with pytest.raises(StopError, match=r"thread snapshot in .*; core requested"):
         adapter.stop(instance)
     assert instance.process.returncode == -9
@@ -1039,8 +1071,9 @@ def test_an_app_outliving_sigkill_is_still_reported_with_its_snapshot(
     monkeypatch.setattr(base, "STOP_TIMEOUT", 0.5)
     adapter = UpstreamVocabularyAdapter(fake_bin)
     instance = adapter.launch()
+    record_each_signal_before_the_next(instance, monkeypatch)
     # Stands in for uninterruptible sleep: the SIGKILL never lands
-    monkeypatch.setattr(instance.process, "kill", lambda: None)
+    monkeypatch.setattr(instance.process, "kill", lambda: await_signals(instance, "TERM\nABRT\n"))
     try:
         with pytest.raises(
             StopError, match=rf"pid {instance.pid} did not exit within 0.5s of SIGTERM nor within 0.5s of SIGKILL; "
