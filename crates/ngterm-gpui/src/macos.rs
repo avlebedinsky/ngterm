@@ -22,6 +22,15 @@ unsafe extern "C" {
         without_option: *mut c_char,
         capacity: u32,
     ) -> i32;
+    pub fn ngterm_key_event(
+        event: *mut c_void,
+        mods: *mut u32,
+        plain: *mut u32,
+        command: *mut u32,
+        text: *mut c_char,
+        without_option: *mut c_char,
+        capacity: u32,
+    ) -> i32;
     fn ngterm_accessibility_start(changed: extern "C" fn(bool, bool));
 }
 

@@ -188,6 +188,14 @@ int ngterm_key_event(void *pointer, unsigned *mods, unsigned *plain,
   NSString *typed = [event charactersByApplyingModifiers:held];
   NSString *unmodified =
       [event charactersByApplyingModifiers:held & ~NSEventModifierFlagOption];
+  // A posted Unicode string (text expanders, auto-type) is not what its key
+  // code types on the layout; the event's own characters are the text.
+  NSString *own = event.characters;
+  if (held == event.modifierFlags && own.length &&
+      ![own isEqualToString:typed]) {
+    typed = own;
+    unmodified = own;
+  }
   if (![typed getCString:text maxLength:capacity encoding:NSUTF8StringEncoding])
     text[0] = 0;
   if (![unmodified getCString:withoutOption

@@ -145,20 +145,43 @@ pub fn current_source(_keystroke: &Keystroke) -> Source {
 #[cfg(target_os = "macos")]
 #[must_use]
 pub fn current_source(_keystroke: &Keystroke) -> Source {
+    // SAFETY: the adapter only writes into the buffers it is given; called during main-thread input dispatch.
+    read_macos_key(|flags, plain, command, text, without_option, capacity| unsafe {
+        crate::macos::ngterm_key(flags, plain, command, text, without_option, capacity)
+    })
+}
+
+/// The terminal's native key for `event`, an `NSEvent` key event (what [`current_source`] reads from `AppKit`'s
+/// current event).
+///
+/// # Safety
+///
+/// `event` is null or points to a live `NSEvent`, and the call is on the main thread (the layout's input source
+/// services need it).
+#[cfg(target_os = "macos")]
+#[must_use]
+pub unsafe fn event_source(event: *mut std::ffi::c_void) -> Source {
+    // SAFETY: the caller's contract; the adapter only writes into the buffers it is given.
+    read_macos_key(|flags, plain, command, text, without_option, capacity| unsafe {
+        crate::macos::ngterm_key_event(event, flags, plain, command, text, without_option, capacity)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn read_macos_key(
+    read: impl FnOnce(*mut u32, *mut u32, *mut u32, *mut std::ffi::c_char, *mut std::ffi::c_char, u32) -> i32,
+) -> Source {
     let (mut flags, mut plain, mut command) = (0, 0, 0);
     let mut text = [0i8; 128];
     let mut without_option = [0i8; 128];
-    // SAFETY: writable output buffers; called during main-thread input dispatch.
-    let code = unsafe {
-        crate::macos::ngterm_key(
-            &raw mut flags,
-            &raw mut plain,
-            &raw mut command,
-            text.as_mut_ptr(),
-            without_option.as_mut_ptr(),
-            128,
-        )
-    };
+    let code = read(
+        &raw mut flags,
+        &raw mut plain,
+        &raw mut command,
+        text.as_mut_ptr(),
+        without_option.as_mut_ptr(),
+        128,
+    );
     // SAFETY: the buffer starts zeroed and the adapter only ever writes a NUL-terminated string into it.
     let text = unsafe { std::ffi::CStr::from_ptr(text.as_ptr()) };
     // SAFETY: as above.

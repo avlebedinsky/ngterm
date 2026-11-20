@@ -36,3 +36,21 @@ def test_typed_text_reaches_the_selected_pane_and_moves_its_cursor(ctl, ui):
         wait_cursor(ctl, None, len(FIRST + REST))
     finally:
         ctl.request("session.close", sid)
+
+
+# Text expanders and password managers type text as key events that carry it as a Unicode string on a key that does
+# not type it (macOS: key code 0, the A key; Windows: VK_PACKET): letters of other scripts, CJK and an emoji.
+UNICODE_TEXT = "über-жук-你好-🙂"
+
+
+@pytest.mark.covers("session.text", "behavior:pane.typing")
+def test_text_typed_as_unicode_key_events_reaches_the_pane_as_typed(ctl, ui):
+    sid = assert_ok(ctl.request("session.new", command="cat"))["id"]
+    ctl.wait_mounted(sid, "left")
+    try:
+        assert_ok(ctl.request("session.type", sid, text="cat-reads\n"))
+        ctl.wait_text(sid, r"cat-reads[\s\S]*cat-reads", all=True)
+        ui.type_text(UNICODE_TEXT)
+        ctl.wait_text(sid, re.escape(UNICODE_TEXT))
+    finally:
+        ctl.request("session.close", sid)
