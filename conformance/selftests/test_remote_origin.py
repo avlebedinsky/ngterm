@@ -360,7 +360,10 @@ def _ssh(origin: RemoteOrigin, *command: str, **options) -> subprocess.Popen[str
 
 
 def _first_line(process: subprocess.Popen[str], timeout: float) -> str:
-    """The first line `process` prints, or "" when its output ends or stays empty for `timeout`."""
+    """The first line `process` prints, or "" when its output ends or stays empty for `timeout`.
+
+    `timeout` bounds only the wait for the first byte: a partial line then blocks until its newline or EOF.
+    """
     assert process.stdout is not None
     readable, _, _ = select.select([process.stdout], [], [], timeout)
     return process.stdout.readline() if readable else ""
@@ -380,15 +383,18 @@ def test_through_a_real_sshd_a_login_answers_for_the_origin_and_a_severed_link_d
         assert stdout.splitlines()[:2] == ["ctl live tree", str(started.instance.state_dir)], stderr
 
         # a link that lingers in the proxy must not pass for the held login
-        lingering = _connect(started.proxy.port)
-        held = _ssh(started, "echo held; sleep 60")
-        assert _first_line(held, timeout=60) == "held\n"
-        started.sever()
-        assert held.wait(timeout=30) != 0
-        held.communicate()
-        while lingering.recv(4096):
-            pass
-        lingering.close()
+        with _connect(started.proxy.port) as lingering:
+            held = _ssh(started, "echo held; sleep 60")
+            try:
+                assert _first_line(held, timeout=60) == "held\n"
+                started.sever()
+                assert held.wait(timeout=30) != 0
+                while lingering.recv(4096):
+                    pass
+            finally:
+                if held.poll() is None:
+                    held.kill()
+                held.communicate()
 
         stdout, stderr = _ssh(started, "echo again").communicate(timeout=60)
         assert stdout == "again\n", stderr
