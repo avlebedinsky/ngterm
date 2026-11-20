@@ -9,7 +9,8 @@ its `Last login` line before running the command, into the middle of anything ty
 
 On the Mac, Option is a text key by default (Ghostty's `macos-option-as-alt`): it types the layout's character. With
 the option on, Option is Alt: the key goes with ESC before it, which `cat -v` shows as `^[`. The Option cases press the
-US layout's keys (macOS CI's and the test Macs'), and no dead key while Option types text."""
+US layout's keys (macOS CI's and the test Macs'). Its Option dead keys (e, u, n) compose with the next key, as posted
+key codes too (remote desktops, automation tools), and leave no accent for a later key or another session."""
 
 import contextlib
 import re
@@ -84,6 +85,17 @@ def test_option_types_the_layouts_character(ctl, ui):
     with _reading(ctl, "cat") as sid:
         ui.press("alt+s", "alt+g", "alt+p", "alt+shift+a", "return")
         ctl.wait_text(sid, r"ß©πÅ\s+ß©πÅ", all=True)
+
+
+@MAC
+@pytest.mark.covers("session.text", "behavior:pane.typing")
+def test_option_dead_keys_compose_with_the_next_key_and_leave_nothing_pending(ctl, ui):
+    with _reading(ctl, "cat") as sid:
+        ui.press("alt+e", "e", "alt+u", "u", "alt+n", "n", "alt+u", "a", "1", "alt+e", "space", "2", "return")
+        ctl.wait_text(sid, r"éüñä1´2\s+éüñä1´2", all=True)
+    with _reading(ctl, "cat") as sid:
+        ui.press("3", "alt+u", "u", "alt+s", "return")
+        ctl.wait_text(sid, r"\n3üß\s+3üß", all=True)
 
 
 @MAC

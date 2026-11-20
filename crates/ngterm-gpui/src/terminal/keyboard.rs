@@ -12,7 +12,8 @@
 //! - The input method: the owner view is GPUI's input handler while focused. A composition is the terminal's preedit
 //!   (drawn at the cursor, never sent); a commit of several characters is sent as text (Ghostty's `textCallback`, a
 //!   paste of `PasteSource::Text`), one character comes as a key with no position. The candidate window is placed at
-//!   the cursor's cell.
+//!   the cursor's cell. On macOS a dead key never goes to the input method: the terminal composes it with the next key
+//!   (`input::DeadKeys`), its accent the preedit meanwhile, and drops it when the view loses the keyboard.
 //! - Focus reports (mode 1004): the view holds the keyboard and its window is active; sent on each change.
 
 use std::cell::RefCell;
@@ -27,7 +28,7 @@ use ngterm_core::ghostty_config::binds::{Action, KeyEffect, Keyboard, Mods, Perf
 use ngterm_core::keymap::TypingSurface;
 use ngterm_term::{ClipboardLocation, Pane, PasteSource, SelectionText, Typing};
 
-use super::input::KeyStroke;
+use super::input::{DeadKeys, KeyStroke};
 use super::{Shared, TerminalSurface, TerminalView};
 
 /// A terminal owner view the interceptor can hand keys to.
@@ -156,6 +157,8 @@ pub(super) struct KeyState {
     held: Option<bool>,
     /// The focused view's last laid-out candidate rectangle, including element origin and metrics.
     ime_bounds: Option<Bounds<Pixels>>,
+    /// The dead key waiting for the next key (macOS).
+    dead_keys: DeadKeys,
     subscriptions: Vec<Subscription>,
 }
 
@@ -223,6 +226,13 @@ impl TerminalView {
     /// A key press the interceptor handed this view (module docs); whether the terminal took it.
     pub(super) fn key_down(&mut self, stroke: &KeyStroke, _window: &mut Window, cx: &mut Context<Self>) -> bool {
         let stroke = stroke.with_option_as_alt(self.shared.config().macos_option_as_alt);
+        let stroke = stroke.as_ref();
+        #[cfg(target_os = "macos")]
+        let Some(stroke) = self.compose(stroke) else {
+            cx.notify();
+            return true;
+        };
+        #[cfg(target_os = "macos")]
         let stroke = stroke.as_ref();
         if stroke.composing {
             return false;
@@ -350,6 +360,9 @@ impl TerminalView {
             self.focus_changed();
         }
         if self.keys.held.replace(focused) != Some(focused) {
+            if !focused {
+                self.drop_dead_key();
+            }
             crate::input_source::request_refresh(cx);
             if focused {
                 window.invalidate_character_coordinates();
@@ -395,9 +408,47 @@ impl TerminalView {
         self.keys.reported = reported;
     }
 
+    /// A press through the terminal's dead-key composition (`input::DeadKeys`): the key to go on with, or `None` when
+    /// the key only composes.
+    #[cfg(target_os = "macos")]
+    fn compose<'a>(&mut self, stroke: &'a KeyStroke) -> Option<std::borrow::Cow<'a, KeyStroke>> {
+        use super::input::Compose;
+        match self.keys.dead_keys.compose(stroke) {
+            Compose::Pass => Some(std::borrow::Cow::Borrowed(stroke)),
+            Compose::Dropped => {
+                self.shared.set_preedit(None);
+                Some(std::borrow::Cow::Borrowed(stroke))
+            }
+            Compose::Pending { accent, committed } => {
+                self.send_text(&committed);
+                self.shared.set_preedit(Some(accent));
+                None
+            }
+            Compose::Composed(text) => {
+                let mut composed = stroke.clone();
+                composed.text = text;
+                composed.composing = false;
+                Some(std::borrow::Cow::Owned(composed))
+            }
+        }
+    }
+
+    /// Ends a dead key's composition, its accent unsent.
+    fn drop_dead_key(&mut self) {
+        if self.keys.dead_keys.is_pending() {
+            self.keys.dead_keys.clear();
+            self.shared.set_preedit(None);
+        }
+    }
+
     /// Text an input method committed: sent as text, the composition ended.
     fn commit(&mut self, text: &str) {
+        self.keys.dead_keys.clear();
         self.shared.set_preedit(None);
+        self.send_text(text);
+    }
+
+    fn send_text(&self, text: &str) {
         if text.is_empty() || self.shared.is_readonly() {
             return;
         }
@@ -485,10 +536,15 @@ impl EntityInputHandler for TerminalView {
     }
 
     fn marked_text_range(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Range<usize>> {
+        // a dead key's accent is the terminal's own: the next key must come to it, not to the input context
+        if self.keys.dead_keys.is_pending() {
+            return None;
+        }
         self.shared.preedit().map(|preedit| 0..utf16_len(&preedit))
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.keys.dead_keys.clear();
         self.shared.set_preedit(None);
         cx.notify();
     }

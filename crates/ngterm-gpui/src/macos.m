@@ -101,31 +101,64 @@ int ngterm_hotkey(int key, unsigned mods, void (*callback)(void)) {
                              GetApplicationEventTarget(), 0, &hotkey);
 }
 
-// A stateless translation is used only to recognize a dead-key press. AppKit
-// owns the composition state.
-static bool ngtermDeadKey(NSEvent *event) {
-  if (event.modifierFlags &
-      (NSEventModifierFlagControl | NSEventModifierFlagCommand))
-    return false;
+// `*state` carries a dead key from key to key (0: none).
+static UniCharCount ngtermTranslate(unsigned short code, UInt32 modifiers,
+                                    UInt32 *state, UniChar *chars,
+                                    UniCharCount capacity) {
   TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
   CFDataRef data =
       source
           ? TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
           : NULL;
-  UInt32 state = 0;
-  UniChar chars[8];
   UniCharCount count = 0;
-  UInt32 modifiers =
-      ((event.modifierFlags & NSEventModifierFlagShift) ? shiftKey : 0) |
-      ((event.modifierFlags & NSEventModifierFlagOption) ? optionKey : 0) |
-      ((event.modifierFlags & NSEventModifierFlagCapsLock) ? alphaLock : 0);
-  if (data)
-    UCKeyTranslate((const UCKeyboardLayout *)CFDataGetBytePtr(data),
-                   event.keyCode, kUCKeyActionDown, (modifiers >> 8) & 0xff,
-                   LMGetKbdType(), 0, &state, 8, &count, chars);
+  if (!data || UCKeyTranslate((const UCKeyboardLayout *)CFDataGetBytePtr(data),
+                              code, kUCKeyActionDown, (modifiers >> 8) & 0xff,
+                              LMGetKbdType(), 0, state, capacity, &count,
+                              chars) != noErr) {
+    *state = 0;
+    count = 0;
+  }
   if (source)
     CFRelease(source);
+  return count;
+}
+static UInt32 ngtermCarbonModifiers(NSEventModifierFlags flags) {
+  return ((flags & NSEventModifierFlagShift) ? shiftKey : 0) |
+         ((flags & NSEventModifierFlagOption) ? optionKey : 0) |
+         ((flags & NSEventModifierFlagCapsLock) ? alphaLock : 0);
+}
+static bool ngtermDeadKey(NSEvent *event) {
+  if (event.modifierFlags &
+      (NSEventModifierFlagControl | NSEventModifierFlagCommand))
+    return false;
+  UInt32 state = 0;
+  UniChar chars[8];
+  ngtermTranslate(event.keyCode, ngtermCarbonModifiers(event.modifierFlags),
+                  &state, chars, 8);
   return state != 0;
+}
+// The terminal keeps the state: the input context's leaks into later keys.
+void ngterm_dead_key(unsigned code, bool shift, bool option, bool caps,
+                     unsigned *state, char *text, unsigned capacity) {
+  NSEventModifierFlags flags = (shift ? NSEventModifierFlagShift : 0) |
+                               (option ? NSEventModifierFlagOption : 0) |
+                               (caps ? NSEventModifierFlagCapsLock : 0);
+  UInt32 carried = *state;
+  UniChar chars[16];
+  UniCharCount count = ngtermTranslate((unsigned short)code,
+                                       ngtermCarbonModifiers(flags), &carried,
+                                       chars, 16);
+  // A composed key leaves a state too; only a dead key's accents Space.
+  UniChar accent[8], space[8];
+  UInt32 probe = carried, none = 0;
+  UniCharCount accented = ngtermTranslate(kVK_Space, 0, &probe, accent, 8);
+  UniCharCount plain = ngtermTranslate(kVK_Space, 0, &none, space, 8);
+  *state = accented == plain && !memcmp(accent, space, plain * sizeof *space)
+               ? 0
+               : carried;
+  NSString *typed = [NSString stringWithCharacters:chars length:count];
+  if (![typed getCString:text maxLength:capacity encoding:NSUTF8StringEncoding])
+    text[0] = 0;
 }
 // Device-dependent modifier bits must never overlap our record's low-bit flags.
 unsigned ngterm_key_flags(unsigned long flags, bool repeat, bool ascii,
@@ -188,17 +221,20 @@ int ngterm_key_event(void *pointer, unsigned *mods, unsigned *plain,
   NSString *typed = [event charactersByApplyingModifiers:held];
   NSString *unmodified =
       [event charactersByApplyingModifiers:held & ~NSEventModifierFlagOption];
-  // A posted Unicode string (text expanders, auto-type) is not what its key
-  // code types on the layout; the event's own characters are the text. A
-  // hardware key has no poster, so a dead key's composition never gets here.
-  NSString *own = event.characters;
+  // Auto-type's string is the text; `characters` would add a dead key's.
   bool posted = event.CGEvent && CGEventGetIntegerValueField(
                                      event.CGEvent,
                                      kCGEventSourceUnixProcessID) != 0;
-  if (posted && held == event.modifierFlags && own.length &&
-      ![own isEqualToString:typed]) {
-    typed = own;
-    unmodified = own;
+  if (posted && held == event.modifierFlags) {
+    UniChar chars[64];
+    UniCharCount count = 0;
+    CGEventKeyboardGetUnicodeString(event.CGEvent, 64, &count, chars);
+    NSString *own = [NSString stringWithCharacters:chars length:count];
+    if (own.length && ![own isEqualToString:typed] &&
+        ![own isEqualToString:base]) {
+      typed = own;
+      unmodified = own;
+    }
   }
   if (![typed getCString:text maxLength:capacity encoding:NSUTF8StringEncoding])
     text[0] = 0;

@@ -1,8 +1,9 @@
 //! The terminal's native key for `NSEvent` key events built here, as `AppKit` would dispatch them: text a tool posts as
 //! the event's Unicode string on a key that does not type it (text expanders, password managers' auto-type, the
 //! conformance ax driver's `type_text`: key code 0, the A key), a hardware key whose characters differ from the layout's
-//! (a dead key's composition), and a Control chord on the same key. It runs without a harness because the layout's input
-//! source services want the main thread.
+//! (a dead key's composition), a Control chord on the same key, and the U.S. layout's Option dead keys composed with the
+//! next key, from the keyboard and posted alike, with nothing left pending. It runs without a harness because the
+//! layout's input source services want the main thread.
 #[cfg(not(target_os = "macos"))]
 fn main() {}
 
@@ -19,6 +20,7 @@ fn main() {
         keys::a_posted_unicode_string_types_its_own_text_not_the_key_codes(),
         keys::a_hardware_key_types_the_layouts_text_whatever_its_characters(),
         keys::a_control_chord_keeps_the_layouts_text_for_its_key(),
+        keys::option_dead_keys_compose_with_the_next_key_and_leave_nothing_pending(),
     ]
     .into_iter()
     .flatten()
@@ -29,12 +31,13 @@ fn main() {
     if !failures.is_empty() {
         std::process::exit(1);
     }
-    println!("macos_key_event: 3 passed");
+    println!("macos_key_event: 4 passed");
 }
 
 #[cfg(target_os = "macos")]
 mod keys {
-    use ngterm_gpui::terminal::input::{NativeKey, Source, event_source};
+    use gpui_kit::Keystroke;
+    use ngterm_gpui::terminal::input::{Compose, DeadKeys, KeyStroke, NativeKey, Source, event_source};
     use objc2::rc::Retained;
     use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
     use objc2_core_graphics::{CGEvent, CGEventField};
@@ -43,29 +46,39 @@ mod keys {
     /// The A key's XKB keycode, where key code 0 lands.
     const KEY_A: u32 = 38;
 
-    /// A key-down event with `characters` on key code `code`, as a tool that posts text builds it: this process posts it.
-    fn posted(characters: &str, code: u16, flags: NSEventModifierFlags) -> Result<Retained<NSEvent>, String> {
-        let characters = NSString::from_str(characters);
-        NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+    /// A key-down event with `characters` on key code `code` whose Quartz event carries `characters` and the pid of
+    /// the process that posted it, 0 for the keyboard's.
+    fn quartz(characters: &str, code: u16, flags: NSEventModifierFlags, pid: i64) -> Result<Retained<NSEvent>, String> {
+        let text = NSString::from_str(characters);
+        let built = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
             NSEventType::KeyDown,
             NSPoint::new(0.0, 0.0),
             flags,
             0.0,
             0,
             None,
-            &characters,
-            &characters,
+            &text,
+            &text,
             false,
             code,
         )
-        .ok_or_else(|| "AppKit built no key event".to_owned())
+        .ok_or("AppKit built no key event")?;
+        let event = built.CGEvent().ok_or("the key event has no Quartz event")?;
+        let units: Vec<u16> = characters.encode_utf16().collect();
+        // SAFETY: `units` outlives the call, which copies its length of UTF-16 units.
+        unsafe { CGEvent::keyboard_set_unicode_string(Some(&event), units.len() as _, units.as_ptr()) };
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUnixProcessID, pid);
+        NSEvent::eventWithCGEvent(&event).ok_or_else(|| "AppKit built no event from the Quartz event".to_owned())
     }
 
-    /// `event` as the keyboard delivers it: no process posted it.
-    fn from_hardware(event: &NSEvent) -> Result<Retained<NSEvent>, String> {
-        let quartz = event.CGEvent().ok_or("the key event has no Quartz event")?;
-        CGEvent::set_integer_value_field(Some(&quartz), CGEventField::EventSourceUnixProcessID, 0);
-        NSEvent::eventWithCGEvent(&quartz).ok_or_else(|| "AppKit built no event from the Quartz event".to_owned())
+    /// As a tool that posts text builds it: this process posts it, its Quartz event carrying the text.
+    fn posted(characters: &str, code: u16, flags: NSEventModifierFlags) -> Result<Retained<NSEvent>, String> {
+        quartz(characters, code, flags, i64::from(std::process::id()))
+    }
+
+    /// As the keyboard delivers it: no process posted it.
+    fn from_hardware(characters: &str, code: u16, flags: NSEventModifierFlags) -> Result<Retained<NSEvent>, String> {
+        quartz(characters, code, flags, 0)
     }
 
     fn read(event: &NSEvent) -> Result<NativeKey, String> {
@@ -110,8 +123,7 @@ mod keys {
 
     pub fn a_hardware_key_types_the_layouts_text_whatever_its_characters() -> Option<String> {
         let run = || -> Result<(), String> {
-            let built = posted("ä", 0, NSEventModifierFlags::empty())?;
-            let event = from_hardware(&built)?;
+            let event = from_hardware("ä", 0, NSEventModifierFlags::empty())?;
             let key = read(&event)?;
             let plain = key.unshifted.ok_or("the A key types no character")?.to_string();
             expect_eq("the text of the key", key.text.as_str(), plain.as_str())?;
@@ -136,5 +148,73 @@ mod keys {
             )
         };
         run().err()
+    }
+
+    /// The press of the key at macOS key code `code` with `flags`, as the keyboard sends it or as a process posts it
+    /// (its Quartz string what the key types with no modifier, as Quartz fills it in), as the terminal reads it.
+    fn press(name: &str, code: u16, flags: NSEventModifierFlags, posted_by_us: bool) -> Result<KeyStroke, String> {
+        let plain = match code {
+            0 => "a",
+            1 => "s",
+            14 => "e",
+            18 => "1",
+            32 => "u",
+            45 => "n",
+            49 => " ",
+            _ => return Err(format!("no plain text for key code {code}")),
+        };
+        let event = if posted_by_us {
+            posted(plain, code, flags)?
+        } else {
+            from_hardware(plain, code, flags)?
+        };
+        let keystroke = Keystroke::parse(name).map_err(|err| format!("{name}: {err}"))?;
+        // SAFETY: a live key event, on the main thread.
+        let source = unsafe { event_source(std::ptr::from_ref(&*event).cast_mut().cast()) };
+        Ok(KeyStroke::new(&keystroke, &source, false))
+    }
+
+    pub fn option_dead_keys_compose_with_the_next_key_and_leave_nothing_pending() -> Option<String> {
+        let option = NSEventModifierFlags::Option;
+        let none = NSEventModifierFlags::empty();
+        let run = |posted_by_us: bool| -> Result<(), String> {
+            let path = if posted_by_us { "posted" } else { "keyboard" };
+            let sharp_s = press("alt-s", 1, option, posted_by_us)?;
+            let acute = press("alt-e", 14, option, posted_by_us)?;
+            if sharp_s.text != "ß" || acute.text != "´" {
+                return Err(format!(
+                    "the test wants the U.S. layout: Option-s typed {:?}, Option-e {:?}",
+                    sharp_s.text, acute.text
+                ));
+            }
+            let mut dead = DeadKeys::default();
+            expect_eq(&format!("{path}: Option-s"), &dead.compose(&sharp_s), &Compose::Pass)?;
+            for (accent, accent_key, next, next_key, composed) in [
+                ("´", ("alt-e", 14), "e", ("e", 14), "é"),
+                ("¨", ("alt-u", 32), "u", ("u", 32), "ü"),
+                ("˜", ("alt-n", 45), "n", ("n", 45), "ñ"),
+                ("¨", ("alt-u", 32), "a", ("a", 0), "ä"),
+                ("´", ("alt-e", 14), "space", ("space", 49), "´"),
+                ("´", ("alt-e", 14), "1", ("1", 18), "´1"),
+            ] {
+                let what = format!("{path}: {} then {next}", accent_key.0);
+                let first = press(accent_key.0, accent_key.1, option, posted_by_us)?;
+                expect_eq(
+                    &format!("{what}, the dead key"),
+                    &dead.compose(&first),
+                    &Compose::Pending {
+                        accent: accent.to_owned(),
+                        committed: String::new(),
+                    },
+                )?;
+                let second = press(next_key.0, next_key.1, none, posted_by_us)?;
+                expect_eq(&what, &dead.compose(&second), &Compose::Composed(composed.to_owned()))?;
+                let after = press("1", 18, none, posted_by_us)?;
+                expect_eq(&format!("{what}, the key after"), &dead.compose(&after), &Compose::Pass)?;
+                expect_eq(&format!("{what}, its text"), after.text.as_str(), "1")?;
+            }
+            Ok(())
+        };
+        run(false).and_then(|()| run(true)).err()
     }
 }

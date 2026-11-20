@@ -142,6 +142,139 @@ fn a_key_press_is_classified_for_the_status_glyph_as_the_gtk_build_does() {
     assert_eq!(at_c(native("j", 'j')), Other);
 }
 
+/// A press of the key at XKB `keycode` that types `text`, `composing` when it is a dead key.
+fn dead_key_press(name: &str, keycode: u32, text: &str, composing: bool) -> KeyStroke {
+    let gpui = keystroke(name);
+    let native = NativeKey {
+        keycode,
+        modifiers: gpui.modifiers,
+        text: text.into(),
+        composing,
+        ..NativeKey::default()
+    };
+    KeyStroke::new(&gpui, &Source::Native(native), false)
+}
+
+/// The U.S. layout's Option-e (acute, state 1) and Option-u (umlaut, state 2) dead keys, as `UCKeyTranslate` composes
+/// them; `Option` is recorded so a test can see what the composition asked for.
+fn us_dead_keys(seen: &std::cell::Cell<Option<bool>>) -> impl Fn(u32, bool, bool, bool, u32) -> (String, u32) + '_ {
+    move |keycode, _shift, option, _caps, state| {
+        seen.set(Some(option));
+        let accent = ["", "´", "¨"][state as usize];
+        match (keycode, option, state) {
+            (26, true, _) => (accent.to_owned(), 1),
+            (30, true, _) => (accent.to_owned(), 2),
+            (26, false, 1) => ("é".to_owned(), 0),
+            (30, false, 2) => ("ü".to_owned(), 0),
+            (38, false, 2) => ("ä".to_owned(), 0),
+            (65, false, _) => (if state == 0 { " " } else { accent }.to_owned(), 0),
+            (10, false, _) => (format!("{accent}1"), 0),
+            (38, false, _) => (format!("{accent}a"), 0),
+            _ => (format!("{accent}?"), 0),
+        }
+    }
+}
+
+#[test]
+fn a_dead_key_composes_with_the_next_key_and_leaves_nothing_pending() {
+    use input::{Compose, DeadKeys};
+    let seen = std::cell::Cell::new(None);
+    let mut dead = DeadKeys::default();
+    let mut press = |stroke: &KeyStroke| dead.step(stroke, us_dead_keys(&seen));
+    let pending = |accent: &str, committed: &str| Compose::Pending {
+        accent: accent.into(),
+        committed: committed.into(),
+    };
+    let alt_e = dead_key_press("alt-e", 26, "´", true);
+    let alt_u = dead_key_press("alt-u", 30, "¨", true);
+    for (strokes, expected) in [
+        (
+            vec![&alt_e, &dead_key_press("e", 26, "e", false)],
+            vec![pending("´", ""), Compose::Composed("é".into())],
+        ),
+        (
+            vec![&alt_u, &dead_key_press("u", 30, "u", false)],
+            vec![pending("¨", ""), Compose::Composed("ü".into())],
+        ),
+        (
+            vec![&alt_u, &dead_key_press("a", 38, "a", false)],
+            vec![pending("¨", ""), Compose::Composed("ä".into())],
+        ),
+        (
+            vec![&alt_e, &dead_key_press("space", 65, " ", false)],
+            vec![pending("´", ""), Compose::Composed("´".into())],
+        ),
+        (
+            vec![&alt_e, &dead_key_press("1", 10, "1", false)],
+            vec![pending("´", ""), Compose::Composed("´1".into())],
+        ),
+        // a dead key the layout cannot join commits the first accent and waits with its own
+        (
+            vec![&alt_e, &alt_u, &dead_key_press("u", 30, "u", false)],
+            vec![pending("´", ""), pending("¨", "´"), Compose::Composed("ü".into())],
+        ),
+    ] {
+        let got: Vec<Compose> = strokes.into_iter().map(&mut press).collect();
+        assert_eq!(got, expected);
+        assert_eq!(
+            press(&dead_key_press("1", 10, "1", false)),
+            Compose::Pass,
+            "nothing stays pending after {got:?}"
+        );
+    }
+}
+
+#[test]
+fn a_key_with_no_text_or_with_control_drops_a_pending_accent() {
+    use input::{Compose, DeadKeys};
+    let seen = std::cell::Cell::new(None);
+    let alt_e = dead_key_press("alt-e", 26, "´", true);
+    for next in [
+        dead_key_press("enter", 36, "\r", false),
+        dead_key_press("left", 113, "", false),
+        dead_key_press("ctrl-c", 54, "c", false),
+        dead_key_press("cmd-v", 55, "v", false),
+    ] {
+        let mut dead = DeadKeys::default();
+        dead.step(&alt_e, us_dead_keys(&seen));
+        seen.set(None);
+        assert_eq!(dead.step(&next, us_dead_keys(&seen)), Compose::Dropped, "{next:?}");
+        assert_eq!(seen.get(), None, "{next:?} never reached the layout");
+        assert!(!dead.is_pending());
+    }
+}
+
+#[test]
+fn a_release_or_a_plain_key_passes_and_option_as_alt_composes_without_option() {
+    use input::{Compose, DeadKeys};
+    let seen = std::cell::Cell::new(None);
+    let mut dead = DeadKeys::default();
+    assert_eq!(
+        dead.step(&dead_key_press("a", 38, "a", false), us_dead_keys(&seen)),
+        Compose::Pass
+    );
+    assert_eq!(
+        seen.get(),
+        None,
+        "a plain key with nothing pending never reaches the layout"
+    );
+    dead.step(&dead_key_press("alt-e", 26, "´", true), us_dead_keys(&seen));
+    let mut release = dead_key_press("alt-e", 26, "´", true);
+    release.action = ngterm_core::ghostty_config::binds::KeyAction::Release;
+    assert_eq!(dead.step(&release, us_dead_keys(&seen)), Compose::Pass);
+    assert!(dead.is_pending(), "a release leaves the composition");
+    let mut as_alt = dead_key_press("alt-a", 38, "a", false);
+    as_alt.option_as_alt = true;
+    assert_eq!(dead.step(&as_alt, us_dead_keys(&seen)), Compose::Composed("´a".into()));
+    assert_eq!(seen.get(), Some(false), "Option as Alt is not the layout's Option");
+    dead.step(&dead_key_press("alt-e", 26, "´", true), us_dead_keys(&seen));
+    dead.clear();
+    assert_eq!(
+        dead.step(&dead_key_press("e", 26, "e", false), us_dead_keys(&seen)),
+        Compose::Pass
+    );
+}
+
 #[test]
 fn without_a_native_key_the_key_is_read_off_a_us_keyboard() {
     let bang = KeyStroke::new(&keystroke("!"), &Source::Keystroke, false);
