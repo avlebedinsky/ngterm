@@ -94,8 +94,8 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # only main saves caches: a branch's would crowd main's out of the repository's cache space
       - uses: Swatinem/rust-cache@v2
         with:
@@ -222,8 +222,8 @@ jobs:
             flag: ""
     steps: &windows-build-steps
       - uses: actions/checkout@v7
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       - name: llvm-tools (coverage)
         if: matrix.build == 'coverage'
         run: rustup component add llvm-tools

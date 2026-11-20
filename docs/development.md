@@ -1718,12 +1718,16 @@ fit at once, so one job saves each cache and only these save (sizes of November 
 | vendor `macos-26` | `cross-platform.yml` `crates` | | 0.25 GB |
 | vendor `android` | `android.yml` `app` | `emulator`, `release.yml`'s Android build | 0.4 GB |
 | vendor `xcode-27` | `ios.yml` `core` | the other `ios.yml` jobs, `ios-release.yml`, `release.yml` | 0.3 GB |
-| Gradle | `android.yml` (setup-gradle) | | 0.7 GB |
+| Gradle | `android.yml` `app` (setup-gradle) | `emulator`, `release.yml`'s Android build | 0.7 GB |
+| the upstream reference | `reference-macos.yml` on main | its PR runs | one upstream release |
 | the iOS core | `ios.yml` `core` | | 0.05 GB for each |
 
 That is about 9 GB. The saved cargo caches are those that save the most time on each workflow's longest path; the other
 jobs build their dependencies in each run (`conformance build (release)` then takes about as long as the `linux` job its
-shards also wait for). A vendor cache also holds Zig's global cache with the libghostty-vt builds of the job that saved
+shards also wait for). Each job that uses a cargo cache runs `scripts/ci-rust-toolchain.sh` before it. The script
+keeps only the toolchain that `rust-toolchain.toml` pins: rust-cache puts the rustc of each installed toolchain into
+its key. Without the script, a runner image with a newer stable gives a second key, a cache miss, and a second entry
+of the same size. A vendor cache also holds Zig's global cache with the libghostty-vt builds of the job that saved
 it ([Native dependencies](#native-dependencies)), so its key hashes `zig_build.rs` and `.cargo/config.toml` too: when
 what the build passes zig changes, a new entry is saved, and later runs do not build the library again for the targets
 that job built. A job that reads another job's vendor cache builds its other targets again in each run:

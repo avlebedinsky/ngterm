@@ -44,8 +44,8 @@ jobs:
             dbus-daemon weston xvfb x11-xkb-utils libgl1-mesa-dri libegl-mesa0 mesa-vulkan-drivers \
             g++ libpixman-1-dev libinput-dev libevdev-dev libudev-dev libdrm-dev libegl-dev libgles-dev libgbm-dev \
             libcairo2-dev libpango1.0-dev libpng-dev hwdata
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # ngterm-app's OpenCode plugin tests run the shipped plugin under node (22.7+, module-syntax detection), required
       # here by NGTERM_REQUIRE_NODE_TESTS on the test step rather than skipped
       - uses: actions/setup-node@v7

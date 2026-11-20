@@ -98,6 +98,7 @@ on:
       - scripts/ios-coverage.py
       - scripts/build-ghostty-vt.sh
       - scripts/lib/native.sh
+      - scripts/ci-rust-toolchain.sh
       - build/pins.env
       - build/patches/ghostty-vt/**
       - .github/workflows/ios.yml
@@ -174,9 +175,9 @@ jobs:
         run: >-
           echo "core=${{ steps.built.outputs.cache-hit != 'true' || (github.ref == 'refs/heads/main' &&
           steps.vendor-saved.outputs.cache-hit != 'true') }}" >> "$GITHUB_OUTPUT"
-      - name: rust toolchain (rust-toolchain.toml)
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
         if: steps.build.outputs.core == 'true'
-        run: rustup toolchain install
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.build.outputs.core == 'true'
         with:
@@ -217,9 +218,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - *checkout
-      - &rust-toolchain
-        name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ios
@@ -247,7 +247,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - *checkout
-      - *rust-toolchain
+      - &rust-toolchain
+        name: rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
       - *vendor-restore
       - *ghostty-vt
       - *ios-toolchain

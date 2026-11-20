@@ -45,6 +45,7 @@ on:
       - scripts/setup-android.sh
       - scripts/build-ghostty-vt.sh
       - scripts/lib/native.sh
+      - scripts/ci-rust-toolchain.sh
       - build/pins.env
       - build/patches/ghostty-vt/**
       - .github/workflows/android.yml
@@ -78,8 +79,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # Only main saves caches: a branch's would crowd main's out of the repository's cache space. Both are
       # android's own, which the emulator job and release.yml's Android build read: the mobile core for both ABIs
       # (and the host's bindgen) is the same build in each.
@@ -145,8 +146,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # the app job's caches, read only
       - uses: Swatinem/rust-cache@v2
         with:
@@ -154,9 +155,11 @@ jobs:
           save-if: false
       - uses: actions/cache/restore@v6
         with: *vendor-android
+      # the app job saves Gradle's cache; this job only reads it
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+          cache-read-only: true
       - name: enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \

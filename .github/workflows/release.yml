@@ -274,8 +274,8 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.commit }}
           persist-credentials: false
-      - name: Rust toolchain
-        run: rustup toolchain install
+      - name: Rust toolchain, the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # cross-platform.yml's caches of the same release build on this image, read only
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -661,8 +661,8 @@ jobs:
           # the build number is the commit count
           fetch-depth: 0
           persist-credentials: false
-      - name: Rust toolchain
-        run: rustup toolchain install
+      - name: Rust toolchain, the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # ios.yml's caches, read only, as ios-release.yml reads them
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -728,8 +728,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Rust toolchain
-        run: rustup toolchain install
+      - name: Rust toolchain, the only one installed
+        run: scripts/ci-rust-toolchain.sh
       # android.yml's caches (the mobile core's build, the libghostty-vt prefix and its builds), read only
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

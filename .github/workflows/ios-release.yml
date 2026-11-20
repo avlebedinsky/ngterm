@@ -123,8 +123,8 @@ jobs:
           echo "SIGNING=$signing" >>"$GITHUB_ENV"
           echo "NAME=ngterm-ios-$version-$build" >>"$GITHUB_ENV"
           echo "ngterm $version, build $build, upload: $upload, signed: $signing" >>"$GITHUB_STEP_SUMMARY"
-      - name: rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      - name: rust toolchain (rust-toolchain.toml), the only one installed
+        run: scripts/ci-rust-toolchain.sh
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ios
