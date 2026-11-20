@@ -1142,6 +1142,38 @@ fn scratch_relative_links_use_the_start_directory_before_a_pwd_report() {
 }
 
 #[test]
+fn scratch_relative_links_refuse_a_reported_directory_with_a_control_character() {
+    let (mut state, _, session) = state_with_terminal();
+    let (main_loop, _held) = record(&mut state);
+    let directory = tempfile::tempdir().unwrap();
+    let stripped = directory.path().join("ab");
+    std::fs::create_dir(&stripped).unwrap();
+    std::fs::write(stripped.join("notes.bin"), "notes").unwrap();
+    state
+        .core
+        .library_mut()
+        .store_for_session_mut(session)
+        .unwrap()
+        .session_mut(session)
+        .unwrap()
+        .scratch_surface
+        .replace(Box::new(FakeSurface::new("S")));
+    let raw = directory.path().join("a\nb").to_string_lossy().into_owned();
+    state.report_pane(session, "S", &PaneReport::Pwd(raw));
+    let found = state
+        .core
+        .library()
+        .store_for_session(session)
+        .unwrap()
+        .session(session)
+        .unwrap();
+    // The model keeps the stripped name, but a click must not open a file in a directory the shell did not report.
+    assert_eq!(found.scratch_cwd.as_deref(), Some(&*stripped.to_string_lossy()));
+    click(&mut state, &main_loop, "./notes.bin", session, "S");
+    assert!(state.frontend.reveals.is_empty());
+}
+
+#[test]
 fn only_detected_existing_relative_links_with_an_osc7_directory_resolve() {
     let (mut state, _, session) = state_with_terminal();
     let (main_loop, _held) = record(&mut state);

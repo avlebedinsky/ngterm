@@ -276,6 +276,8 @@ def tree(top: Mapping[str, Any]) -> str:
             tags += overlay + (" (scratch)" if session["scratch"] else "")
             split_cwd = session.get("splitCwd")
             suffix = f"  split cwd: {split_cwd}" if split_cwd is not None and split_cwd != session["cwd"] else ""
+            scratch_cwd = session.get("scratchCwd")
+            suffix += f"  scratch cwd: {scratch_cwd}" if scratch_cwd is not None and scratch_cwd != session["cwd"] else ""
             if session.get("title") is not None:
                 suffix += f"  title: {session['title']}"
             if session.get("liveAttribution") is not None:

@@ -298,7 +298,7 @@ def test_last_selected_at_stamps_the_session_entered_and_left(app, ctl):
 @pytest.mark.since("0.42.1")
 @pytest.mark.requires("posix-command-line", reason="the scratch program emits OSC 7 with printf")
 @pytest.mark.covers("field:tree.session.scratchCwd", "session.scratch")
-def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(ctl):
+def test_scratch_cwd_keeps_its_own_directory_until_its_shell_exits(app, ctl):
     primary = ctl.instance.root / "primary"
     scratch = ctl.instance.root / "scratch"
     primary.mkdir()

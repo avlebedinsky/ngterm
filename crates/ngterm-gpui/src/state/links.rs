@@ -81,10 +81,13 @@ impl AppState {
         };
         let cwd = (kind == crate::terminal::LinkKind::Url)
             .then(|| {
+                // The raw report, so the control-character guard of `locations` still applies; a scratch that has
+                // not reported yet uses its start directory.
+                let reported = self.link_directories.get(&(session, token.to_owned())).cloned();
                 if scratch {
-                    Some(found.cwd_for(role).to_owned())
+                    reported.or_else(|| Some(found.cwd_for(role).to_owned()))
                 } else {
-                    self.link_directories.get(&(session, token.to_owned())).cloned()
+                    reported
                 }
             })
             .flatten();

@@ -86,8 +86,8 @@ def test_tree_tags_each_session_state():
                 "name": "work",
                 "active": True,
                 "sessions": [
-                    _session(active=True, split=True, hasSplit=True, splitCwd="/srv", title="vim"),
-                    _session(hasSplit=True, splitCwd="/home/user", realized=False, scratch=True),
+                    _session(active=True, split=True, hasSplit=True, splitCwd="/srv", scratchCwd="/tmp", title="vim"),
+                    _session(hasSplit=True, splitCwd="/home/user", scratchCwd="/home/user", realized=False, scratch=True),
                     _session(overlay=True, liveAttribution="supervisor", presenters={"mirrors": 2, "presenter": True}),
                     _session(presentation={"state": "connected", "mode": "presenter", "error": "slow"}),
                 ],
@@ -97,7 +97,7 @@ def test_tree_tags_each_session_state():
     }
     assert cli_format.tree(top).splitlines() == [
         f"* work  [{WID}]",
-        f"  * one (split)  [{SID}]  /home/user  split cwd: /srv  title: vim",
+        f"  * one (split)  [{SID}]  /home/user  split cwd: /srv  scratch cwd: /tmp  title: vim",
         f"    one (split hidden) (not realized) (scratch)  [{SID}]  /home/user",
         f"    one (overlay)  [{SID}]  /home/user  live attribution: supervisor  presented remotely  mirrored by: 2",
         f"    one  [{SID}]  /home/user  presentation: connected, presenter (slow)",
