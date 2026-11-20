@@ -360,6 +360,8 @@ pub struct AppSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_reset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub badge_reset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub right_click_paste: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_row_click_expands: Option<bool>,
@@ -563,6 +565,15 @@ impl AppSettings {
     #[must_use]
     pub fn effective_status_reset(&self) -> StatusReset {
         self.status_reset
+            .as_deref()
+            .and_then(StatusReset::from_raw)
+            .unwrap_or_default()
+    }
+
+    /// The badge reset mode. An absent or unknown value selects the first key.
+    #[must_use]
+    pub fn effective_badge_reset(&self) -> StatusReset {
+        self.badge_reset
             .as_deref()
             .and_then(StatusReset::from_raw)
             .unwrap_or_default()

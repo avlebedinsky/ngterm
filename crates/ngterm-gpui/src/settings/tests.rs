@@ -1680,3 +1680,33 @@ fn the_shell_picker_preserves_a_saved_profile_after_its_catalog_entry_is_removed
     );
     assert!(has(&shown, "settings-shell-profile-missing"));
 }
+
+#[gpui_kit::test]
+fn badge_reset_picker_applies_each_mode(cx: &mut TestAppContext) {
+    use ngterm_core::model::StatusReset;
+    let (mut h, cx) = harness(cx, AppSettings::default());
+    h.tab(cx, Tab::Notifications);
+    let page = bounds(cx, "settings-page");
+    let last = bounds(cx, "settings-attention-button");
+    assert!(last.origin.y >= page.origin.y && last.bottom() <= page.bottom());
+    cx.simulate_event(gpui_kit::ScrollWheelEvent {
+        position: last.center(),
+        delta: gpui_kit::ScrollDelta::Lines(gpui_kit::point(0., -12.)),
+        ..gpui_kit::ScrollWheelEvent::default()
+    });
+    h.settle(cx);
+    assert_eq!(bounds(cx, "settings-attention-button"), last);
+    for (keys, mode, row) in [
+        ("down down enter", StatusReset::Enter, 1),
+        ("down down down enter", StatusReset::Never, 2),
+        ("down enter", StatusReset::FirstKey, 0),
+    ] {
+        click(cx, "settings-badge-reset");
+        h.settle(cx);
+        cx.simulate_keystrokes(keys);
+        h.settle(cx);
+        assert_eq!(h.settings().effective_badge_reset(), mode);
+        assert_eq!(h.item(cx, "settings-badge-reset"), Some(Shown::Row(Some(row))));
+    }
+    assert_eq!(h.settings().badge_reset, None);
+}

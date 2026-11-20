@@ -245,9 +245,9 @@ pub enum TerminalEvent {
     /// in the active window, with no button held. The frontend focuses the pane (Ghostty's `moveFocus`; the deck owns
     /// pane focus); emitted once until the view's focus changes or the pointer leaves it.
     FocusFollowsMouse,
-    /// A key press or repeat reached the terminal's keyboard, classified for the status glyph (the GTK build's
-    /// `connect_keystroke`, upstream's `onUserInputClearsStatus` from `keyDown`): before its hold, ghostty's binds or
-    /// the program see it.
+    /// A key press, repeat, or committed text reached the terminal before bindings or the program receive it.
+    /// The event controls status glyph and unseen badge resets.
+    /// Committed text uses `StatusKeystroke::Other`.
     Keystroke(ngterm_core::model::StatusKeystroke),
 }
 

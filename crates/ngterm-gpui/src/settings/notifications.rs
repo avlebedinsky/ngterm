@@ -1,7 +1,7 @@
 //! Notifications: banners, badges, the attention request, the delivery sound and the attention indicator, each
 //! independent (upstream's `NotificationsSettingsView`).
 
-use ngterm_core::model::STANDARD_SOUND_NAMES;
+use ngterm_core::model::{STANDARD_SOUND_NAMES, StatusReset};
 use ngterm_core::persist::settings::DockBounce;
 use ngterm_core::settings_model::{NotificationsChange, SettingsChange};
 
@@ -55,6 +55,17 @@ pub fn sections(snapshot: &Snapshot) -> Vec<Section> {
                 "Show notification badges",
                 settings.notification_badge_enabled.unwrap_or(true),
                 |on| change(NotificationsChange::Badges(on)),
+            ),
+            picker(
+                "settings-badge-reset",
+                "Badge reset",
+                &[
+                    ("On first key", StatusReset::FirstKey),
+                    ("On Enter", StatusReset::Enter),
+                    ("Disabled", StatusReset::Never),
+                ],
+                &settings.effective_badge_reset(),
+                |reset| change(NotificationsChange::BadgeReset(reset)),
             ),
             picker(
                 "settings-dock-bounce",

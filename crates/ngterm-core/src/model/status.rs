@@ -140,8 +140,7 @@ impl StatusShape {
     }
 }
 
-/// Which keystroke clears a `blocked` or `completed` glyph (upstream's `StatusReset`, raw-stored in the settings'
-/// `statusReset`).
+/// The key that clears a status glyph or an unseen badge (upstream `StatusReset`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum StatusReset {
     /// Any key.
@@ -154,6 +153,16 @@ pub enum StatusReset {
 }
 
 impl StatusReset {
+    /// If this key clears the unseen badge under the selected mode.
+    #[must_use]
+    pub fn clears_badge(self, keystroke: StatusKeystroke) -> bool {
+        match self {
+            Self::FirstKey => true,
+            Self::Enter => keystroke == StatusKeystroke::Submit,
+            Self::Never => false,
+        }
+    }
+
     /// The settings spelling.
     #[must_use]
     pub fn raw(self) -> &'static str {

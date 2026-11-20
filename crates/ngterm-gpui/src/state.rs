@@ -451,7 +451,9 @@ impl AppState {
     pub fn pane_keystroke(&mut self, session: Uuid, token: &str, keystroke: StatusKeystroke) {
         self.core.note_user_activity(session);
         self.arm_auto_follow();
-        if self.core.clear_status_on_keystroke(session, token, keystroke) {
+        let badge_cleared = self.core.clear_badge_on_keystroke(session, token, keystroke);
+        let status_cleared = self.core.clear_status_on_keystroke(session, token, keystroke);
+        if badge_cleared || status_cleared {
             self.settle();
         }
     }

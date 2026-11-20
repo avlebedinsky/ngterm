@@ -90,3 +90,17 @@ def test_a_programs_desktop_notification_raises_the_badge(ctl, printed, title, b
         assert _node(ctl, sid)["unseen"] == 1
     finally:
         ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("session.type", "notify", "field:tree.session.unseen")
+def test_session_type_never_clears_the_unseen_badge(ctl):
+    (sid, *_) = session_ids(ctl.tree())
+    ctl.wait_mounted(sid, "left")
+    assert_ok(ctl.request("notify", sid, body="Badge reset probe"))
+    try:
+        for text in ("", "x", "\n"):
+            assert_ok(ctl.request("session.type", sid, text=text))
+            assert _node(ctl, sid)["unseen"] == 1
+    finally:
+        ctl.request("session.seen", sid)

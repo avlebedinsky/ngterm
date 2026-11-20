@@ -83,6 +83,7 @@ fn a_controls_default_value_is_stored_as_nil() {
         appearance(AppearanceChange::InactivePaneMute(5)),
         SettingsChange::Notifications(NotificationsChange::Banners(true)),
         SettingsChange::Notifications(NotificationsChange::Badges(true)),
+        SettingsChange::Notifications(NotificationsChange::BadgeReset(StatusReset::FirstKey)),
         SettingsChange::Notifications(NotificationsChange::DockBounce(DockBounce::Off)),
         SettingsChange::Notifications(NotificationsChange::Sound(None)),
         SettingsChange::Notifications(NotificationsChange::AttentionButton(false)),
@@ -867,4 +868,13 @@ fn the_bootstrap_leaves_restored_sessions_and_a_malformed_default_alone() {
     assert_eq!(bootstrap(bash, true), None);
     let relative = ShellProfile::new("rel", "Relative", "bash.exe".into(), &[]);
     assert_eq!(bootstrap(relative, false), None);
+}
+
+#[test]
+fn badge_reset_picker_stores_each_non_default_mode() {
+    for mode in [StatusReset::Enter, StatusReset::Never] {
+        let settings = applied([SettingsChange::Notifications(NotificationsChange::BadgeReset(mode))]);
+        assert_eq!(settings.badge_reset.as_deref(), Some(mode.raw()));
+        assert_eq!(settings.effective_status_reset(), StatusReset::FirstKey);
+    }
 }

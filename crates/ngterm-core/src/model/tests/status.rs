@@ -550,3 +550,42 @@ fn a_pick_items_indicator_drops_what_cannot_render() {
 fn the_status_names_list_is_upstreams() {
     assert_eq!(AgentStatus::valid_names_list(), "idle|active|completed|blocked");
 }
+
+#[test]
+fn badge_reset_follows_the_mode_for_each_key() {
+    use StatusKeystroke::{Interrupt, Other, Submit};
+    for (mode, key, cleared) in [
+        (FirstKey, Other, true),
+        (FirstKey, Interrupt, true),
+        (FirstKey, Submit, true),
+        (Enter, Other, false),
+        (Enter, Interrupt, false),
+        (Enter, Submit, true),
+        (Never, Other, false),
+        (Never, Interrupt, false),
+        (Never, Submit, false),
+    ] {
+        assert_eq!(mode.clears_badge(key), cleared);
+    }
+}
+
+#[test]
+fn badge_reset_defaults_and_round_trips_independently_of_status_reset() {
+    for (raw, expected) in [
+        (None, FirstKey),
+        (Some("firstKey"), FirstKey),
+        (Some("enter"), Enter),
+        (Some("never"), Never),
+        (Some("teleporter"), FirstKey),
+    ] {
+        let settings = AppSettings {
+            badge_reset: raw.map(str::to_owned),
+            status_reset: Some("never".into()),
+            ..AppSettings::default()
+        };
+        assert_eq!(settings.effective_badge_reset(), expected);
+        let encoded = serde_json::to_value(&settings).unwrap();
+        assert_eq!(encoded.get("badgeReset").and_then(serde_json::Value::as_str), raw);
+        assert_eq!(serde_json::from_value::<AppSettings>(encoded).unwrap(), settings);
+    }
+}

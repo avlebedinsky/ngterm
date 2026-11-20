@@ -120,3 +120,23 @@ fn candidate_rectangle_follows_surface_scale_and_enlarged_font_metrics(cx: &mut 
         }
     }
 }
+
+#[gpui_kit::test]
+#[cfg_attr(windows, ignore = "drives its pane with a POSIX sh script")]
+fn text_system_input_reports_other_and_empty_input_reports_nothing(cx: &mut TestAppContext) {
+    let f = Fixture::new(cx, ECHO, "");
+    let view = f.view.clone();
+    for text in ["", "dictated\ntext"] {
+        f.cx.update(|window, cx| view.update(cx, |view, cx| view.replace_text_in_range(None, text, window, cx)));
+    }
+    let keys: Vec<_> = f
+        .events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            super::super::TerminalEvent::Keystroke(key) => Some(*key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, [ngterm_core::model::StatusKeystroke::Other]);
+}

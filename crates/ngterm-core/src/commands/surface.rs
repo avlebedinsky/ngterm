@@ -37,14 +37,35 @@ impl Core {
         let Some(pane) = session.pane_role_for_token(token) else {
             return;
         };
-        let ended = report == SearchReport::Ended;
+        let ended = report == SearchReport::Ended && session.search.active;
         if let SearchFollowUp::EndOn(owner) = session.search.apply(pane, report) {
             run_binding(session, owner, "end_search");
         }
-        // the end of a search gives the terminal the keyboard back from the search bar's field
+        // A no-op end_search must not refocus the pane and clear its badge.
         if ended {
             self.request_pane_focus(id);
         }
+    }
+
+    /// Clears the unseen badge for real input in a main or split pane. Delivered banners stay visible.
+    pub fn clear_badge_on_keystroke(&mut self, session: Uuid, token: &str, keystroke: StatusKeystroke) -> bool {
+        if !self.settings().effective_badge_reset().clears_badge(keystroke) {
+            return false;
+        }
+        let Some(store) = self.library_mut().store_for_session_mut(session) else {
+            return false;
+        };
+        let clears = store.session(session).is_some_and(|found| {
+            found.unseen_count > 0
+                && matches!(
+                    found.pane_role_for_token(token),
+                    Some(StatusPane::Left | StatusPane::Right)
+                )
+        });
+        if clears {
+            store.clear_unseen(session);
+        }
+        clears
     }
 
     /// A physical keystroke in the pane carrying `token` (upstream's `keyDown` → `onUserInputClearsStatus` →

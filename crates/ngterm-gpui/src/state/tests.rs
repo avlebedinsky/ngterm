@@ -2974,3 +2974,27 @@ fn a_clicked_file_that_cannot_open_leaves_the_hidden_clicked_page() {
     assert_eq!(found.overlay.page().map(|page| page.id), Some(kept));
     assert!(found.overlay_hidden(None));
 }
+
+#[test]
+fn a_pane_keystroke_clears_the_badge_without_a_status_glyph() {
+    let (mut state, _, session) = state_with_terminal();
+    let response = state.core.dispatch(&Request {
+        cmd: Command::Notify,
+        target: Some(ngterm_core::pane_env::uuid_string(session)),
+        args: Some(Args {
+            body: Some("Ready".into()),
+            ..Args::default()
+        }),
+    });
+    assert!(response.ok);
+    state.settle();
+    assert!(matches!(
+        state.take_frontend_work().banners.as_slice(),
+        [ngterm_core::NotificationEffect::Post(_)]
+    ));
+    state.pane_keystroke(session, "stale", StatusKeystroke::Other);
+    assert_eq!(state.core.library().held_session(session).unwrap().unseen_count, 1);
+    state.pane_keystroke(session, "T", StatusKeystroke::Other);
+    assert_eq!(state.core.library().held_session(session).unwrap().unseen_count, 0);
+    assert!(state.take_frontend_work().banners.is_empty());
+}

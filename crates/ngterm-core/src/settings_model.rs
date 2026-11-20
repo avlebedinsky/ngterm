@@ -135,6 +135,7 @@ pub enum InterfaceChange {
 pub enum NotificationsChange {
     Banners(bool),
     Badges(bool),
+    BadgeReset(StatusReset),
     DockBounce(DockBounce),
     /// A sound name, `None` for silence.
     Sound(Option<String>),
@@ -379,6 +380,9 @@ impl NotificationsChange {
         match self {
             Self::Banners(on) => settings.notifications_enabled = default_on(on),
             Self::Badges(on) => settings.notification_badge_enabled = default_on(on),
+            Self::BadgeReset(reset) => {
+                settings.badge_reset = unless_default(reset, StatusReset::FirstKey).map(|reset| reset.raw().to_owned());
+            }
             Self::DockBounce(bounce) => {
                 settings.dock_bounce = unless_default(bounce, DockBounce::Off).map(|bounce| bounce.raw().to_owned());
             }

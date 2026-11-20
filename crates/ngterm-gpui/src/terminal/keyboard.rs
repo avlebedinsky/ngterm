@@ -500,6 +500,13 @@ impl EntityInputHandler for TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !text.is_empty() {
+            self.terminal.update(cx, |_, cx| {
+                cx.emit(super::TerminalEvent::Keystroke(
+                    ngterm_core::model::StatusKeystroke::Other,
+                ));
+            });
+        }
         self.commit(text);
         cx.notify();
     }

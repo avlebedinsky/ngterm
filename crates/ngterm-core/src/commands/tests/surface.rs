@@ -951,3 +951,70 @@ fn typing_poll_refuses_a_pane_that_became_covered_before_it_realized() {
     );
     assert!(probe.typed().is_empty());
 }
+
+#[test]
+fn badge_reset_uses_the_live_setting_for_main_and_split_input_only() {
+    use crate::model::{StatusKeystroke, StatusReset};
+    let (mut fixture, id, _) = fixture_with_terminal();
+    let store = fixture.store_mut().unwrap();
+    store.set_split_visibility(id, true, None);
+    let session = store.session_mut(id).unwrap();
+    session.split_surface.replace(Box::new(FakeSurface::new("TOKEN-R")));
+    session.scratch_surface.replace(Box::new(FakeSurface::new("TOKEN-S")));
+    for mode in [StatusReset::FirstKey, StatusReset::Enter, StatusReset::Never] {
+        fixture
+            .core
+            .update_settings(|settings| settings.badge_reset = Some(mode.raw().into()));
+        for token in [TOKEN, "TOKEN-R", "TOKEN-S", "stale"] {
+            for key in [
+                StatusKeystroke::Other,
+                StatusKeystroke::Interrupt,
+                StatusKeystroke::Submit,
+            ] {
+                fixture.store_mut().unwrap().session_mut(id).unwrap().unseen_count = 2;
+                let expected = [TOKEN, "TOKEN-R"].contains(&token) && mode.clears_badge(key);
+                assert_eq!(fixture.core.clear_badge_on_keystroke(id, token, key), expected);
+                assert_eq!(
+                    fixture.store().session(id).unwrap().unseen_count,
+                    if expected { 0 } else { 2 }
+                );
+                if expected {
+                    assert!(!fixture.core.clear_badge_on_keystroke(id, token, key));
+                }
+            }
+        }
+    }
+    fixture.core.update_settings(|settings| settings.badge_reset = None);
+    assert!(
+        !fixture
+            .core
+            .clear_badge_on_keystroke(Uuid::new_v4(), TOKEN, StatusKeystroke::Other)
+    );
+}
+
+#[test]
+fn session_type_keeps_the_unseen_badge_in_each_mode() {
+    for mode in ["firstKey", "enter", "never"] {
+        let (mut fixture, id, _) = fixture_with_terminal();
+        fixture
+            .core
+            .update_settings(|settings| settings.badge_reset = Some(mode.into()));
+        fixture.store_mut().unwrap().session_mut(id).unwrap().unseen_count = 2;
+        for text in ["", "x", "true\n"] {
+            let response = fixture.session(SessionCmd::Type, Some(&wire(id)), args(|a| a.text = Some(text.into())));
+            assert!(response.ok, "{response:?}");
+            assert_eq!(fixture.store().session(id).unwrap().unseen_count, 2);
+        }
+    }
+}
+
+#[test]
+fn a_search_end_without_an_open_search_does_not_refocus_the_pane() {
+    let (mut fixture, id, _) = fixture_with_terminal();
+    fixture.core.clear_pane_focus_requests();
+    fixture.core.report_search(id, TOKEN, SearchReport::Ended);
+    assert!(!fixture.core.pane_focus_requested(id));
+    fixture.core.report_search(id, TOKEN, SearchReport::Started(None));
+    fixture.core.report_search(id, TOKEN, SearchReport::Ended);
+    assert!(fixture.core.pane_focus_requested(id));
+}
