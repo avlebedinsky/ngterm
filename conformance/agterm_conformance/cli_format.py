@@ -324,7 +324,10 @@ def event(item: Mapping[str, Any]) -> str:
     if kind == "pane.focused":
         return f"{clock} {kind} {name} {_or(payload.get('pane'), '')} pane-id={_or(payload.get('paneID'), '-')}"
     if kind in ("remote.opened", "remote.closed"):
-        return f"{clock} {kind} {name} host={_or(payload.get('host'), '')}"
+        return (
+            f"{clock} {kind} {name} host={_or(payload.get('host'), '')}"
+            f" remote-session-id={_or(payload.get('remoteSessionID'), '-')}"
+        )
     if kind == "app.launched":
         return f"{clock} {kind}"
     raise ValueError(f"no human form for event kind {kind!r}")

@@ -324,7 +324,7 @@ def utc() -> Iterator[None]:
         ({"kind": "pane.split", "payload": {"name": "one", "status": "on"}}, "01:02:03 pane.split one on"),
         ({"kind": "tree.changed", "window": WID, "payload": {}}, f"01:02:03 tree.changed {WID}"),
         ({"kind": "session.closed", "payload": {"name": ""}, "window": WID}, "01:02:03 session.closed "),
-        ({"kind": "remote.opened", "payload": {}}, "01:02:03 remote.opened - host="),
+        ({"kind": "remote.opened", "payload": {}}, "01:02:03 remote.opened - host= remote-session-id=-"),
         ({"kind": "app.launched", "payload": {}}, "01:02:03 app.launched"),
         (
             {"kind": "pane.focused", "payload": {"name": "one", "pane": "right", "paneID": "tok"}},
@@ -338,6 +338,22 @@ def utc() -> Iterator[None]:
 )
 def test_event_lines_carry_every_argument(event, expected):
     assert cli_format.event({"ts": 3723.9, **event}) == expected
+
+
+@pytest.mark.usefixtures("utc")
+@pytest.mark.parametrize("kind", ["remote.opened", "remote.closed"])
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({}, "-"),
+        ({"remoteSessionID": None}, "-"),
+        ({"remoteSessionID": ""}, ""),
+        ({"remoteSessionID": SID}, SID),
+    ],
+)
+def test_remote_event_lines_carry_origin_session_id(kind, payload, expected):
+    item = {"ts": 3723.9, "kind": kind, "payload": {"name": "far", "host": "box", **payload}}
+    assert cli_format.event(item) == f"01:02:03 {kind} far host=box remote-session-id={expected}"
 
 
 def test_normalize_replaces_ids_and_paths():
