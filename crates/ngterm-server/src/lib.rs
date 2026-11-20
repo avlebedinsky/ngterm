@@ -10,6 +10,8 @@
 //!   process that holds the pipe's name without the lock. A second instance on the same state directory never gets
 //!   here: it exits at launch on the state directory's lock (`ngterm_core::state_lock`), so this lock separates only
 //!   instances on different state directories that share one socket;
+//!   On Unix, the server unlocks before closure, so a child with a duplicate descriptor cannot retain the lock.
+//!   Windows handles are not inherited, so closure of the owner handle is enough;
 //! - each connection reads one line and writes one response within [`ConnectionDeadlines`]; a line that cannot be
 //!   read is answered `request too large or read failed`, one that does not decode `invalid request: <context>`;
 //! - the request hops to the main loop through [`ngterm_host::MainLoop`];
@@ -298,6 +300,10 @@ impl ControlServer {
             }
             endpoint::remove(&self.socket);
         }
+        #[cfg(unix)]
+        if let Ownership::Held { _lock: lock } = &self.ownership {
+            let _ = lock.unlock();
+        }
         if matches!(self.ownership, Ownership::Held { .. }) {
             self.ownership = Ownership::Unowned;
         }
@@ -307,5 +313,36 @@ impl ControlServer {
 impl Drop for ControlServer {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopping_or_dropping_the_server_frees_the_lock_while_a_duplicate_descriptor_stays_open() {
+        for stop in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let socket = tmp.path().join("ngterm.sock");
+            let mut first = ControlServer::new(&socket);
+            let Ownership::Held { _lock: lock } = &first.ownership else {
+                panic!("the first server must own the socket lock");
+            };
+            let duplicate = lock.try_clone().unwrap();
+            assert!(ControlServer::new(&socket).is_refused());
+
+            if stop {
+                first.stop();
+            } else {
+                drop(first);
+            }
+
+            let next = ControlServer::new(&socket);
+            assert!(!next.is_refused());
+            assert!(matches!(next.ownership, Ownership::Held { .. }));
+            drop(duplicate);
+            assert!(ControlServer::new(&socket).is_refused());
+        }
     }
 }

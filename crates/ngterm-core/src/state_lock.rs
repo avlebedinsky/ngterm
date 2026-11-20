@@ -9,6 +9,9 @@
 //! Windows), so no shell, session server or worker the owner spawns keeps the lock past its exec. The kernel releases
 //! it when the process ends, a crash or a kill included. The file is created, never truncated and never removed: a
 //! process locking a fresh inode would exclude nobody.
+//!
+//! On Unix, drop unlocks before the file closes, so a child with a duplicate descriptor cannot retain the lock.
+//! Windows handles are not inherited, so closure of the owner handle is enough.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::Path;
@@ -52,6 +55,14 @@ impl Outcome {
 #[derive(Debug)]
 pub struct StateDirectoryLock {
     _file: File,
+}
+
+#[cfg(unix)]
+impl Drop for StateDirectoryLock {
+    fn drop(&mut self) {
+        let Self { _file: file } = self;
+        let _ = file.unlock();
+    }
 }
 
 impl StateDirectoryLock {
@@ -121,47 +132,31 @@ mod tests {
         drop(first);
     }
 
-    /// Names the test a re-run copy of the test binary runs in place of re-running it: see [`in_a_fresh_process`].
-    const FRESH_PROCESS_ENV: &str = "NGTERM_CORE_TEST_FRESH_PROCESS";
+    #[cfg(unix)]
+    #[test]
+    fn releasing_the_lock_frees_it_while_a_duplicate_descriptor_stays_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = StateDirectoryLock::acquire(tmp.path()).claim(tmp.path()).unwrap();
+        let StateDirectoryLock { _file: file } = &first;
+        let duplicate = file.try_clone().unwrap();
+        assert!(matches!(
+            StateDirectoryLock::acquire(tmp.path()),
+            Outcome::HeldByAnother
+        ));
 
-    /// Runs `body` alone in a fresh copy of the test binary: in the copy [`FRESH_PROCESS_ENV`] names `test` to (its
-    /// full path, `module::tests::name`), it runs `body`; anywhere else it re-runs `test` alone in such a copy and
-    /// asserts the copy passed. A test that needs the lock gone the moment its handle drops runs this way: on Unix the
-    /// lock belongs to the open file description, and a child that another test of this multi-threaded binary spawns
-    /// holds a duplicate of every descriptor from its fork until its exec, so in the shared harness the lock can
-    /// outlive the handle for a moment. In the copy no other test runs, so nothing forks. As `ngterm-app`'s logging
-    /// tests do.
-    fn in_a_fresh_process(test: &str, body: impl FnOnce()) {
-        if std::env::var(FRESH_PROCESS_ENV).is_ok_and(|probed| probed == test) {
-            body();
-            return;
-        }
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([test, "--exact", "--test-threads=1", "--nocapture"])
-            .env(FRESH_PROCESS_ENV, test)
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success(),
-            "{test} in a fresh process: {:?}\n{stdout}{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        // the filter matched the test: a mistyped name would pass with no test run
-        assert!(stdout.contains("1 passed"), "{test} did not run:\n{stdout}");
+        drop(first);
+
+        let next = StateDirectoryLock::acquire(tmp.path()).claim(tmp.path()).unwrap();
+        drop(duplicate);
+        assert!(matches!(
+            StateDirectoryLock::acquire(tmp.path()),
+            Outcome::HeldByAnother
+        ));
+        drop(next);
     }
 
-    /// In a fresh process, as the reacquire needs the lock released when the first handle drops.
     #[test]
     fn releasing_the_lock_lets_the_next_acquire_own_it_and_keeps_the_file() {
-        in_a_fresh_process(
-            "state_lock::tests::releasing_the_lock_lets_the_next_acquire_own_it_and_keeps_the_file",
-            the_released_lock_is_owned_again,
-        );
-    }
-
-    fn the_released_lock_is_owned_again() {
         let tmp = tempfile::tempdir().unwrap();
         let first = owned(StateDirectoryLock::acquire(tmp.path()));
         assert!(first.is_some());
