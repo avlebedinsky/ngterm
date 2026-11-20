@@ -5,14 +5,16 @@
 //! from; installers run one after another, each after the previous one's alert closed, as upstream's modal alerts
 //! queue. The skill and hooks installs of one start share one login-shell probe (`OpenCode`'s version and directory,
 //! and `CODEX_HOME`), and the hooks install asks for the `OpenCode` version (upstream's chooser) when the probe could
-//! not tell; a second hooks start while one runs does nothing. A missing home, or a panic in the work,
-//! shows "Install Failed" rather than leaving the alert never to come.
+//! not tell. A skill or hooks start while another runs waits for its turn, in the order of the starts, then probes
+//! for itself (upstream's `AgentInstallers.run`). A missing home, or a panic in the work, shows "Install Failed"
+//! rather than leaving the alert never to come.
 //!
 //! The installers read the process's own environment ([`Environment::process`]: `$HOME`, the staged resources, the
 //! bundled `ngtermctl`, the variables the `OpenCode` probe runs with) unless a [`Source`] was installed (the tests' temp
 //! home).
 
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -24,8 +26,14 @@ use ngterm_app::integrations::{Environment, InstallError, cli, skill};
 use crate::modal::{AlertButton, AlertSpec, open_alert};
 
 thread_local! {
-    /// The hooks install in flight: a second start while it runs (its `OpenCode` probe, its chooser) does nothing.
-    static HOOKS_RUNNING: Cell<bool> = const { Cell::new(false) };
+    /// The skill and hooks starts' turns: one runs, alerts included, and the others wait in order.
+    static TURNS: RefCell<Turns> = RefCell::new(Turns::default());
+}
+
+#[derive(Default)]
+struct Turns {
+    running: bool,
+    waiters: VecDeque<async_channel::Sender<()>>,
 }
 
 /// The failure text of an install whose work panicked (the GTK build's).
@@ -89,25 +97,78 @@ pub fn run_hooks(window: AnyWindowHandle, cx: &mut App) {
 }
 
 /// The welcome's Install: the checked installers over `window`, the skill first, each after the previous one's alert.
-/// One login-shell probe serves both, as upstream's `AgentInstallers.run`.
+/// One login-shell probe serves both, and a start while another runs waits for its turn, as upstream's
+/// `AgentInstallers.run`.
 pub fn run_picked(window: AnyWindowHandle, skill: bool, hooks: bool, cx: &mut App) {
+    if !skill && !hooks {
+        return;
+    }
+    let mut turn = Turn::request();
     cx.spawn(async move |cx| {
-        let running = if hooks { HooksRunning::start() } else { None };
-        if hooks && running.is_none() {
-            tracing::debug!("agent status hooks install already running");
-        }
-        if !skill && running.is_none() {
-            return;
-        }
+        turn.wait().await;
         let probe = login_shell_probe(cx).await;
         if skill {
             install_skill(window, probe.clone(), cx).await;
         }
-        if let Some(running) = running {
-            install_hooks(window, probe, running, cx).await;
+        if hooks {
+            install_hooks(window, probe, cx).await;
         }
+        drop(turn);
     })
     .detach();
+}
+
+/// A start's place in [`TURNS`]: it holds the turn once [`Turn::wait`] returns, and passes it on however it ends, a
+/// dropped task included.
+struct Turn {
+    /// Set until the turn is this start's.
+    waiting: Option<async_channel::Receiver<()>>,
+}
+
+impl Turn {
+    /// The turn now when no start runs, else a place behind the others.
+    fn request() -> Self {
+        let waiting = TURNS.with_borrow_mut(|turns| {
+            if !turns.running {
+                turns.running = true;
+                return None;
+            }
+            let (sender, receiver) = async_channel::bounded(1);
+            turns.waiters.push_back(sender);
+            Some(receiver)
+        });
+        Self { waiting }
+    }
+
+    async fn wait(&mut self) {
+        if let Some(waiting) = &self.waiting {
+            let _ = waiting.recv().await;
+        }
+        self.waiting = None;
+    }
+
+    /// Gives the turn to the first waiter whose start still waits, or frees it.
+    fn pass_on() {
+        TURNS.with_borrow_mut(|turns| {
+            while let Some(next) = turns.waiters.pop_front() {
+                if next.try_send(()).is_ok() {
+                    return;
+                }
+            }
+            turns.running = false;
+        });
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        match self.waiting.take() {
+            None => Self::pass_on(),
+            // the turn came to a start that ended before it took it
+            Some(waiting) if waiting.try_recv().is_ok() => Self::pass_on(),
+            Some(_) => {}
+        }
+    }
 }
 
 /// Help's Install Command Line Tool…: links `ngtermctl` onto the `PATH`, its result over `window`.
@@ -174,26 +235,8 @@ async fn install_skill(window: AnyWindowHandle, probe: Option<Probe>, cx: &mut A
     }
 }
 
-/// Clears [`HOOKS_RUNNING`] however the install ends, a dropped task included.
-struct HooksRunning;
-
-impl HooksRunning {
-    /// `None` while another hooks install runs.
-    fn start() -> Option<Self> {
-        // never built while another runs: dropping one would clear the other's flag
-        if HOOKS_RUNNING.replace(true) { None } else { Some(Self) }
-    }
-}
-
-impl Drop for HooksRunning {
-    fn drop(&mut self) {
-        HOOKS_RUNNING.set(false);
-    }
-}
-
-async fn install_hooks(window: AnyWindowHandle, probe: Option<Probe>, running: HooksRunning, cx: &mut AsyncApp) {
+async fn install_hooks(window: AnyWindowHandle, probe: Option<Probe>, cx: &mut AsyncApp) {
     let outcome = hooks_outcome(window, probe, cx).await;
-    drop(running);
     match outcome {
         Ok(outcome) => {
             log_result(outcome.is_warning(), "agent status hooks", &outcome);

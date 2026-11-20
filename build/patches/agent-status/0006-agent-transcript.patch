@@ -198,10 +198,10 @@ index f4fbea1..be141e9 100644
    $payload = ''
    try {
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 1c6fedc..781c438 100755
+index 1c6fedc..ff7cdf9 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -81,12 +81,38 @@ for _ in 1 2 3 4 5 6 7 8; do
+@@ -81,12 +81,39 @@ for _ in 1 2 3 4 5 6 7 8; do
    p=$ppid
  done
 
@@ -215,9 +215,13 @@ index 1c6fedc..781c438 100755
 +}
 +
  # the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
- # next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
- # so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
- # the payload is tested, not the status.
+-# next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
+-# so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
+-# the payload is tested, not the status.
++# next visit while a background agent still runs. stdin is read only when it is not a terminal. Its first
++# 4096 characters wait 2 s at most, so an inherited open pipe that sends nothing never hangs a hook; a full
++# head or a chat record reads the rest to EOF, as its writer closes the pipe. bash 3.2's read returns 1 at
++# EOF and on timeout alike, so the payload is tested, not the status.
  payload=
 -[ -t 0 ] || IFS= read -r -d '' -t 2 payload || true
 +if [ ! -t 0 ]; then

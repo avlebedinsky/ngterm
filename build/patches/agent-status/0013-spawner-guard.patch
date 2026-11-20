@@ -67,7 +67,7 @@ index 24092db..5b45f24 100755
  # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
  state=$1
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 0beb2e4..2cb0394 100755
+index d6d4498..bc067e3 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
 @@ -103,6 +103,8 @@ report_agent() {
@@ -77,8 +77,8 @@ index 0beb2e4..2cb0394 100755
 +export NGTERM_STATUS_WALKED=1
 +
  # the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
- # next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
- # so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
+ # next visit while a background agent still runs. stdin is read only when it is not a terminal. Its first
+ # 4096 characters wait 2 s at most, so an inherited open pipe that sends nothing never hangs a hook; a full
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
 index 9603413..a92ea10 100755
 --- a/ngterm-codex-status.sh

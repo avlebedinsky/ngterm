@@ -106,9 +106,10 @@ report_agent() {
 export NGTERM_STATUS_WALKED=1
 
 # the completed->active rewrite drops the caller's flags: a carried --auto-reset would idle the row on the
-# next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
-# so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
-# the payload is tested, not the status.
+# next visit while a background agent still runs. stdin is read only when it is not a terminal. Its first
+# 4096 characters wait 2 s at most, so an inherited open pipe that sends nothing never hangs a hook; a full
+# head or a chat record reads the rest to EOF, as its writer closes the pipe. bash 3.2's read returns 1 at
+# EOF and on timeout alike, so the payload is tested, not the status.
 payload=
 if [ ! -t 0 ]; then
   IFS= read -r -d '' -n 4096 -t 2 payload || true

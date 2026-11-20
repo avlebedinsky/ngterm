@@ -675,27 +675,56 @@ fn codex_hooks_of_the_users_send_the_alert_to_the_docs(cx: &mut TestAppContext) 
     assert_eq!(home.read(".codex/config.toml"), own, "the user's config is untouched");
 }
 
+/// Upstream's `AgentInstallers.run`: a skill or hooks start while one runs, its alerts included, waits its turn.
 #[gpui_kit::test]
-fn a_second_hooks_start_while_one_asks_does_nothing(cx: &mut TestAppContext) {
+fn a_start_while_one_runs_waits_its_turn_in_order(cx: &mut TestAppContext) {
     let home = Home::new();
     home.mkdir(".config/opencode");
+    let skill_file = home.path(".claude/skills/ngterm/SKILL.md");
     let cx = host(cx);
     home.serve(cx);
 
     start(cx, run_hooks);
     assert_eq!(shown(cx).heading, "Choose OpenCode Version");
-    start(cx, run_hooks);
+    start(cx, run_skill);
     start(cx, run_picked_hooks);
+    assert_eq!(shown(cx).heading, "Choose OpenCode Version");
+    press(cx, "Skip OpenCode");
+    assert_eq!(shown(cx).heading, "Agent Status Hooks Installed");
+    assert!(!skill_file.exists(), "the skill waits for the hooks' alert");
+    press(cx, "OK");
+    assert_eq!(shown(cx).heading, "Agent Skill Installed");
+    assert!(skill_file.is_file());
+    press(cx, "OK");
+    assert_eq!(shown(cx).heading, "Choose OpenCode Version");
     press(cx, "Skip OpenCode");
     assert_eq!(shown(cx).heading, "Agent Status Hooks Installed");
     press(cx, "OK");
-    assert!(front(cx).is_none(), "no second chooser queued behind the first");
+    assert!(front(cx).is_none());
 
-    // once it ended a new start runs
-    start(cx, run_hooks);
-    assert_eq!(shown(cx).heading, "Choose OpenCode Version");
-    press(cx, "Skip OpenCode");
+    // with the queue empty a new start runs at once
+    start(cx, run_skill);
+    assert_eq!(shown(cx).heading, "Agent Skill Installed");
     press(cx, "OK");
+}
+
+#[test]
+fn a_turn_skips_the_starts_that_ended_and_frees_after_the_last() {
+    let first = Turn::request();
+    let second = Turn::request();
+    let ended_early = Turn::request();
+    let last = Turn::request();
+    assert!(first.waiting.is_none(), "the first start runs at once");
+    drop(ended_early);
+    drop(first);
+    // the turn came to `second`, which ended before it took it
+    drop(second);
+    assert!(
+        last.waiting.as_ref().is_some_and(|waiting| !waiting.is_empty()),
+        "the turn passed over the start that ended early"
+    );
+    drop(last);
+    assert!(Turn::request().waiting.is_none(), "the turn is free again");
 }
 
 fn run_picked_hooks(window: AnyWindowHandle, cx: &mut App) {
@@ -782,7 +811,7 @@ fn a_failed_or_panicking_install_says_so_and_frees_the_hooks(cx: &mut TestAppCon
             assert_eq!((alert.heading.as_str(), alert.body.as_str()), ("Install Failed", text));
             press(cx, "OK");
         }
-        // the failed hooks install no longer counts as running
+        // the failed install gave up its turn
         let home = Home::new();
         home.serve(cx);
         start(cx, run_hooks);

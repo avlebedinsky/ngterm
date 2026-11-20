@@ -14,7 +14,7 @@ index cccd891..e126a4b 100644
  function Test-Agent([string] $name) {
    if ($agentNames -contains $name) { return $true }
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 16d1152..0beb2e4 100755
+index 53bdd07..d6d4498 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
 @@ -49,7 +49,7 @@ status_wrapper=${NGTERM_STATUS_WRAPPER:-"$script_dir/ngterm-agent-status.sh"}
