@@ -67,7 +67,7 @@ index 24092db..5b45f24 100755
  # it. Pass it only when NGTERM_SOCKET is set (the app injects it alongside the id).
  state=$1
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 6126226..a17cd92 100755
+index 0beb2e4..2cb0394 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
 @@ -103,6 +103,8 @@ report_agent() {
@@ -80,7 +80,7 @@ index 6126226..a17cd92 100755
  # next visit while a background agent still runs. stdin is read only when it is not a terminal, and briefly,
  # so an inherited open pipe never hangs a hook; bash 3.2's read returns 1 at EOF and on timeout alike, so
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index 7dace96..0836a93 100755
+index 9603413..a92ea10 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -48,7 +48,8 @@ case "$action" in

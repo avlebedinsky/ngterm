@@ -100,7 +100,7 @@ index 0000000..24ef4ac
 +
 +exec "${NGTERMCTL:-ngtermctl}" "${args[@]}"
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index 79e7b37..f54e1bc 100755
+index c8328a7..45977cf 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -10,6 +10,16 @@
@@ -134,7 +134,7 @@ index 79e7b37..f54e1bc 100755
  esac
  
  # Pipes the payload to `ngtermctl agent hook codex <event>`; a subagent's event other than a permission prompt is left
-@@ -100,6 +117,18 @@ assistant_message_contains_question() {
+@@ -101,6 +118,18 @@ assistant_message_contains_question() {
    [[ "$prose" =~ $question ]]
  }
  
@@ -153,7 +153,7 @@ index 79e7b37..f54e1bc 100755
  read_visible_screen() {
    "${NGTERMCTL:-ngtermctl}" session text \
      --target "$NGTERM_SESSION_ID" \
-@@ -196,9 +225,14 @@ case "$action" in
+@@ -197,9 +226,14 @@ case "$action" in
      report_agent UserPromptSubmit
      report_status active --blink
      start_watcher
@@ -169,7 +169,7 @@ index 79e7b37..f54e1bc 100755
      ;;
    permission-request)
      # Candidate only: keep watching while Auto Review decides. The watcher reports blocked only if
-@@ -207,6 +241,11 @@ case "$action" in
+@@ -208,6 +242,11 @@ case "$action" in
      start_watcher
      ;;
    stop)

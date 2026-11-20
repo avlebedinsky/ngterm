@@ -617,6 +617,7 @@ fn opencode_v2(config: &Path) -> Probe {
     Probe {
         version: Some(Version::V2),
         v2_configuration_directory: Some(config.display().to_string()),
+        codex_home: None,
     }
 }
 
@@ -827,6 +828,7 @@ fn the_opencode_start_follows_the_probe_and_the_configs_present() {
     let probe = |version, directory: Option<&Path>| Probe {
         version,
         v2_configuration_directory: directory.map(|path| path.display().to_string()),
+        codex_home: None,
     };
     assert_eq!(
         hooks::opencode_start(&home.env.home, None),
@@ -870,6 +872,7 @@ fn opencode_v2_removes_the_managed_v1_plugin_and_keeps_a_users() {
     let probe = Probe {
         version: Some(Version::V2),
         v2_configuration_directory: Some(config.display().to_string()),
+        codex_home: None,
     };
     let legacy = config.join("plugins/ngterm-status.js");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
@@ -922,13 +925,15 @@ fn every_alert_line_stays_one_line_and_never_inlines_the_codex_block() {
         CodexResult::Unreadable,
         CodexResult::NoCodex,
     ] {
-        let text = hooks::codex_text(codex);
-        assert!(!text.contains('\n') && !text.contains("[[hooks."), "{codex:?}");
-        assert_eq!(
-            codex.needs_manual_merge(),
-            text.contains("Add Codex hooks by hand"),
-            "{codex:?}"
-        );
+        for codex_home in [None, Some(Path::new("/custom codex"))] {
+            let text = hooks::codex_text(codex, codex_home);
+            assert!(!text.contains('\n') && !text.contains("[[hooks."), "{codex:?}");
+            assert_eq!(
+                codex.needs_manual_merge(),
+                text.contains("Add Codex hooks by hand"),
+                "{codex:?}"
+            );
+        }
     }
     let path = PathBuf::from("/custom/opencode/plugins/v.js");
     for version in Version::ALL {
@@ -975,7 +980,7 @@ fn the_skill_installs_for_each_agent_and_refuses_a_users_skill() {
     home.mkdir(".claude");
     home.write(".codex/skills/ngterm/SKILL.md", "---\nname: ngterm\n---\nmine\n");
 
-    let plan = skill::plan(&home.env).unwrap();
+    let plan = skill::plan(&home.env, None).unwrap();
     assert!(!home.path(".claude/skills").exists(), "planning writes nothing");
     assert!(matches!(
         &plan.targets[0],
@@ -1011,7 +1016,7 @@ fn an_agterm_skill_is_left_alone() {
     let home = Home::new();
     let agterms = "---\nname: agterm\n---\n<!-- agterm-skill -->\nagterm's\n";
     home.write(".claude/skills/agterm/SKILL.md", agterms);
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert_eq!(report.installed, [("Claude Code", home.path(".claude/skills/ngterm"))]);
     assert_eq!(home.read(".claude/skills/agterm/SKILL.md"), agterms);
 }
@@ -1023,7 +1028,7 @@ fn a_second_skill_install_replaces_its_own_copy() {
     home.write(".claude/skills/ngterm/stale.md", "from an older build");
     home.write(".claude/skills/ngterm/SKILL.md", "<!-- ngterm-skill -->\nold\n");
 
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert_eq!(report.installed.len(), 1);
     assert!(!report.fresh_skills_dir);
     assert!(
@@ -1031,7 +1036,7 @@ fn a_second_skill_install_replaces_its_own_copy() {
         "an ngterm install is replaced whole"
     );
     let first = home.snapshot();
-    let _ = skill::apply(&skill::plan(&home.env).unwrap());
+    let _ = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert_eq!(home.snapshot(), first);
 }
 
@@ -1040,7 +1045,7 @@ fn the_skill_installs_idempotently_for_omp_and_preserves_a_users_skill() {
     let home = Home::new();
     home.mkdir(".omp/agent");
 
-    let plan = skill::plan(&home.env).unwrap();
+    let plan = skill::plan(&home.env, None).unwrap();
     assert!(matches!(
         &plan.targets[0],
         skill::TargetPlan::Install { target, .. }
@@ -1050,7 +1055,7 @@ fn the_skill_installs_idempotently_for_omp_and_preserves_a_users_skill() {
     let report = skill::apply(&plan);
     assert_eq!(report.installed, [("Oh My Pi", home.path(".omp/agent/skills/ngterm"))]);
     let first = home.snapshot();
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert_eq!(report.installed, [("Oh My Pi", home.path(".omp/agent/skills/ngterm"))]);
     assert_eq!(home.snapshot(), first);
 
@@ -1058,7 +1063,7 @@ fn the_skill_installs_idempotently_for_omp_and_preserves_a_users_skill() {
     user_owned.mkdir(".omp/agent");
     let contents = "---\nname: ngterm\n---\nmy skill\n";
     user_owned.write(".omp/agent/skills/ngterm/SKILL.md", contents);
-    let report = skill::apply(&skill::plan(&user_owned.env).unwrap());
+    let report = skill::apply(&skill::plan(&user_owned.env, None).unwrap());
     assert!(report.installed.is_empty());
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(user_owned.read(".omp/agent/skills/ngterm/SKILL.md"), contents);
@@ -1070,7 +1075,7 @@ fn a_symlink_at_the_skill_destination_is_the_users() {
     let home = Home::new();
     home.mkdir(".claude/skills");
     symlink(home.path("nowhere"), home.path(".claude/skills/ngterm")).unwrap();
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(report.installed.is_empty());
     assert!(
         fs::symlink_metadata(home.path(".claude/skills/ngterm")).is_ok(),

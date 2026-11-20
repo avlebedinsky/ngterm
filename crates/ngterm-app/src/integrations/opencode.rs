@@ -1,18 +1,18 @@
 //! `OpenCode`'s status plugins (upstream's `AgentHooksInstall.OpenCode` and `OpenCodeEnvironmentProbe.swift`): the
-//! versioned paths and ownership policy, and the login-shell probe that finds the installed major version and the
-//! configuration directory `OpenCode` 2 reads.
+//! versioned paths and ownership policy, and the login-shell probe that finds the installed major version, the
+//! configuration directory `OpenCode` 2 reads, and the Codex root that `CODEX_HOME` selects.
 //!
 //! On Windows there is no login shell to ask: an app there starts with the user's whole environment (Explorer's, from
 //! the registry), which is what upstream's macOS probe digs out of the shell. The probe runs `opencode --version`
 //! through `cmd.exe` (which finds npm's `opencode.cmd` shim through `PATHEXT`, as `std` does not) and reads
-//! `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` and the profile folder from that environment; `OpenCode` itself looks there
-//! (`xdg-basedir`: `XDG_CONFIG_HOME`, else `~\.config`).
+//! `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME`, `CODEX_HOME` and the profile folder from that environment; `OpenCode`
+//! itself looks there (`xdg-basedir`: `XDG_CONFIG_HOME`, else `~\.config`).
 
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// A supported `OpenCode` major version, each with its own plugin entry point.
@@ -176,39 +176,23 @@ pub(super) fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-#[cfg(not(windows))]
-pub(super) fn codex_home(environment: &HashMap<String, String>) -> Option<PathBuf> {
-    let shell = environment.get("SHELL").filter(|shell| !shell.is_empty())?;
-    let marker = format!("ngterm-codex-home-{}", uuid::Uuid::new_v4());
-    let command = format!("printf '\\n{marker}\\n%s\\000%s\\000' \"$PWD\" \"${{CODEX_HOME-}}\"");
-    let hop = format!("exec /bin/sh -c {}", super::hooks_config::shell_quote(&command));
-    let vars = environment
-        .iter()
-        .filter(|(key, _)| !key.starts_with("NGTERM_"))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    let (stdout, _) = run_with_timeout(shell, &["-ilc", &hop], &vars, PROBE_TIMEOUT)?;
-    let (_, fields) = stdout.split_once(&format!("\n{marker}\n"))?;
-    let mut fields = fields.split('\0');
-    let cwd = Path::new(fields.next()?);
-    super::hooks_config::codex_home(fields.next(), Some(cwd))
-}
-
-/// What the login-shell probe found: the major version `opencode --version` reported, and the configuration directory
-/// `OpenCode` 2 reads there.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What the login-shell probe found: the major version `opencode --version` reported, the configuration directory
+/// `OpenCode` 2 reads there, and the custom Codex root that `CODEX_HOME` selects there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Probe {
     pub version: Option<Version>,
     pub v2_configuration_directory: Option<String>,
+    pub codex_home: Option<PathBuf>,
 }
 
 /// How long the probe waits for the login shell.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Runs `opencode --version` in the user's interactive login shell (`$SHELL`, else `/bin/sh`), with
-/// `NGTERM_SESSION_ID` dropped, reading the exported `HOME`, `PWD`, `OPENCODE_CONFIG_DIR` and `XDG_CONFIG_HOME` through
-/// a POSIX hop first, so a version that fails still reports where `OpenCode` 2 would look. `None` when the shell could
-/// not run or printed nothing past its startup noise (upstream's `OpenCodeEnvironmentProbe.detect`).
+/// `NGTERM_SESSION_ID` dropped, reading the exported `HOME`, `PWD`, `OPENCODE_CONFIG_DIR`, `XDG_CONFIG_HOME` and
+/// `CODEX_HOME` through a POSIX hop first, so a version that fails still reports where `OpenCode` 2 would look. `None`
+/// when the shell could not run or printed nothing past its startup noise (upstream's
+/// `OpenCodeEnvironmentProbe.detect`).
 #[must_use]
 pub fn detect<H: BuildHasher>(environment: &HashMap<String, String, H>, fallback_home: &str) -> Option<Probe> {
     detect_with_timeout(environment, fallback_home, PROBE_TIMEOUT)
@@ -240,13 +224,13 @@ fn probe(environment: &HashMap<String, String>, fallback_home: &str, timeout: Du
     let marker = format!("ngterm-opencode-version-{}", uuid::Uuid::new_v4());
     // `printf` is the POSIX shell's builtin, not upstream's `/usr/bin/printf`, which NixOS and Guix do not have
     let command = format!(
-        "printf '\\n{marker}\\n%s\\000%s\\000%s\\000%s\\000%s\\000' \"$HOME\" \"$PWD\" \
-         \"${{OPENCODE_CONFIG_DIR+x}}\" \"${{OPENCODE_CONFIG_DIR-}}\" \"${{XDG_CONFIG_HOME-}}\"; \
+        "printf '\\n{marker}\\n%s\\000%s\\000%s\\000%s\\000%s\\000%s\\000' \"$HOME\" \"$PWD\" \
+         \"${{OPENCODE_CONFIG_DIR+x}}\" \"${{OPENCODE_CONFIG_DIR-}}\" \"${{XDG_CONFIG_HOME-}}\" \"${{CODEX_HOME-}}\"; \
          exec /usr/bin/env opencode --version"
     );
     let hop = format!("exec /bin/sh -c {}", super::hooks_config::shell_quote(&command));
-    let (stdout, succeeded) = run_with_timeout(&shell, &["-ilc", &hop], environment, timeout)?;
-    parse_probe(&stdout, &marker, succeeded, fallback_home)
+    let (stdout, status) = run_with_timeout(&shell, &["-ilc", &hop], environment, timeout)?;
+    parse_probe(&stdout, &marker, status, fallback_home)
 }
 
 /// The probe on Windows: `opencode --version` through `cmd.exe`, the directories from `environment` itself (its names
@@ -259,54 +243,61 @@ fn probe(environment: &HashMap<String, String>, fallback_home: &str, timeout: Du
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
     };
-    let (stdout, succeeded) =
-        run_with_timeout("cmd.exe", &["/D", "/C", "opencode", "--version"], environment, timeout)?;
+    let (stdout, status) = run_with_timeout("cmd.exe", &["/D", "/C", "opencode", "--version"], environment, timeout)?;
     let home = var("USERPROFILE")
         .filter(|home| !home.is_empty())
         .unwrap_or(fallback_home);
-    let working_directory = std::env::current_dir()
-        .ok()
-        .map(|dir| dir.to_string_lossy().into_owned());
+    let current_dir = std::env::current_dir().ok();
+    let working_directory = current_dir.as_ref().map(|dir| dir.to_string_lossy().into_owned());
     Some(Probe {
-        version: succeeded.then(|| Version::from_version_output(&stdout)).flatten(),
+        version: status
+            .is_some_and(|status| status.success())
+            .then(|| Version::from_version_output(&stdout))
+            .flatten(),
         v2_configuration_directory: configuration_directory(
             home,
             var("OPENCODE_CONFIG_DIR"),
             var("XDG_CONFIG_HOME"),
             working_directory.as_deref(),
         ),
+        codex_home: super::hooks_config::codex_home(var("CODEX_HOME"), current_dir.as_deref()),
     })
 }
 
 /// The probe's fields past the marker: home, working directory, whether `OPENCODE_CONFIG_DIR` is set, its value,
-/// `XDG_CONFIG_HOME`, then the version output.
+/// `XDG_CONFIG_HOME`, `CODEX_HOME`, then the version output. `status` is `None` when the shell timed out, which leaves
+/// out the Codex root, as upstream does.
 #[cfg(not(windows))]
-fn parse_probe(stdout: &str, marker: &str, succeeded: bool, fallback_home: &str) -> Option<Probe> {
+fn parse_probe(stdout: &str, marker: &str, status: Option<ExitStatus>, fallback_home: &str) -> Option<Probe> {
     let (_, after) = stdout.split_once(&format!("\n{marker}\n"))?;
-    let fields: Vec<&str> = after.splitn(6, '\0').collect();
-    let [home, pwd, config_set, config, xdg, version] = fields.as_slice() else {
+    let fields: Vec<&str> = after.splitn(7, '\0').collect();
+    let [home, pwd, config_set, config, xdg, codex_home, version] = fields.as_slice() else {
         return None;
     };
     let home = if home.is_empty() { fallback_home } else { home };
     Some(Probe {
-        version: succeeded.then(|| Version::from_version_output(version)).flatten(),
+        version: status
+            .is_some_and(|status| status.success())
+            .then(|| Version::from_version_output(version))
+            .flatten(),
         v2_configuration_directory: configuration_directory(
             home,
             (!config_set.is_empty()).then_some(*config),
             Some(xdg),
             Some(pwd),
         ),
+        codex_home: status.and_then(|_| super::hooks_config::codex_home(Some(codex_home), Some(Path::new(pwd)))),
     })
 }
 
 /// Runs `program args` with `environment`, stdin closed, stderr dropped, killing it past `timeout`: its
-/// stdout and whether it exited 0 in time; `None` when it could not start.
+/// stdout and its exit status (`None` when it timed out); `None` when it could not start.
 fn run_with_timeout(
     program: &str,
     args: &[&str],
     environment: &HashMap<String, String>,
     timeout: Duration,
-) -> Option<(String, bool)> {
+) -> Option<(String, Option<ExitStatus>)> {
     let mut command = Command::new(program);
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(
@@ -342,10 +333,7 @@ fn run_with_timeout(
     };
     // a grandchild holding the pipe open past the kill would block the read: give it a bounded wait
     let bytes = join_with_deadline(reader, Instant::now() + Duration::from_millis(500)).unwrap_or_default();
-    Some((
-        String::from_utf8_lossy(&bytes).into_owned(),
-        status.is_some_and(|status| status.success()),
-    ))
+    Some((String::from_utf8_lossy(&bytes).into_owned(), status))
 }
 
 fn join_with_deadline(handle: std::thread::JoinHandle<Vec<u8>>, deadline: Instant) -> Option<Vec<u8>> {
@@ -369,24 +357,6 @@ mod tests {
 
     fn detect_fixture(environment: &HashMap<String, String>, home: &str) -> Option<Probe> {
         detect_with_timeout(environment, home, crate::test_shell::CHILD_DEADLINE)
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn codex_home_reads_the_login_shell_without_the_live_pane_environment() {
-        let dir = tempfile::tempdir().unwrap();
-        let shell = dir.path().join("shell");
-        ngterm_host::fakes::write_executable(&shell,
-            "#!/bin/sh\n[ -z \"${NGTERM_SOCKET-}\" ] || exit 9\nexport CODEX_HOME='./old/../custom codex'\ncd \"$HOME\"\nexec /bin/sh -c \"$2\"\n").unwrap();
-        let vars = HashMap::from([
-            ("SHELL".to_owned(), shell.to_string_lossy().into_owned()),
-            ("HOME".to_owned(), dir.path().to_string_lossy().into_owned()),
-            ("NGTERM_SOCKET".to_owned(), "/nonexistent/test.sock".to_owned()),
-        ]);
-        assert_eq!(codex_home(&vars), Some(dir.path().join("custom codex")));
-        ngterm_host::fakes::write_executable(&shell, "#!/bin/sh\nprintf 'no marker'\n").unwrap();
-        assert_eq!(codex_home(&vars), None);
-        assert_eq!(codex_home(&HashMap::new()), None);
     }
 
     #[test]
@@ -593,6 +563,67 @@ mod tests {
             detect_fixture(&env, "/fallback").unwrap().version,
             None,
             "a failing run is no version"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_reads_codex_home_against_the_shells_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = fake_environment(dir.path(), "#!/bin/sh\nexit 1\n");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        write_executable(
+            &dir.path().join("shell"),
+            "#!/bin/sh\nexport CODEX_HOME='./old/../custom codex'\ncd \"$HOME\"\nexec /bin/sh -c \"$2\"\n",
+        )
+        .unwrap();
+        let probe = detect_fixture(&env, "/fallback").unwrap();
+        assert_eq!(probe.version, None);
+        assert_eq!(probe.codex_home, Some(home.join("custom codex")));
+
+        write_executable(
+            &dir.path().join("shell"),
+            "#!/bin/sh\nexport CODEX_HOME=\nexec /bin/sh -c \"$2\"\n",
+        )
+        .unwrap();
+        assert_eq!(detect_fixture(&env, "/fallback").unwrap().codex_home, None);
+    }
+
+    /// Without `SHELL` the probe still asks a login shell, `/bin/sh`, which reads the profile that exports
+    /// `CODEX_HOME`.
+    #[cfg(unix)]
+    #[test]
+    fn without_shell_the_probe_reads_codex_home_from_the_login_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom = dir.path().join("custom codex");
+        fs::write(
+            dir.path().join(".profile"),
+            format!("export CODEX_HOME='{}'\n", custom.display()),
+        )
+        .unwrap();
+        let env = HashMap::from([
+            ("HOME".to_owned(), dir.path().display().to_string()),
+            ("PATH".to_owned(), "/usr/bin:/bin".to_owned()),
+        ]);
+        let probe = detect_fixture(&env, "/fallback").expect("the /bin/sh probe ran");
+        assert_eq!(probe.codex_home, Some(custom));
+    }
+
+    /// A shell that timed out gives no Codex root, as upstream's probe; the `OpenCode` directory stays.
+    #[cfg(unix)]
+    #[test]
+    fn a_timed_out_probe_drops_codex_home() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let stdout = "noise\nmark\n/home/u\0/work\0\0\0\0codex\0";
+        let finished = parse_probe(stdout, "mark", Some(ExitStatus::from_raw(1 << 8)), "/fallback").unwrap();
+        assert_eq!(finished.codex_home, Some(PathBuf::from("/work/codex")));
+        let timed_out = parse_probe(stdout, "mark", None, "/fallback").unwrap();
+        assert_eq!(timed_out.codex_home, None);
+        assert_eq!(
+            timed_out.v2_configuration_directory,
+            finished.v2_configuration_directory
         );
     }
 

@@ -158,7 +158,7 @@ impl Home {
 
     /// The skill planner's read-back: what a next install would do at each target.
     fn skill_status(&self) -> Vec<TargetPlan> {
-        skill::plan(&self.env()).unwrap().targets
+        skill::plan(&self.env(), None).unwrap().targets
     }
 
     /// The command line tool planner's read-back of the link (Unix: Windows links nothing).
@@ -700,6 +700,51 @@ fn a_second_hooks_start_while_one_asks_does_nothing(cx: &mut TestAppContext) {
 
 fn run_picked_hooks(window: AnyWindowHandle, cx: &mut App) {
     run_picked(window, false, true, cx);
+}
+
+/// The welcome's Install of both asks the login shell once, and both installers use the Codex root it exports.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn both_installers_of_one_start_share_the_login_shells_codex_home(cx: &mut TestAppContext) {
+    let home = Home::new();
+    home.mkdir(".claude");
+    home.mkdir("custom codex");
+    let probes = home.dir.path().join("probes");
+    write_executable(
+        &home.dir.path().join("bin/login-shell"),
+        "#!/bin/sh\necho probe >> \"$HOME/../probes\"\nexport CODEX_HOME=\"$HOME/custom codex\"\nexec /bin/sh -c \"$2\"\n",
+    )
+    .unwrap();
+    let custom = home.path("custom codex");
+    let cx = host(cx);
+    home.serve(cx);
+
+    cx.update(|window, cx| run_picked(window.window_handle(), true, true, cx));
+    cx.run_until_parked();
+    let alert = shown(cx);
+    assert_eq!(alert.heading, "Agent Skill Installed");
+    says(
+        &alert,
+        &format!("  • Codex: {}", custom.join("skills/ngterm").display()),
+    );
+    press(cx, "OK");
+    let alert = shown(cx);
+    says(
+        &alert,
+        &format!(
+            "Codex lifecycle hooks merged into {}/config.toml",
+            hooks::shell_path(&custom)
+        ),
+    );
+    press(cx, "OK");
+    assert!(custom.join("skills/ngterm/SKILL.md").is_file());
+    assert!(custom.join("config.toml").is_file());
+    assert!(!home.path(".codex").exists(), "the default root stays absent");
+    assert_eq!(
+        fs::read_to_string(&probes).unwrap(),
+        "probe\n",
+        "one probe for both installers"
+    );
 }
 
 #[gpui_kit::test]

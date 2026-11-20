@@ -99,15 +99,15 @@ fn install_agent_integrations(version: Option<opencode::Version>) -> Result<Inst
         .ok_or_else(|| InstallError("No home directory was found to install into.".to_owned()))?;
     // The login-shell probe must not inherit the caller's terminal identity or reach its control socket.
     env.vars.retain(|key, _| !key.starts_with("NGTERM_"));
+    let probe = opencode::detect(&env.vars, &env.home_str());
     let mut results = Vec::new();
-    match skill::plan(&env) {
+    match skill::plan(&env, probe.as_ref()) {
         Ok(plan) => {
             let report = skill::apply(&plan);
             results.push((report.is_warning(), report.title(), report.text()));
         }
         Err(error) => results.push((true, "Skill Not Installed", error.0)),
     }
-    let probe = opencode::detect(&env.vars, &env.home_str());
     let start = match version {
         Some(version) => OpenCodeStart::Install(version),
         None => hooks::opencode_start(&env.home, probe.as_ref()),

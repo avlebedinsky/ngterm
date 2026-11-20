@@ -14,10 +14,10 @@ index cccd891..e126a4b 100644
  function Test-Agent([string] $name) {
    if ($agentNames -contains $name) { return $true }
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index ba6bfe0..0d2551b 100755
+index 16d1152..0beb2e4 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -66,7 +66,7 @@ status_wrapper=${NGTERM_STATUS_WRAPPER:-"$script_dir/ngterm-agent-status.sh"}
+@@ -49,7 +49,7 @@ status_wrapper=${NGTERM_STATUS_WRAPPER:-"$script_dir/ngterm-agent-status.sh"}
  # so an override can be valid there and invalid here. `[[` then returns 2, which lands on "not an
  # agent" and keeps the walk fail-open; the redirect swallows bash's complaint about the expression.
  is_agent() {

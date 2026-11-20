@@ -1,7 +1,7 @@
 Preserve ngswap Claude accounts in POSIX restore pins. The optional ngswap recipe prepares shell-quoted commands, uses stable per-pane resume/fresh slots, and fails without replacing the pin. Windows retains its ordinary restore form. Applied after 0007-agent-mail.patch.
 
 diff --git a/ngterm-agent-restore.sh b/ngterm-agent-restore.sh
-index 9827f7ab..c9c3835a 100755
+index 9827f7a..c9c3835 100755
 --- a/ngterm-agent-restore.sh
 +++ b/ngterm-agent-restore.sh
 @@ -14,13 +14,19 @@

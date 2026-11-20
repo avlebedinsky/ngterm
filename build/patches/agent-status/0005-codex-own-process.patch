@@ -3,7 +3,7 @@ starts hooks with the environment of the pane that started it, so every pane's s
 documents as a limitation (umputun/agterm#711). Applied after 0004-windows-forms.patch.
 
 diff --git a/shell/integration.fish b/shell/integration.fish
-index 41e2cf61..b062e1a6 100644
+index 41e2cf6..b062e1a 100644
 --- a/shell/integration.fish
 +++ b/shell/integration.fish
 @@ -34,6 +34,43 @@ else
@@ -51,7 +51,7 @@ index 41e2cf61..b062e1a6 100644
      if string match -r -q $NGTERM_AGENT_RE $argv[1]
          $NGTERM_AGENT_BIN active --blink
 diff --git a/shell/integration.sh b/shell/integration.sh
-index a977435d..f5876daf 100755
+index a977435..f5876da 100755
 --- a/shell/integration.sh
 +++ b/shell/integration.sh
 @@ -28,6 +28,40 @@ fi

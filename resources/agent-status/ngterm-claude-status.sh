@@ -123,8 +123,8 @@ if [ ! -t 0 ]; then
       report_agent "$event"
     fi
   elif [ "${#payload}" -eq 4096 ]; then
-    rest=
-    IFS= read -r -d '' -t 2 rest || true
+    # a full head is a payload whose writer closes the pipe, so cat ends, where read takes 2 s for 150 KB
+    rest=$(cat)
     payload=$payload$rest
   fi
 fi

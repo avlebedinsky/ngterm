@@ -148,7 +148,7 @@ diff --git a/agterm-codex-status.sh b/ngterm-codex-status.sh
 similarity index 87%
 rename from agterm-codex-status.sh
 rename to ngterm-codex-status.sh
-index 781439e..e2466e1 100755
+index e5d2b03..8508911 100755
 --- a/agterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -1,26 +1,26 @@
@@ -185,7 +185,7 @@ index 781439e..e2466e1 100755
  
  report_status() {
    "$status_wrapper" "$@" >/dev/null 2>&1 || true
-@@ -75,21 +75,21 @@ assistant_message_contains_question() {
+@@ -76,21 +76,21 @@ assistant_message_contains_question() {
  }
  
  read_visible_screen() {
@@ -214,7 +214,7 @@ index 781439e..e2466e1 100755
  }
  
  stop_watcher() {
-@@ -108,8 +108,8 @@ watch_for_blocker() {
+@@ -109,8 +109,8 @@ watch_for_blocker() {
    local token=${1:-} token_file=${2:-}
    [ -n "$token" ] && [ -n "$token_file" ] || return 0
  

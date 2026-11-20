@@ -1,6 +1,7 @@
 //! The agent skill installer (upstream's `SkillInstall.swift` and `SkillInstaller.swift`): the bundled skill into the
 //! skills directory of every coding agent present: Claude Code (`~/.claude/skills/ngterm`), Codex
-//! (`$CODEX_HOME/skills/ngterm`, default `~/.codex/skills/ngterm`) and Oh My Pi (`~/.omp/agent/skills/ngterm`), Claude Code's when none is present.
+//! (`$CODEX_HOME/skills/ngterm`, default `~/.codex/skills/ngterm`) and Oh My Pi (`~/.omp/agent/skills/ngterm`), Claude
+//! Code's when none is present.
 //! Idempotent, and a same-named skill the user wrote (`SKILL.md` absent, unreadable or unmarked) is never overwritten.
 //!
 //! The skill is named `ngterm`, not upstream's `agterm`: upstream installs its own `agterm` skill into the same agents'
@@ -13,6 +14,7 @@ use std::path::{Path, PathBuf};
 use ngterm_core::paths::join_relative;
 
 use super::files;
+use super::opencode::Probe;
 use super::{Environment, InstallError};
 
 /// The skill's directory name under each agent's `skills/`, and its frontmatter `name`.
@@ -39,7 +41,7 @@ pub struct Target {
 pub enum Agent {
     /// Claude Code, configured under `~/.claude`.
     Claude,
-    /// Codex, configured under `~/.codex`.
+    /// Codex, configured under `$CODEX_HOME` (default `~/.codex`).
     Codex,
     /// Oh My Pi, configured under `~/.omp/agent`.
     Omp,
@@ -117,19 +119,20 @@ pub struct SkillPlan {
     pub codex_home: Option<PathBuf>,
 }
 
-/// Plans the install over `env`'s home, without writing.
+/// Plans the install over `env`'s home, without writing; the Codex root is `CODEX_HOME` from the process, else from the
+/// login-shell `probe`.
 ///
 /// # Errors
 ///
 /// [`InstallError`] when the build bundles no skill.
-pub fn plan(env: &Environment) -> Result<SkillPlan, InstallError> {
+pub fn plan(env: &Environment, probe: Option<&Probe>) -> Result<SkillPlan, InstallError> {
     let source = env
         .skill
         .clone()
         .filter(|source| source.is_dir())
         .ok_or_else(|| InstallError("The agent skill is not bundled in this build.".to_owned()))?;
     let home = &env.home;
-    let codex_home = env.codex_home();
+    let codex_home = env.codex_home(probe);
     let codex_directory = codex_home.clone().unwrap_or_else(|| home.join(".codex"));
     let agents = [Agent::Claude, Agent::Codex, Agent::Omp]
         .into_iter()

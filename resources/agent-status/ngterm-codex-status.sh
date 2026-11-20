@@ -283,8 +283,9 @@ report_agent() {
     "${pane_args[@]+"${pane_args[@]}"}" >/dev/null 2>&1 || true
 }
 
-# macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so the platform picks the
-# tool, and the server installer requires jq there.
+# macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so Linux reads the field with
+# python3, else jq. With neither, the field is absent and the event is reported. awk, sed, tr and tail come from PATH,
+# because NixOS and Guix have no /usr/bin copies.
 # json_string prints a top-level string field of the JSON on stdin and fails when it is absent or not a string.
 json_string() {
   if [[ $OSTYPE == darwin* ]]; then

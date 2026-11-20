@@ -1,6 +1,8 @@
 Keep the chat hooks of ngterm. Send the same payload to the chat record and the status rules.
 
-The prompt reader keeps its fast path for large payloads. Restore hooks keep their guards and UTF-8 payloads.
+The prompt reader keeps its fast path for large payloads. A payload longer than its 4096-byte head is read to EOF
+with cat, where upstream's one timed read stops after about 150 KB in 2 s. Restore hooks keep their guards and UTF-8
+payloads.
 
 diff --git a/ngterm-agent-restore.ps1 b/ngterm-agent-restore.ps1
 index 7ec08ad..6a7947b 100644
@@ -196,7 +198,7 @@ index f4fbea1..be141e9 100644
    $payload = ''
    try {
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 1c6fedc..a4748d3 100755
+index 1c6fedc..781c438 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
 @@ -81,12 +81,38 @@ for _ in 1 2 3 4 5 6 7 8; do
@@ -231,8 +233,8 @@ index 1c6fedc..a4748d3 100755
 +      report_agent "$event"
 +    fi
 +  elif [ "${#payload}" -eq 4096 ]; then
-+    rest=
-+    IFS= read -r -d '' -t 2 rest || true
++    # a full head is a payload whose writer closes the pipe, so cat ends, where read takes 2 s for 150 KB
++    rest=$(cat)
 +    payload=$payload$rest
 +  fi
 +fi
@@ -240,7 +242,7 @@ index 1c6fedc..a4748d3 100755
  field() { # key path value, array length for an array, empty when absent or unparseable
    if [[ $OSTYPE == darwin* ]] && [ -x /usr/bin/plutil ]; then
 diff --git a/ngterm-codex-status.sh b/ngterm-codex-status.sh
-index e2466e1..79e7b37 100755
+index 8508911..c8328a7 100755
 --- a/ngterm-codex-status.sh
 +++ b/ngterm-codex-status.sh
 @@ -5,6 +5,11 @@
@@ -280,10 +282,10 @@ index e2466e1..79e7b37 100755
 +    "${pane_args[@]+"${pane_args[@]}"}" >/dev/null 2>&1 || true
 +}
 +
- # macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so the platform picks the
- # tool, and the server installer requires jq there.
- # json_string prints a top-level string field of the JSON on stdin and fails when it is absent or not a string.
-@@ -162,10 +188,12 @@ esac
+ # macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so Linux reads the field with
+ # python3, else jq. With neither, the field is absent and the event is reported. awk, sed, tr and tail come from PATH,
+ # because NixOS and Guix have no /usr/bin copies.
+@@ -163,10 +189,12 @@ esac
 
  case "$action" in
    session-start)
@@ -296,7 +298,7 @@ index e2466e1..79e7b37 100755
      report_status active --blink
      start_watcher
      ;;
-@@ -175,6 +203,7 @@ case "$action" in
+@@ -176,6 +204,7 @@ case "$action" in
    permission-request)
      # Candidate only: keep watching while Auto Review decides. The watcher reports blocked only if
      # Codex subsequently leaves a real approval prompt visible for the user.

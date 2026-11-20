@@ -20,8 +20,9 @@
 //!   Codex's ephemeral memory-consolidation thread, whose events it ignores) with `python3` or `jq` where macOS has
 //!   `plutil`, and with none of the three reports such an event as any other;
 //! - the Claude adapter also keeps a `Stop` active for a background shell task. Upstream does this for subagents
-//!   and workflows only. The installer adds `SessionEnd` → `completed --auto-reset`, so the status ends with the agent
-//!   ([`hooks_config`]);
+//!   and workflows only. It reads a payload longer than 4096 bytes to the end with `cat`, where upstream's one timed
+//!   `read` can cut it (`build/patches/agent-status/0006-agent-transcript.patch`). The installer adds `SessionEnd` →
+//!   `completed --auto-reset`, so the status ends with the agent ([`hooks_config`]);
 //! - the package adds a restore adapter, `ngterm-agent-restore.sh`, which upstream has no counterpart for (it ships the
 //!   idea as its `claude-session-resume` cookbook recipe and the `SessionStart`-pin pattern in its skill): the
 //!   installer wires it to Claude Code's `SessionStart` and `SessionEnd` only (Codex gets no restore hooks), and it
@@ -169,9 +170,9 @@ impl Environment {
         staged_resource_dir(exe_dir.as_deref(), "agent-status").is_some()
     }
 
-    /// The custom Codex root from the process, or its login shell when the process has no `CODEX_HOME`.
+    /// The custom Codex root from the process, or from the login-shell `probe` when the process has no `CODEX_HOME`.
     #[must_use]
-    pub fn codex_home(&self) -> Option<PathBuf> {
+    pub fn codex_home(&self, probe: Option<&opencode::Probe>) -> Option<PathBuf> {
         let selected = self.vars.iter().find(|(key, _)| {
             if cfg!(windows) {
                 key.eq_ignore_ascii_case("CODEX_HOME")
@@ -182,14 +183,7 @@ impl Environment {
         if let Some((_, value)) = selected {
             return hooks_config::codex_home(Some(value), std::env::current_dir().ok().as_deref());
         }
-        #[cfg(not(windows))]
-        {
-            opencode::codex_home(&self.vars)
-        }
-        #[cfg(windows)]
-        {
-            None
-        }
+        probe.and_then(|probe| probe.codex_home.clone())
     }
 
     /// The home as text, for the paths the transforms build.

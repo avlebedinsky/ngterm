@@ -82,10 +82,21 @@ index 6e4782b..8f8fb8a 100755
      i=$((i + 1))
    done
 diff --git a/agterm-codex-status.sh b/agterm-codex-status.sh
-index 1cfade4..781439e 100755
+index 1cfade4..e5d2b03 100755
 --- a/agterm-codex-status.sh
 +++ b/agterm-codex-status.sh
-@@ -34,6 +34,13 @@ json_string() {
+@@ -26,14 +26,22 @@ report_status() {
+   "$status_wrapper" "$@" >/dev/null 2>&1 || true
+ }
+
+-# macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so the platform picks the
+-# tool, and the server installer requires jq there.
++# macOS 14 ships plutil but no jq. A Linux plutil, swift-corelibs' port, has no -type, so Linux reads the field with
++# python3, else jq. With neither, the field is absent and the event is reported. awk, sed, tr and tail come from PATH,
++# because NixOS and Guix have no /usr/bin copies.
+ # json_string prints a top-level string field of the JSON on stdin and fails when it is absent or not a string.
+ json_string() {
+   if [[ $OSTYPE == darwin* ]]; then
      /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null
      return
    fi
@@ -99,7 +110,7 @@ index 1cfade4..781439e 100755
    jq -er --arg key "$1" '.[$key] | strings' 2>/dev/null
  }
 
-@@ -43,6 +50,13 @@ json_null() {
+@@ -43,6 +51,13 @@ json_null() {
      [ "$(/usr/bin/plutil -type "$1" - 2>/dev/null)" = "(any)" ]
      return
    fi
@@ -113,7 +124,7 @@ index 1cfade4..781439e 100755
    jq -e --arg key "$1" 'has($key) and .[$key] == null' >/dev/null 2>&1
  }
 
-@@ -53,15 +67,15 @@ assistant_message_contains_question() {
+@@ -53,15 +68,15 @@ assistant_message_contains_question() {
    quoted_mark=$'s/(^|[[:space:]])([“‘"\'([*_]+)\\?/\\1\\2/g'
    # a span becomes a word rather than nothing so "run `make test`?" keeps its ? attached
    prose=$(printf '%s\n' "$message" \
@@ -132,7 +143,7 @@ index 1cfade4..781439e 100755
      --target "$AGTERM_SESSION_ID" \
      "${socket_args[@]+"${socket_args[@]}"}" \
      "${pane_args[@]+"${pane_args[@]}"}" 2>/dev/null
-@@ -74,7 +88,7 @@ watch_file_path() {
+@@ -74,7 +89,7 @@ watch_file_path() {
    fi
    local key pane_key
    pane_key=${AGTERM_PANE_ID:-${AGTERM_PANE:-left}}
@@ -141,7 +152,7 @@ index 1cfade4..781439e 100755
    printf '%s/agterm-codex-watch-%s-%s' "${TMPDIR:-/tmp}" "${UID:-0}" "$key"
  }
 
-@@ -103,7 +117,7 @@ watch_for_blocker() {
+@@ -103,7 +118,7 @@ watch_for_blocker() {
      current_token=$(cat "$token_file" 2>/dev/null) || break
      [ "$current_token" = "$token" ] || break
      screen=$(read_visible_screen) || break

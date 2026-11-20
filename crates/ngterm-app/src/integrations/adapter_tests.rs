@@ -1429,6 +1429,24 @@ fn subagent_activity_only_changes_an_idle_status() {
     }
 }
 
+/// A subagent's `PostToolUse` that carries a large file, which Claude Code writes through a pipe, keeps `--if-idle`:
+/// bash's timed `read` takes a pipe a byte at a time, so it cut the JSON and lost the `agent_id`.
+#[cfg(unix)]
+#[test]
+fn a_large_subagent_tool_payload_through_a_pipe_still_gets_if_idle() {
+    let launch = r#"(while kill -0 $$ 2>/dev/null; do :; done; cat "$PAYLOAD" | bash "$0" "$@" >/dev/null 2>&1) &"#;
+    let input = format!(
+        r#"{{"hook_event_name":"PostToolUse","tool_response":{{"content":"{}"}},"agent_id":"a1"}}"#,
+        "x".repeat(1 << 20)
+    );
+    let stub = Stub::new();
+    let mut command = Command::new("sh");
+    command.args(["-c", launch]);
+    let run = claude_orphan(&stub, command, &["active", "--blink"], &input, &[])
+        .expect("the adapter never called the wrapper");
+    assert_eq!(run.forwarded, "active --blink --if-idle");
+}
+
 #[test]
 fn absent_empty_and_unreadable_payload_fields_preserve_the_arguments() {
     for input in [

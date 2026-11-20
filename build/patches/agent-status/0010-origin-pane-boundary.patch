@@ -1,7 +1,7 @@
 End the Claude status adapter's ancestor walk at any ngterm origin. The walk stopped at `ngterm` only, so in a session of a headless origin (`ngterm-headless`), or past the session server that holds a live session's shell (`ngterm-session`), it went on into whatever started the origin: an origin started from a coding agent's shell made every pane's agent a silent worker. Both forms. Applied after 0009-claude-background-job.patch.
 
 diff --git a/ngterm-claude-status.ps1 b/ngterm-claude-status.ps1
-index b2403578..cccd891a 100644
+index b240357..cccd891 100644
 --- a/ngterm-claude-status.ps1
 +++ b/ngterm-claude-status.ps1
 @@ -117,7 +117,9 @@ function Test-Worker {
@@ -16,10 +16,10 @@ index b2403578..cccd891a 100644
    }
    return $false
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index 123e297a..ba6bfe09 100755
+index 5eaf048..16d1152 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
-@@ -105,7 +105,9 @@ for _ in 1 2 3 4 5 6 7 8; do
+@@ -88,7 +88,9 @@ for _ in 1 2 3 4 5 6 7 8; do
      prev_agent=
    fi
    [ "$agents" -gt 1 ] && exit 0        # a second agent above mine: I am a worker, not the pane's agent

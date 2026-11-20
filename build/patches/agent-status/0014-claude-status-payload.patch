@@ -1,10 +1,36 @@
 Apply the Claude payload rules to the PowerShell adapter. Keep ngterm's background shell status and chat hooks.
 
 diff --git a/ngterm-claude-status.ps1 b/ngterm-claude-status.ps1
-index e126a4b..278973f 100644
+index e126a4b..5dfa054 100644
 --- a/ngterm-claude-status.ps1
 +++ b/ngterm-claude-status.ps1
-@@ -156,27 +156,26 @@ function Send-AgentHook([string] $hookEvent, [string] $payload) {
+@@ -12,16 +12,18 @@
+ # Windows names it. A parent id that names a process started after its child is a reused id: the chain is severed.
+ #
+ # It fails OPEN (reports) whenever the chain is unreadable or severed: a missed guard is the behavior without this
+-# adapter, while a false silence is a bug with no symptom. The argv is forwarded to the shared wrapper verbatim, with
+-# one exception: a Stop whose payload lists work still in flight in `background_tasks` posts `active --blink` instead
+-# of `completed`, so the row keeps pulsing until a Stop with nothing in flight, or the SessionEnd hook the installer
+-# adds. A `completed` call reads stdin, where Claude Code writes the payload as JSON, for this check (an `active` or
+-# `blocked` call reads it for the chat view below); a key quoted inside a string value is escaped
+-# (`\"background_tasks\"`), so the match cannot hit the last assistant message.
++# adapter, while a false silence is a bug with no symptom. The argv reaches the shared wrapper unchanged except for two
++# payload rewrites. Each call reads stdin, where Claude Code writes the payload as JSON, and parses it with
++# ConvertFrom-Json. A missing or unreadable payload keeps the argv as it is.
++#
++# - A subagent's `active` (the payload has an `agent_id`) gets `--if-idle`, so it does not repaint a `blocked` row.
++# - A Stop whose `background_tasks` lists a `running` subagent, workflow or shell task posts `active --blink` instead
++#   of `completed`, so the row keeps pulsing until a Stop with nothing in flight, or the SessionEnd hook the installer
++#   adds.
+ #
+ # ngterm's chat view (an ngterm extension, as in the POSIX form): `UserPromptSubmit` and `PermissionRequest` also
+ # report to the pane's agent record, piping the payload to `ngtermctl agent hook claude <event>` ahead of the status.
+-# An `active` or `blocked` call of the interactive CLI (CLAUDE_CODE_ENTRYPOINT `cli`) reads the payload for its
++# Only an `active` or `blocked` call of the interactive CLI (CLAUDE_CODE_ENTRYPOINT `cli`) reports, by the payload's
+ # `hook_event_name`; a subagent's prompt (`agent_id`) is left out, its permission prompt is not. The payload is read
+ # and handed on as UTF-8 whatever the console's code page, so a path or a prompt arrives as the agent wrote it.
+ #
+@@ -156,28 +158,27 @@ function Send-AgentHook([string] $hookEvent, [string] $payload) {
    } catch { }
  }
 
@@ -49,3 +75,4 @@ index e126a4b..278973f 100644
 +    }
    }
  }
+

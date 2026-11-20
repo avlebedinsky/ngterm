@@ -13,12 +13,12 @@
 //! writing; [`apply`] carries the plan out and reports upstream's outcomes.
 //!
 //! On Windows every agent keeps its config under the user's profile at the same relative paths (`%USERPROFILE%`'s
-//! `.claude`, `.codex`, `.pi\agent`, `.config\opencode`), and the package goes to the same `.config\ngterm\agent-status`
-//! that the Pi extension and the `OpenCode` plugins name, paths written with forward slashes ([`shell_path`]). Claude
-//! Code runs a hook's command in Git Bash there, or in PowerShell without it, so its hooks call the package's
-//! PowerShell forms through `powershell.exe`, a command line both shells read alike ([`config::HookForm`]); the Pi
-//! extension and the `OpenCode` plugins start the PowerShell wrapper the same way. Codex runs a hook through
-//! `cmd.exe`, so its block adds each hook's `command_windows`, the POSIX adapter under Git Bash
+//! `.claude`, `.codex` unless `CODEX_HOME` selects another root, `.pi\agent`, `.config\opencode`), and the package goes
+//! to the same `.config\ngterm\agent-status` that the Pi extension and the `OpenCode` plugins name, paths written with
+//! forward slashes ([`shell_path`]). Claude Code runs a hook's command in Git Bash there, or in PowerShell without it,
+//! so its hooks call the package's PowerShell forms through `powershell.exe`, a command line both shells read alike
+//! ([`config::HookForm`]); the Pi extension and the `OpenCode` plugins start the PowerShell wrapper the same way. Codex
+//! runs a hook through `cmd.exe`, so its block adds each hook's `command_windows`, the POSIX adapter under Git Bash
 //! ([`config::WINDOWS_BASH`]). Nothing is linked, and no mode is set or kept ([`files`]).
 
 use std::fs;
@@ -308,7 +308,7 @@ impl HooksOutcome {
             "Scripts installed to {}.\n{claude}\n{}\n{}\n{}\n{}\n{}\n\nOpen a new terminal for the shell integration to take \
              effect.",
             self.script_dir.display(),
-            codex_text_at(self.codex, self.codex_home.as_deref()),
+            codex_text(self.codex, self.codex_home.as_deref()),
             pi_text(self.pi),
             omp_text(self.omp),
             opencode_text(&self.opencode),
@@ -320,13 +320,10 @@ impl HooksOutcome {
 /// The docs anchor for a manual Codex merge, opened by the alert's second button.
 pub const CODEX_MANUAL_DOCS_URL: &str = "https://ngterm.com/docs#codex-hooks-manual";
 
-/// The Codex line of the alert: one line each, never the generated block (upstream's `codexText`).
+/// The Codex line of the alert, which names `codex_home` when `CODEX_HOME` selects it: one line each, never the
+/// generated block (upstream's `codexText`).
 #[must_use]
-pub fn codex_text(codex: CodexResult) -> String {
-    codex_text_at(codex, None)
-}
-
-fn codex_text_at(codex: CodexResult, codex_home: Option<&Path>) -> String {
+pub fn codex_text(codex: CodexResult, codex_home: Option<&Path>) -> String {
     let directory = codex_home.map_or_else(|| "~/.codex".to_owned(), shell_path);
     let approve = "Run /hooks in Codex to review and approve them before they take effect.";
     let manual =
@@ -573,7 +570,7 @@ pub fn plan(env: &Environment, opencode: &OpenCodeStart, probe: Option<&Probe>) 
         .clone()
         .filter(|package| package.is_dir())
         .ok_or_else(|| InstallError("The agent-status scripts are not bundled in this build.".to_owned()))?;
-    let codex_home = env.codex_home();
+    let codex_home = env.codex_home(probe);
     let codex_directory = codex_home.clone().unwrap_or_else(|| env.home.join(".codex"));
     let script_dir = script_dir(&env.home);
     let dir = shell_path(&script_dir);

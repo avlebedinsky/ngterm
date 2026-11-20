@@ -388,8 +388,8 @@ pub fn append_shell_rc(existing: &str, script_dir: &str, script_name: &str) -> (
     (contents, true)
 }
 
-/// What merging the Codex hooks into `~/.codex/config.toml` decided, from parsing the file first (upstream's
-/// `CodexMergeOutcome`).
+/// What merging the Codex hooks into `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) decided, from parsing
+/// the file first (upstream's `CodexMergeOutcome`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodexMerge {
     /// The hooks block was added or refreshed (and a retired `codex-notify.sh` notify line removed): write it.

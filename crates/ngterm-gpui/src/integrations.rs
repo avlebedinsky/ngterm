@@ -3,8 +3,9 @@
 //! installers ([`run_skill`], [`run_hooks`], [`run_cli`]) and the welcome's Install ([`run_picked`]). Each plans from
 //! what it finds on disk and applies off the main thread, then shows upstream's result alert over the window it started
 //! from; installers run one after another, each after the previous one's alert closed, as upstream's modal alerts
-//! queue. The hooks install probes `OpenCode` in the login shell and asks for its version (upstream's chooser) when the
-//! probe could not tell; a second hooks start while one runs does nothing. A missing home, or a panic in the work,
+//! queue. The skill and hooks installs of one start share one login-shell probe (`OpenCode`'s version and directory,
+//! and `CODEX_HOME`), and the hooks install asks for the `OpenCode` version (upstream's chooser) when the probe could
+//! not tell; a second hooks start while one runs does nothing. A missing home, or a panic in the work,
 //! shows "Install Failed" rather than leaving the alert never to come.
 //!
 //! The installers read the process's own environment ([`Environment::process`]: `$HOME`, the staged resources, the
@@ -17,7 +18,7 @@ use std::sync::Arc;
 
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, AsyncApp, Global};
 use ngterm_app::integrations::hooks::{self, OpenCodeStart};
-use ngterm_app::integrations::opencode::{self, Version};
+use ngterm_app::integrations::opencode::{self, Probe, Version};
 use ngterm_app::integrations::{Environment, InstallError, cli, skill};
 
 use crate::modal::{AlertButton, AlertSpec, open_alert};
@@ -88,13 +89,22 @@ pub fn run_hooks(window: AnyWindowHandle, cx: &mut App) {
 }
 
 /// The welcome's Install: the checked installers over `window`, the skill first, each after the previous one's alert.
+/// One login-shell probe serves both, as upstream's `AgentInstallers.run`.
 pub fn run_picked(window: AnyWindowHandle, skill: bool, hooks: bool, cx: &mut App) {
     cx.spawn(async move |cx| {
-        if skill {
-            install_skill(window, cx).await;
+        let running = if hooks { HooksRunning::start() } else { None };
+        if hooks && running.is_none() {
+            tracing::debug!("agent status hooks install already running");
         }
-        if hooks {
-            install_hooks(window, cx).await;
+        if !skill && running.is_none() {
+            return;
+        }
+        let probe = login_shell_probe(cx).await;
+        if skill {
+            install_skill(window, probe.clone(), cx).await;
+        }
+        if let Some(running) = running {
+            install_hooks(window, probe, running, cx).await;
         }
     })
     .detach();
@@ -138,8 +148,23 @@ async fn install_cli(window: AnyWindowHandle, cx: &mut AsyncApp) {
     }
 }
 
-async fn install_skill(window: AnyWindowHandle, cx: &mut AsyncApp) {
-    let report = install_off_main(cx, |env| skill::plan(&env).map(|plan| skill::apply(&plan))).await;
+/// Probes `OpenCode` and `CODEX_HOME` in the login shell; `None` without a home, or when the probe found nothing.
+async fn login_shell_probe(cx: &AsyncApp) -> Option<Probe> {
+    let env = install_off_main(cx, Ok).await.ok()?;
+    let timeout = Source::of(cx).1;
+    // a probe that panicked found nothing, as one whose shell did not run
+    off_main(cx, move || {
+        opencode::detect_with_timeout(&env.vars, &env.home_str(), timeout)
+    })
+    .await
+    .flatten()
+}
+
+async fn install_skill(window: AnyWindowHandle, probe: Option<Probe>, cx: &mut AsyncApp) {
+    let report = install_off_main(cx, move |env| {
+        skill::plan(&env, probe.as_ref()).map(|plan| skill::apply(&plan))
+    })
+    .await;
     match report {
         Ok(report) => {
             log_result(report.is_warning(), "agent skill", &report);
@@ -166,12 +191,8 @@ impl Drop for HooksRunning {
     }
 }
 
-async fn install_hooks(window: AnyWindowHandle, cx: &mut AsyncApp) {
-    let Some(running) = HooksRunning::start() else {
-        tracing::debug!("agent status hooks install already running");
-        return;
-    };
-    let outcome = hooks_outcome(window, cx).await;
+async fn install_hooks(window: AnyWindowHandle, probe: Option<Probe>, running: HooksRunning, cx: &mut AsyncApp) {
+    let outcome = hooks_outcome(window, probe, cx).await;
     drop(running);
     match outcome {
         Ok(outcome) => {
@@ -186,17 +207,13 @@ async fn install_hooks(window: AnyWindowHandle, cx: &mut AsyncApp) {
     }
 }
 
-/// Probes `OpenCode` in the login shell, asks for its version when the probe could not tell, then plans and applies.
-async fn hooks_outcome(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<hooks::HooksOutcome, InstallError> {
+/// Asks for the `OpenCode` version when the login-shell `probe` could not tell, then plans and applies.
+async fn hooks_outcome(
+    window: AnyWindowHandle,
+    probe: Option<Probe>,
+    cx: &mut AsyncApp,
+) -> Result<hooks::HooksOutcome, InstallError> {
     let env = install_off_main(cx, Ok).await?;
-    let probing = env.clone();
-    let timeout = Source::of(cx).1;
-    // a probe that panicked found nothing, as one whose shell did not run
-    let probe = off_main(cx, move || {
-        opencode::detect_with_timeout(&probing.vars, &probing.home_str(), timeout)
-    })
-    .await
-    .flatten();
     let start = match hooks::opencode_start(&env.home, probe.as_ref()) {
         OpenCodeStart::Ask => match choose_opencode_version(window, cx).await {
             Some(version) => OpenCodeStart::Install(version),

@@ -150,7 +150,7 @@ index be141e9..b240357 100644
  
  $statusWrapper = $env:NGTERM_STATUS_WRAPPER
 diff --git a/ngterm-claude-status.sh b/ngterm-claude-status.sh
-index a4748d3..469e44b 100755
+index 781c438..5eaf048 100755
 --- a/ngterm-claude-status.sh
 +++ b/ngterm-claude-status.sh
 @@ -20,6 +20,17 @@

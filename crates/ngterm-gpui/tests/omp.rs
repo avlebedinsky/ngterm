@@ -44,7 +44,7 @@ fn install_resources(sandbox: &Sandbox, ctl: &Path) -> TestResult {
         hooks::apply(&plan).map_err(|error| error.0)?.omp,
         hooks::OmpResult::Installed
     );
-    let report = skill::apply(&skill::plan(&environment).map_err(|error| error.0)?);
+    let report = skill::apply(&skill::plan(&environment, None).map_err(|error| error.0)?);
     assert!(!report.is_warning(), "{report:?}");
     Ok(())
 }

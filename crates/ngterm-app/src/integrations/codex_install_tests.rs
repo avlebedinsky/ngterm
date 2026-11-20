@@ -69,12 +69,12 @@ fn a_custom_codex_skill_refresh_keeps_the_default_root() {
     let custom = home.path("custom codex");
     custom_home(&mut home, &custom);
     fs::create_dir_all(&custom).unwrap();
-    let first_skill = skill::apply(&skill::plan(&home.env).unwrap());
+    let first_skill = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(first_skill.skipped.is_empty());
     assert!(first_skill.installed.contains(&("Codex", custom.join("skills/ngterm"))));
     let installed = custom.join("skills/ngterm/SKILL.md");
     fs::write(&installed, format!("{}\nold", skill::MARKER)).unwrap();
-    let repeat = skill::apply(&skill::plan(&home.env).unwrap());
+    let repeat = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(repeat.skipped.is_empty());
     assert_eq!(repeat.installed, first_skill.installed);
     assert_eq!(
@@ -96,7 +96,7 @@ fn a_missing_custom_codex_root_is_reported_without_a_default_fallback() {
             .text()
             .contains(&format!("No {} found (your CODEX_HOME)", hooks::shell_path(&custom)))
     );
-    let skill = skill::apply(&skill::plan(&home.env).unwrap());
+    let skill = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert_eq!(skill.installed, [("Claude Code", home.path(".claude/skills/ngterm"))]);
     assert_eq!(skill.skipped, [("Codex", format!("no {} found", custom.display()))]);
     assert!(!custom.exists());
@@ -112,7 +112,7 @@ fn a_custom_codex_skill_keeps_user_files_and_reports_the_destination() {
     let destination = skills.join("ngterm");
     fs::create_dir_all(&destination).unwrap();
     fs::write(destination.join("SKILL.md"), "user skill").unwrap();
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(report.installed.is_empty());
     assert_eq!(
         report.skipped,
@@ -127,7 +127,7 @@ fn a_custom_codex_skill_keeps_user_files_and_reports_the_destination() {
     assert_eq!(fs::read_to_string(destination.join("SKILL.md")).unwrap(), "user skill");
     fs::remove_dir_all(&skills).unwrap();
     fs::write(&skills, "not a directory").unwrap();
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(report.installed.is_empty());
     assert_eq!(report.skipped.len(), 1);
     assert!(report.skipped[0].1.starts_with(&format!("{}: ", destination.display())));
@@ -182,9 +182,9 @@ fn a_relative_codex_home_uses_the_process_working_directory() {
     let relative = root.path().strip_prefix(&cwd).unwrap().join("codex home");
     custom_home(&mut home, &relative);
     fs::create_dir_all(cwd.join(&relative)).unwrap();
-    assert_eq!(home.env.codex_home(), Some(cwd.join(&relative)));
+    assert_eq!(home.env.codex_home(None), Some(cwd.join(&relative)));
     assert_eq!(home.install_hooks(&no_opencode(&home), None).codex, CodexResult::Merged);
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(
         report
             .installed
@@ -198,10 +198,10 @@ fn an_empty_codex_home_uses_the_default_root() {
     let mut home = Home::new();
     home.env.vars.insert("CODEX_HOME".into(), String::new());
     home.mkdir(".codex");
-    assert_eq!(home.env.codex_home(), None);
+    assert_eq!(home.env.codex_home(None), None);
     assert_eq!(home.install_hooks(&no_opencode(&home), None).codex, CodexResult::Merged);
     assert!(home.path(".codex/config.toml").exists());
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, None).unwrap());
     assert!(report.installed.contains(&("Codex", home.path(".codex/skills/ngterm"))));
 }
 
@@ -225,13 +225,27 @@ fn the_login_shell_codex_home_applies_to_both_installers() {
     home.env
         .vars
         .insert("HOME".into(), home.env.home.to_string_lossy().into_owned());
-    assert_eq!(home.install_hooks(&no_opencode(&home), None).codex, CodexResult::Merged);
+    let probe = super::super::opencode::detect_with_timeout(
+        &home.env.vars,
+        &home.env.home_str(),
+        crate::test_shell::CHILD_DEADLINE,
+    )
+    .expect("the login shell ran");
+    assert_eq!(probe.codex_home, Some(custom.clone()));
+    assert_eq!(
+        home.install_hooks(&no_opencode(&home), Some(&probe)).codex,
+        CodexResult::Merged
+    );
     assert!(custom.join("config.toml").exists());
-    let report = skill::apply(&skill::plan(&home.env).unwrap());
+    let report = skill::apply(&skill::plan(&home.env, Some(&probe)).unwrap());
     assert!(report.installed.contains(&("Codex", custom.join("skills/ngterm"))));
     default_is_untouched(&home);
     home.env.vars.insert("CODEX_HOME".into(), String::new());
-    assert_eq!(home.env.codex_home(), None);
+    assert_eq!(
+        home.env.codex_home(Some(&probe)),
+        None,
+        "the process value wins, an empty one too"
+    );
 }
 
 #[cfg(windows)]
@@ -241,7 +255,7 @@ fn codex_home_variable_names_ignore_case_on_windows() {
     home.env
         .vars
         .insert("Codex_Home".into(), home.path("custom").to_string_lossy().into_owned());
-    assert_eq!(home.env.codex_home(), Some(home.path("custom")));
+    assert_eq!(home.env.codex_home(None), Some(home.path("custom")));
 }
 
 #[cfg(unix)]
@@ -332,7 +346,7 @@ fn assert_process_environment(case: &str) {
     let bin = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     assert_eq!(env.home, home);
     assert_eq!(env.home_str(), home.to_string_lossy());
-    assert_eq!(env.codex_home(), Some(home.join("custom codex")));
+    assert_eq!(env.codex_home(None), Some(home.join("custom codex")));
     assert!(!env.vars.keys().any(|key| key.starts_with("NGTERM_")));
     let staged = case == "staged";
     assert_eq!(Environment::process_is_staged(), staged);
