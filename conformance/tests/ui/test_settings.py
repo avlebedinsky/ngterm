@@ -73,12 +73,17 @@ MENU_SHOWN = DEFAULT_TIMEOUT
 
 
 def _choose(ui, tab, picker, item):
-    """Pick `item` from the menu of the popup `picker` on Settings' `tab`. Right after a tab switch the reference's
-    press can land on the popup the previous tab showed in that place and open that one's menu (reference-macos: the
-    Interface tab's session-info menu over Appearance's density picker), so the test goes on once the open menu is the
-    picker's own: a menu without `item` is dismissed and the picker pressed again. Where Settings is a popup in the
-    main window (the Rust build), that Escape closes Settings itself when no menu was open, so a picker gone from the
-    tree has Settings opened on `tab` again first."""
+    """Pick `item` from the menu of the popup `picker` on Settings' `tab`."""
+    ui.click(_menu_with(ui, tab, picker, item))
+
+
+def _menu_with(ui, tab, picker, item):
+    """Open the menu of the popup `picker` on Settings' `tab` and return its `item`. Right after a tab switch the
+    reference's press can land on the popup the previous tab showed in that place and open that one's menu
+    (reference-macos: the Interface tab's session-info menu over Appearance's density picker), so the test goes on once
+    the open menu is the picker's own: a menu without `item` is dismissed and the picker pressed again. Where Settings
+    is a popup in the main window (the Rust build), that Escape closes Settings itself when no menu was open, so a
+    picker gone from the tree has Settings opened on `tab` again first."""
 
     def opened():
         if not ui.all(picker):
@@ -91,7 +96,7 @@ def _choose(ui, tab, picker, item):
             raise AssertionError(f"the open menu has no {item!r}: {error}") from None
 
     opened.__qualname__ = f"{picker}'s menu listing {item!r}"
-    ui.click(wait_until(opened, timeout=3 * MENU_SHOWN))
+    return wait_until(opened, timeout=3 * MENU_SHOWN)
 
 
 def _check(ui, expected):
@@ -422,3 +427,31 @@ def test_badge_reset_picker_persists(seeded, ui_for, adapter):
         _choose(ui, "Notifications", picker, "On first key")
     # the default is stored as no key at all
     wait_until(lambda: "badgeReset" not in _settings(seeded))
+
+
+SHAPE_LABELS = ("Circle", "Square", "Triangle", "Down Triangle", "Play", "Diamond", "Capsule", "Seal", "Star", "Bolt",
+                "Bell", "Checkmark")  # fmt: skip
+
+
+@pytest.mark.since("0.42.0")
+@pytest.mark.covers("ui:settings-status-shape-{status}")
+def test_status_shape_picker_offers_the_checkmark(seeded, ui_for, adapter):
+    """A status's shape picker offers every shape, the checkmark too (#947), and a picked checkmark persists."""
+
+    def value(text):
+        return {"value": text} if adapter.has("ui-string-values") else {}
+
+    ui = ui_for(seeded)
+    _open(ui, "Agent Status")
+    picker = "settings-status-shape-completed"
+    checkmark = _menu_with(ui, "Agent Status", picker, "Checkmark")
+    for label in SHAPE_LABELS:
+        ui.menu_item(label, timeout=MENU_SHOWN)
+    try:
+        ui.click(checkmark)
+        wait_until(lambda: _settings(seeded).get("completedStatusShape") == "checkmark")
+        ui.find(picker, role="popup", **value("Checkmark"))
+    finally:
+        _choose(ui, "Agent Status", picker, "Circle")
+    # the default shape is stored as no key at all
+    wait_until(lambda: "completedStatusShape" not in _settings(seeded))
