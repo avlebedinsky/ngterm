@@ -153,11 +153,9 @@ impl Subscriber {
 /// shape instead.
 fn decodes_shape(kinds: &[String], shape: crate::model::StatusShape) -> bool {
     let lists = |kind: &str| kinds.iter().any(|listed| listed == kind);
-    if shape == crate::model::StatusShape::Checkmark {
-        lists(STATUS_CHECKMARK_KIND)
-    } else {
-        shape.is_original() || lists(STATUS_SHAPES_KIND)
-    }
+    shape.is_original()
+        || (crate::model::StatusShape::EXPANDED.contains(&shape) && lists(STATUS_SHAPES_KIND))
+        || (shape == crate::model::StatusShape::Checkmark && lists(STATUS_CHECKMARK_KIND))
 }
 
 /// Decides which viewer connection is a session's sole presenter (upstream's `PresenterGrant`). The first acquire wins
@@ -245,10 +243,10 @@ pub const PAGE_CONTENT_KIND: &str = "page.content";
 /// [`PAGE_CONTENT_KIND`]. It names no frame body.
 pub const PAGE_DOCUMENT_KIND: &str = "page.document";
 
-/// A viewer draws every [`StatusShape`](crate::model::StatusShape) (upstream's `statusShapesKind`). One that does not
-/// list it predates the shapes beyond [`ORIGINAL`](crate::model::StatusShape::ORIGINAL) and decodes a status shape
-/// strictly, so the hub clears any other shape from what it sends that viewer, which draws its own settings shape
-/// instead. It names no frame body.
+/// A viewer draws the [`EXPANDED`](crate::model::StatusShape::EXPANDED) shapes (upstream's `statusShapesKind`).
+/// Without this kind, the hub clears shapes outside [`ORIGINAL`](crate::model::StatusShape::ORIGINAL), except the
+/// checkmark if the viewer lists [`STATUS_CHECKMARK_KIND`]. The viewer draws its own settings shape instead.
+/// This kind names no frame body.
 pub const STATUS_SHAPES_KIND: &str = "status.shapes";
 
 /// A viewer draws [`StatusShape::Checkmark`](crate::model::StatusShape::Checkmark) (upstream's `statusCheckmarkKind`),
