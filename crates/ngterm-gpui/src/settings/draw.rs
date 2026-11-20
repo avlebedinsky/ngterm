@@ -12,9 +12,9 @@ use gpui_kit::component::slider::Slider;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement as _, Pixels, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, canvas, div, px, svg,
+    AnyElement, App, Bounds, Context, Div, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement as _, Pixels, Role, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, Text, Window, canvas, div, px, svg,
 };
 use ngterm_core::chrome::Rgb;
 use ngterm_core::model::StatusShape;
@@ -491,19 +491,24 @@ fn options_menu(menu: PopupMenu, picker: &Rc<Picker>, edits: &Edits) -> PopupMen
     })
 }
 
-/// Option `index` of `picker`'s menu.
+/// Option `index` of `picker`'s menu. A shape row is an element item, which has no name of its own: its label is a
+/// `Text` with an id, an accessibility label, so the menu item takes the shape's name for a screen reader (upstream's
+/// `VoiceOver` name).
 fn option_item(picker: &Rc<Picker>, index: usize, edits: &Edits) -> PopupMenuItem {
     let label = picker.options[index].clone();
     let item = match (picker.shapes, StatusShape::ALL.get(index).copied()) {
-        (Some(tint), Some(shape)) => PopupMenuItem::element(move |_, _| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .child(silhouette(shape, tint))
-                .child(label.clone())
-        }),
+        (Some(tint), Some(shape)) => {
+            let label = SharedString::from(label);
+            PopupMenuItem::element(move |_, _| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(silhouette(shape, tint))
+                    .child(Text::new(ElementId::from("shape-option-label"), label.clone()))
+            })
+        }
         _ => PopupMenuItem::new(label),
     };
     let (picker, edits) = (Rc::clone(picker), edits.clone());

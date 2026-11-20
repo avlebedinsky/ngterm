@@ -1103,6 +1103,65 @@ fn a_picked_menu_row_writes_through_the_core(cx: &mut TestAppContext) {
     assert_eq!(h.item(cx, "settings-notification-sound"), Some(Shown::Row(Some(1))));
 }
 
+/// An accessibility tree's nodes by id.
+type A11yNodes<'a> = std::collections::HashMap<gpui_kit::accesskit::NodeId, &'a gpui_kit::accesskit::Node>;
+
+/// The names of the menu items in `tree`, in tree order, as AccessKit gives them to a screen reader: the item's own
+/// label, else the values of the labels below it.
+fn menu_item_names(tree: &gpui_kit::accesskit::TreeUpdate) -> Vec<Option<String>> {
+    let nodes: A11yNodes = tree.nodes.iter().map(|(id, node)| (*id, node)).collect();
+    let root = tree.tree.as_ref().expect("a full accessibility tree").root;
+    let mut names = Vec::new();
+    menu_items_below(root, &nodes, &mut names);
+    names
+}
+
+/// The names of the menu items at and below `id`, in tree order.
+fn menu_items_below(id: gpui_kit::accesskit::NodeId, nodes: &A11yNodes, out: &mut Vec<Option<String>>) {
+    let Some(node) = nodes.get(&id) else { return };
+    if node.role() == gpui_kit::accesskit::Role::MenuItem {
+        let mut found = Vec::new();
+        for child in node.children() {
+            label_values_below(*child, nodes, &mut found);
+        }
+        let name = node.label().map(str::to_owned);
+        out.push(name.or_else(|| (!found.is_empty()).then(|| found.join(" "))));
+        return;
+    }
+    for child in node.children() {
+        menu_items_below(*child, nodes, out);
+    }
+}
+
+/// The values of the labels at and below `id`, in tree order (a label's text is its value).
+fn label_values_below(id: gpui_kit::accesskit::NodeId, nodes: &A11yNodes, out: &mut Vec<String>) {
+    let Some(node) = nodes.get(&id) else { return };
+    if node.role() == gpui_kit::accesskit::Role::Label {
+        out.extend(node.value().map(str::to_owned));
+    }
+    for child in node.children() {
+        label_values_below(*child, nodes, out);
+    }
+}
+
+/// Upstream gives each row of a status shape menu its shape's name for `VoiceOver`, and its `SettingsUITests` find the
+/// rows by that name: each row is a menu item named after its shape, the silhouette beside the name adds nothing.
+#[gpui_kit::test]
+fn each_row_of_a_shape_menu_is_named_after_its_shape(cx: &mut TestAppContext) {
+    let (mut h, cx) = harness(cx, AppSettings::default());
+    h.tab(cx, Tab::AgentStatus);
+    click(cx, "settings-status-shape-completed");
+    h.settle(cx);
+    cx.activate_a11y();
+    let tree = cx.a11y_tree_update().expect("the window's accessibility tree");
+    let names = menu_item_names(&tree);
+    let expected: Vec<Option<String>> = StatusShape::ALL
+        .iter()
+        .map(|shape| Some(shape.display_name().to_owned()))
+        .collect();
+    assert_eq!(names, expected);
+}
+
 /// Upstream's `SettingsUITests` link picker cases for the sized overlays: each row stores its raw mode.
 #[gpui_kit::test]
 fn the_link_picker_offers_the_sized_overlays(cx: &mut TestAppContext) {
