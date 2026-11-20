@@ -73,10 +73,12 @@ fn claims_refuse_a_second_owner_and_an_unusable_path() {
 #[test]
 fn immediate_exit_preserves_the_status_and_flushes_output() {
     const CHILD: &str = "GPUI_COVERAGE_EXIT_CHILD";
-    if std::env::var_os(CHILD).is_some() {
+    if let Some(dir) = std::env::var_os(CHILD) {
+        let state_lock = claim_state_dir(Path::new(&dir)).unwrap();
         print!("flushed before exit");
-        exit_now(23);
+        exit_now(23, state_lock);
     }
+    let dir = tempfile::tempdir().unwrap();
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("NGTERM_") {
@@ -89,11 +91,60 @@ fn immediate_exit_preserves_the_status_and_flushes_output() {
             "tests::immediate_exit_preserves_the_status_and_flushes_output",
             "--nocapture",
         ])
-        .env(CHILD, "1")
+        .env(CHILD, dir.path())
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(23));
     assert!(String::from_utf8_lossy(&output.stdout).contains("flushed before exit"));
+}
+
+#[cfg(unix)]
+#[test]
+fn immediate_exit_releases_the_state_lock_with_a_duplicate_descriptor() {
+    const CHILD: &str = "GPUI_STATE_LOCK_EXIT_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_lock = claim_state_dir(dir.path()).unwrap();
+        assert!(claim_state_dir(dir.path()).is_err());
+        // SAFETY: this isolated test starts no app threads and holds no locks across the fork except the file lock.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            exit_now(23, state_lock);
+        }
+        let mut status = 0;
+        // SAFETY: pid names this test's child and status is writable.
+        assert_eq!(unsafe { libc::waitpid(pid, &raw mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 23);
+        let next = claim_state_dir(dir.path()).expect("exit releases the lock despite the parent's duplicate");
+        drop(state_lock);
+        assert!(claim_state_dir(dir.path()).is_err());
+        drop(next);
+        return;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("NGTERM_") {
+            command.env_remove(key);
+        }
+    }
+    let output = command
+        .args([
+            "--exact",
+            "tests::immediate_exit_releases_the_state_lock_with_a_duplicate_descriptor",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(target_os = "linux")]

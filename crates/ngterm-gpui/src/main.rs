@@ -74,8 +74,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // held for the whole process (`exit_now` never drops it); the kernel releases it at exit, a crash included
-    let _state_lock = match claim_state_dir(&paths::state_dir(&ProcessEnv)) {
+    let state_lock = match claim_state_dir(&paths::state_dir(&ProcessEnv)) {
         Ok(lock) => lock,
         Err(status) => return status,
     };
@@ -96,7 +95,7 @@ fn main() -> ExitCode {
         requests: received,
         activation,
     });
-    exit_now(status)
+    exit_now(status, state_lock)
 }
 
 /// Revisit old runtimes after their workers exit, without waiting for another instance's installer at startup.
@@ -190,14 +189,16 @@ fn forward(remote: &instance::Remote, activation: &Activation) -> ExitCode {
 /// instance (GPUI creates its wgpu instance with the GL backend beside Vulkan) terminates EGL in a TLS destructor
 /// after the Wayland connection is gone and crashes every exit with SIGSEGV (`docs/spikes/20261014-wpe-dmabuf.md`,
 /// quirk 12; `docs/upstream-issues/gpui-wgpu-gles-exit-segfault.md`). Everything that must outlive the process is
-/// written by then: the quit save, the socket removed, the log written unbuffered. Windows ends it the same way
-/// (`TerminateProcess` of itself: no DLL detach, no TLS callbacks), so the threads still waiting in a quit handler
-/// (`signals.rs`) end with it. An instrumented build writes its coverage profile first (`ngterm_app::coverage`).
-fn exit_now(status: i32) -> ! {
+/// written by then: the quit save, the socket removed, the log written unbuffered. The state directory lock is
+/// unlocked last, since a child that still holds its descriptor would keep the next instance out. Windows ends it the
+/// same way (`TerminateProcess` of itself: no DLL detach, no TLS callbacks), so the threads still waiting in a quit
+/// handler (`signals.rs`) end with it. An instrumented build writes its coverage profile first (`ngterm_app::coverage`).
+fn exit_now(status: i32, state_lock: StateDirectoryLock) -> ! {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     // an instrumented build's coverage profile, which the skipped exit handlers would have written
     ngterm_app::coverage::write_profile();
+    drop(state_lock);
     #[cfg(unix)]
     // SAFETY: `_exit` only ends the process; nothing of this process runs after it, so no invariant can break.
     unsafe {
