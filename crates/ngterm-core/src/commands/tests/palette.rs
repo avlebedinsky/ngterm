@@ -1048,7 +1048,13 @@ fn the_switcher_walks_the_navigable_sessions_by_recency_capped() {
 
     fixture.core.switch_to_session(window, sessions[1]);
     assert_eq!(fixture.selected(), Some(sessions[1]));
+    assert!(
+        fixture.core.pane_focus_requested(sessions[1]),
+        "its terminal takes the keyboard"
+    );
+    fixture.core.clear_pane_focus_requests();
     open_pick(&mut fixture);
     fixture.core.switch_to_session(window, sessions[3]);
     assert_eq!(fixture.selected(), Some(sessions[1]), "behind a modal it stands down");
+    assert!(!fixture.core.pane_focus_requested(sessions[3]));
 }

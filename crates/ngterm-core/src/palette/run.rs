@@ -245,7 +245,9 @@ impl Core {
     }
 
     /// The Ctrl-Tab switcher committed `session` in window `window` (upstream's `SessionSwitcher.commit`): activity
-    /// noted and the session selected, while the window takes UI actions. Commit afterwards.
+    /// noted, the session selected and its focused pane asked to take the keyboard, from wherever it is (the sidebar's
+    /// search field too, which keeps it through a selection made elsewhere), while the window takes UI actions. Commit
+    /// afterwards.
     pub fn switch_to_session(&mut self, window: Uuid, session: Uuid) {
         if !self.ui_actions_enabled(window) || !window_holds(self.library(), window, session) {
             return;
@@ -254,6 +256,7 @@ impl Core {
         if let Some(store) = self.library_mut().store_mut(window) {
             store.select_session(Some(session));
         }
+        self.request_pane_focus(session);
     }
 }
 
