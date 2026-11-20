@@ -222,9 +222,10 @@ static void checkServices(void) {
     assert([NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeHTML]);
     assert([[NSPasteboard.generalPasteboard
         stringForType:NSPasteboardTypeString] isEqual:@"plain"]);
+    // The key is in the form Rust's key_equivalent emits: Shift uppercases it.
     ngterm_menus_set(
         "{\"app\":[],\"menus\":[{\"title\":\"File\",\"children\":[{\"title\":"
-        "\"Custom\",\"enabled\":true,\"tag\":42,\"key\":\"n\",\"mods\":10}]}]}",
+        "\"Custom\",\"enabled\":true,\"tag\":42,\"key\":\"N\",\"mods\":10}]}]}",
         menuClicked);
     NSMenu *edit = [NSApp.mainMenu itemWithTitle:@"Edit"].submenu;
     assert(edit && [edit itemWithTitle:@"Copy"].action == @selector(copy:));
