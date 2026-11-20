@@ -12,10 +12,10 @@ from agterm_conformance.match import assert_ok, find_session
 from agterm_conformance.plugin import Cli, CliProcess
 from agterm_conformance.wait import wait_until
 
-pytestmark = [
-    pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux payload readers and POSIX file modes"),
-    pytest.mark.requires("agent-chat", reason="the installed ngterm hooks"),
-]
+if sys.platform.startswith("linux"):
+    pytestmark = pytest.mark.requires("agent-chat", reason="the installed ngterm hooks")
+else:
+    pytestmark = pytest.mark.skip(reason="Linux payload readers and POSIX file modes")
 
 
 def _run(cli, argv, env, cwd, input=None):

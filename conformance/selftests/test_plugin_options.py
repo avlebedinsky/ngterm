@@ -134,6 +134,40 @@ def test_markers_pass_strict(pytester: pytest.Pytester) -> None:
     pytester.runpytest("--strict-markers").assert_outcomes(passed=1)
 
 
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_linux_installer_cases_do_not_break_other_hosts_must_pass(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, bin_path: Path, platform: str
+) -> None:
+    source = Path(__file__).resolve().parents[1] / "tests/ui/test_agent_status_install.py"
+    installers = pytester.makepyfile(test_agent_status_install=source.read_text())
+    pytester.makepyfile(
+        test_agent_chat="""
+        import pytest
+
+        @pytest.mark.requires("agent-chat")
+        def test_agent_chat():
+            pass
+        """
+    )
+
+    class Host:
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_pycollect_makemodule(self, module_path: Path, parent: pytest.Collector):
+            if module_path == installers:
+                module = pytest.Module.from_parent(parent, path=module_path)
+                with monkeypatch.context() as patch:
+                    patch.setattr("sys.platform", platform)
+                    _ = module.obj
+                return module
+            return None
+
+    result = pytester.runpytest(
+        "--impl", "rust", "--bin", str(bin_path), "--must-pass", "agent-chat", plugins=[Host()]
+    )
+    result.assert_outcomes(passed=1, skipped=16)
+    assert result.ret == pytest.ExitCode.OK
+
+
 def test_scrub_environ_prefixes() -> None:
     environ = {
         "AGTERM_SOCKET": "/s",
