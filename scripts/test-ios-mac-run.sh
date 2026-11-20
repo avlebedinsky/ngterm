@@ -53,8 +53,8 @@ cd "$FAKE_MAC_HOME"
 export HOME="$FAKE_MAC_HOME"
 unset XDG_CACHE_HOME
 # FAKE_MAC_FAIL_OP=<op>: that operation fails (1) and does nothing. FAKE_MAC_LOSE_OP=<op>: the first call of it runs,
-# then the connection is lost (255).
-if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}" ]]; then
+# then the connection is lost (255). FAKE_MAC_END_OP=<op>: the run ends during the process check.
+if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}${FAKE_MAC_END_OP:-}" ]]; then
   script="$(cat)"
   op="${script##*$'\n'op_}"
   [[ "$op" != "${FAKE_MAC_FAIL_OP:-}" ]] || exit 1
@@ -62,6 +62,18 @@ if [[ "$*" == "bash -s" && -n "${FAKE_MAC_FAIL_OP:-}${FAKE_MAC_LOSE_OP:-}" ]]; t
     : >"$FAKE_MAC_HOME/.lost-$op"
     bash -c "$script" >/dev/null 2>&1 || true
     exit 255
+  fi
+  if [[ "$op" == "${FAKE_MAC_END_OP:-}" ]]; then
+    script="${script%$'\n'op_*}"$'\n''
+recorded_alive() {
+  [[ "$1" == "$RUN/${FAKE_MAC_END_PID:-pid}" ]] || return 1
+  printf "the run ended during the process check\n" >>"$RUN/command.log"
+  echo 7 >"$RUN/exit.tmp"
+  mv "$RUN/exit.tmp" "$RUN/exit"
+  return "${FAKE_MAC_END_ALIVE:-1}"
+}
+kill() { echo "$*" >>"$RUN/signalled"; return 1; }
+'"op_$op"
   fi
   exec bash -c "$script"
 fi
@@ -297,6 +309,45 @@ run "$runner" run --clean -- true
 check "--clean removes the scratch after the run" '((status == 0)) && [[ ! -e "$scratch" ]]'
 run "$runner" list
 check "list runs" '((status == 0)) && grep -q "^free: " "$out"'
+
+# --- a run that ends during a process check -------------------------------------------------------------------------
+
+end_during_check() {
+  rm -rf "${scratch:?}/run"
+  mkdir -p "$scratch/run" "$scratch/tree"
+  printf 'race-run\n' >"$scratch/run/id"
+  printf 'race-run %s\n' "$(date +%s)" >"$scratch/claim"
+  printf 'result\n' >"$scratch/tree/result.txt"
+  : >"$scratch/run/command.log"
+}
+for alive_status in 0 1; do
+  end_during_check
+  if ((alive_status == 1)); then : >"$scratch/run/cancelled"; fi
+  run env FAKE_MAC_END_OP=poll FAKE_MAC_END_ALIVE="$alive_status" \
+    "$runner" wait --logs "$work/race-logs-$alive_status" --fetch result.txt
+  check "wait gets the exit status when the process check returns $alive_status as the run ends" \
+    '((status == 7)) && grep -qx "exit: 7" "$work/race-logs-$alive_status/run.txt"'
+  check "wait fetches the results and frees the claim after process check status $alive_status" \
+    'grep -qx result "$work/race-logs-$alive_status/result.txt" &&
+      grep -qx "the run ended during the process check" "$work/race-logs-$alive_status/command.log" &&
+      [[ ! -e "$scratch/claim" ]]'
+  run "$runner" run -- true
+  check "the next run can claim the scratch after process check status $alive_status" '((status == 0))'
+done
+
+end_during_check
+run "$runner" wait
+check "wait reports a lost run when its process is gone and it has no exit file" \
+  '((status == 1)) && grep -q "its job died" "$err"'
+end_during_check
+run env FAKE_MAC_END_OP=list FAKE_MAC_END_ALIVE=0 "$runner" list
+check "list reports the exit status when the run ends during the process check" \
+  '((status == 0)) && grep -q "exit 7$" "$out"'
+end_during_check
+run env FAKE_MAC_END_OP=cancel FAKE_MAC_END_PID=cmdpid FAKE_MAC_END_ALIVE=0 "$runner" cancel
+check "cancel sends no signal when the run ends during the command process check" \
+  '((status == 0)) && [[ "$(cat "$scratch/run/exit")" == 7 && ! -e "$scratch/run/signalled" && ! -e "$scratch/claim" ]]'
+run "$runner" clean
 
 # --- the iOS build lock under an outer lockf (lib/native.sh) --------------------------------------------------------
 

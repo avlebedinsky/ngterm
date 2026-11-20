@@ -189,7 +189,8 @@ recorded_alive() {
 
 # Whether the run lives: it has no exit status yet and its job is there. A stored pid of an ended run is no proof,
 # and the stored pid of a run whose job died (no exit status) is only its job while the start time is the same.
-alive() { [[ ! -f "$RUN/exit" ]] && recorded_alive "$RUN/pid"; }
+# Read the exit file last because the run can end during the process check.
+alive() { recorded_alive "$RUN/pid" && [[ ! -f "$RUN/exit" ]]; }
 
 # The claim of the scratch, "<id> <epoch>": the launch of that id copies into it, runs in it or collects from it. It
 # holds while its run lives, else for an hour after its last renewal (prepare, verify, start and each poll renew it),
@@ -404,12 +405,12 @@ op_poll() {
   if [[ -n "$id" && "$(claim_owner)" == "$id" ]]; then claim_renew "$id"; fi
   while :; do
     [[ ! -f "$RUN/command.log" ]] || size="$(wc -c <"$RUN/command.log" | tr -d " ")"
-    if [[ -f "$RUN/exit" ]]; then
-      state=done code="$(cat "$RUN/exit")"
-    elif ! alive && [[ -f "$RUN/cancelled" ]]; then
-      state=done code=143
-    elif alive; then
+    if alive; then
       if [[ -f "$RUN/started" ]]; then state=running; else state=queued; fi
+    elif [[ -f "$RUN/exit" ]]; then
+      state=done code="$(cat "$RUN/exit")"
+    elif [[ -f "$RUN/cancelled" ]]; then
+      state=done code=143
     elif [[ -d "$RUN" ]]; then
       state=lost
     else
@@ -437,7 +438,7 @@ op_cancel() {
   local grace=0 pid
   [[ ! -d "$RUN" || -f "$RUN/exit" ]] || : >"$RUN/cancelled"
   # only the command of a run with no exit status, and only while its pid names the process that it named then
-  if [[ ! -f "$RUN/status" && ! -f "$RUN/exit" ]] && recorded_alive "$RUN/cmdpid"; then
+  if recorded_alive "$RUN/cmdpid" && [[ ! -f "$RUN/status" && ! -f "$RUN/exit" ]]; then
     pid="$(cat "$RUN/cmdpid")"
     kill -TERM -- "-$pid" 2>/dev/null || true
     while ((grace < 30)) && kill -0 -- "-$pid" 2>/dev/null; do
