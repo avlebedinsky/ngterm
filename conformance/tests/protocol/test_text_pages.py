@@ -157,6 +157,27 @@ def test_log_page_follows_appends_rotation_and_truncation(ctl):
 
 
 @pytest.mark.since("0.41.0")
+@pytest.mark.covers("session.overlay.reload", "field:tree.session.htmlOverlays")
+def test_a_log_page_reloaded_fast_ends_loaded_and_keeps_following(ctl):
+    path = _file(ctl, "follow.log", "first log line\nsecond log line\n")
+    sid = _new(ctl)
+    try:
+        _open_text(ctl, sid, path, tail=50, followFile=True)
+        _lines(ctl, sid, 2, following=True)
+        for args in ({}, {"current": True}) * 5:
+            assert_ok(ctl.request("session.overlay.reload", sid, **args))
+        _lines(ctl, sid, 2, following=True)
+        # no late load start from the burst leaves the page loading
+        time.sleep(1)
+        _lines(ctl, sid, 2, following=True)
+        with path.open("a", encoding="utf-8") as log:
+            log.write("third log line\n")
+        _lines(ctl, sid, 3, following=True)
+    finally:
+        ctl.request("session.close", sid)
+
+
+@pytest.mark.since("0.41.0")
 @pytest.mark.covers("session.overlay.follow", "field:tree.session.htmlOverlays")
 def test_a_paused_log_page_reads_nothing_until_resumed(ctl):
     path = _file(ctl, "follow.log", "first log line\nsecond log line\n")

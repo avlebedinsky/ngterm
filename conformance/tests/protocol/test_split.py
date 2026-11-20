@@ -455,6 +455,45 @@ def test_background_default_and_pane_override(ctl):
     assert_absent(_node(ctl, sid), "background", "paneBackgrounds")
 
 
+@pytest.mark.covers("session.background", "field:tree.session.background", "field:tree.session.paneBackgrounds")
+def test_text_backgrounds_change_and_close_while_control_answers(ctl):
+    sid = _split(ctl)
+    others = [_mounted(ctl) for _ in range(2)]
+
+    # one text on the default, on both panes and on other sessions; the socket answers while they render
+    assert_ok(ctl.request("session.background", sid, mode="text", text="SHARED"))
+    for pane in ("left", "right"):
+        assert_ok(ctl.request("session.background", sid, mode="text", text="SHARED", pane=pane))
+    for other in others:
+        assert_ok(ctl.request("session.background", other, mode="text", text="SHARED"))
+    others.append(_mounted(ctl))
+
+    # fast replacements end on the last text
+    for text in ("ONE", "TWO", "LAST"):
+        assert_ok(ctl.request("session.background", sid, mode="text", text=text))
+    assert _node(ctl, sid)["background"]["text"] == "LAST"
+
+    # a pane closed and a session closed while their text renders
+    assert_ok(ctl.request("session.background", sid, mode="text", text="CLOSING", pane="right"))
+    assert_ok(ctl.request("session.split.close", sid))
+    victim = others.pop(0)
+    assert_ok(ctl.request("session.background", victim, mode="text", text="CLOSING"))
+    assert_ok(ctl.request("session.close", victim))
+    others.append(_mounted(ctl))
+    node = _node(ctl, sid)
+    assert node["background"]["text"] == "LAST"
+    assert node["split"] is False
+    assert list(node["paneBackgrounds"]) == ["left"]
+
+    # a text set and cleared at once leaves no background
+    assert_ok(ctl.request("session.background", sid, mode="text", text="GONE"))
+    assert_ok(ctl.request("session.background", sid, mode="clear"))
+    assert_ok(ctl.request("session.background", sid, mode="clear", pane="left"))
+    assert_absent(_node(ctl, sid), "background", "paneBackgrounds")
+    for session in (sid, *others):
+        assert_ok(ctl.request("session.close", session))
+
+
 @pytest.mark.covers("session.background")
 @pytest.mark.parametrize(
     ("args", "error"),

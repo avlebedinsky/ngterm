@@ -8,6 +8,7 @@ from this process on 127.0.0.1: no page loads anything from the network."""
 import itertools
 import os
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler
 
@@ -536,6 +537,21 @@ def test_reload_and_navigate_a_page(ctl):
             ctl.request("session.overlay.navigate", sid, **args),
             "session.overlay.navigate requires back, forward, browser or finder",
         )
+    _closed(ctl, sid)
+
+
+@pytest.mark.covers("session.overlay.reload", "field:tree.session.htmlOverlays")
+def test_a_burst_of_reloads_ends_loaded(ctl):
+    sid = _new(ctl)
+    _, title, page_id = _open_page(ctl, sid)
+    _loaded(ctl, sid, title)
+    for args in ({}, {"current": True}) * 5:
+        assert_ok(ctl.request("session.overlay.reload", sid, **args))
+    _loaded(ctl, sid, title)
+    # no late load start from the burst leaves the page loading
+    time.sleep(1)
+    node = _loaded(ctl, sid, title)
+    assert [page["id"] for page in node["htmlOverlays"]] == [page_id]
     _closed(ctl, sid)
 
 

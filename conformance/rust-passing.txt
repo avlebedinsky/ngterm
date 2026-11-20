@@ -660,6 +660,7 @@ tests/protocol/test_notify.py::test_notify_raises_the_badge_and_emits_the_event
 tests/protocol/test_notify.py::test_notify_refusals_post_nothing[background-args0-notify requires a body]
 tests/protocol/test_notify.py::test_notify_refusals_post_nothing[background-args1-notify requires a body]
 tests/protocol/test_notify.py::test_notify_refusals_post_nothing[zzz-args2-no such session: zzz]
+tests/protocol/test_overlay.py::test_a_burst_of_reloads_ends_loaded
 tests/protocol/test_overlay.py::test_a_cover_opened_after_the_pane_overlay_stays_on_top
 tests/protocol/test_overlay.py::test_a_hand_hidden_cover_stays_hidden_after_the_pane_closes
 tests/protocol/test_overlay.py::test_a_hidden_page_reads_back_hidden
@@ -1021,6 +1022,7 @@ tests/protocol/test_split.py::test_split_rejects[mode]
 tests/protocol/test_split.py::test_split_shows_hides_and_keeps_the_pane
 tests/protocol/test_split.py::test_swap_exchanges_the_panes_and_focus_follows_the_terminal
 tests/protocol/test_split.py::test_swap_reaches_a_hidden_split
+tests/protocol/test_split.py::test_text_backgrounds_change_and_close_while_control_answers
 tests/protocol/test_split.py::test_unknown_session_target[session.background-args6]
 tests/protocol/test_split.py::test_unknown_session_target[session.focus-args4]
 tests/protocol/test_split.py::test_unknown_session_target[session.resize-args5]
@@ -1055,6 +1057,7 @@ tests/protocol/test_surface.py::test_selection_commands_refuse_an_unknown_sessio
 tests/protocol/test_surface.py::test_selection_commands_refuse_an_unknown_session[session.paste]
 tests/protocol/test_surface.py::test_selection_commands_refuse_an_unknown_session[session.selectall]
 tests/protocol/test_surface.py::test_selection_commands_without_a_target_use_the_active_session
+tests/protocol/test_text_pages.py::test_a_log_page_reloaded_fast_ends_loaded_and_keeps_following
 tests/protocol/test_text_pages.py::test_a_log_reads_only_its_tail
 tests/protocol/test_text_pages.py::test_a_paused_log_page_reads_nothing_until_resumed
 tests/protocol/test_text_pages.py::test_a_search_step_pauses_a_following_log_page
