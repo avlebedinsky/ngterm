@@ -14,9 +14,10 @@
 //! The window host (GNOME/Mutter and weston, which have no layer-shell; X11, where GPUI opens a layer-shell window as a
 //! plain one; every other platform): undecorated (client decorations, no title bar of ours), on a transparent
 //! background, sized on its display and centered there where the platform lets a client place a window (X11; Wayland
-//! gives a client no position). Its zoom is a maximize, on macOS its screen's visible frame ([`super::zoom`]). On
-//! Windows it is GPUI's pop-up kind, a topmost tool window (`WS_EX_TOPMOST | WS_EX_TOOLWINDOW`): over other windows as
-//! upstream's panel floats, and out of the taskbar and Alt+Tab, as a panel is.
+//! gives a client no position). Its zoom is a maximize, on macOS its screen's visible frame ([`super::zoom`]). On macOS
+//! it is a borderless `NSPanel` with no system title bar, so its content fills its frame, as upstream's. On Windows it
+//! is GPUI's pop-up kind, a topmost tool window (`WS_EX_TOPMOST | WS_EX_TOOLWINDOW`): over other windows as upstream's
+//! panel floats, and out of the taskbar and Alt+Tab, as a panel is.
 
 use gpui_kit::{
     Bounds, DisplayId, Pixels, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
@@ -102,10 +103,7 @@ pub fn window_options(
     app_id: &str,
 ) -> Option<WindowOptions> {
     let base = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some(TITLE.into()),
-            ..TitlebarOptions::default()
-        }),
+        titlebar: titlebar(),
         focus: true,
         show: true,
         is_movable: false,
@@ -121,6 +119,16 @@ pub fn window_options(
         QuickHost::LayerShell => layer_options(base, fit, display, named),
         QuickHost::Window => Some(window_host_options(base, fit, display)),
     }
+}
+
+/// The panel's title bar options: on macOS none, so GPUI opens the pop-up as a borderless panel (vendored GPUI patch
+/// `gpui-pre-macos` 0002) whose content fills its frame, as upstream's `QuickTerminalPanel` (`.borderless`); elsewhere
+/// the title, which the window manager reads.
+fn titlebar() -> Option<TitlebarOptions> {
+    (!cfg!(target_os = "macos")).then(|| TitlebarOptions {
+        title: Some(TITLE.into()),
+        ..TitlebarOptions::default()
+    })
 }
 
 /// The layer surface's options ([`placement::layer_placement`]); the window host's off Linux.

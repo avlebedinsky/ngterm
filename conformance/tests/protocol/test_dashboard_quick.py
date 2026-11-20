@@ -4,6 +4,7 @@ not own, so every line typed into one only prints a marker."""
 
 import itertools
 import re
+import sys
 
 import pytest
 from agterm_conformance.match import assert_absent, assert_error, assert_ok
@@ -415,6 +416,77 @@ def test_quick_zoom_resizes_the_panel_and_its_unzoom_restores_it(ctl):
         if watched is not None:
             _stop_watching(ctl, watched)
             _quick_echo(ctl)
+        ctl.request("quick", mode="hide")
+
+
+_SIZED = re.compile(r"quick terminal: sized size=(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)")
+
+
+def _window_frames(pid):
+    """The size of each on-screen window of `pid`, by window number: Quartz's window bounds, which are the frame (a
+    title bar included, the shadow not). Quartz needs no Accessibility, which an ssh session does not have."""
+    try:
+        import Quartz
+    except ImportError:
+        pytest.fail("Quartz's bindings are missing: install the suite with its `ax` extra")
+
+    windows = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements, Quartz.kCGNullWindowID
+    )
+    return {
+        int(window[Quartz.kCGWindowNumber]): (
+            float(window[Quartz.kCGWindowBounds]["Width"]),
+            float(window[Quartz.kCGWindowBounds]["Height"]),
+        )
+        for window in windows or ()
+        if int(window[Quartz.kCGWindowOwnerPID]) == pid
+    }
+
+
+def _content_size(ctl):
+    """The panel's content size that ngterm logged last (`quick terminal: sized`, its viewport) in its own log in the
+    state dir, the rotated part first."""
+    logs = (ctl.instance.state_dir / name for name in ("ngterm.log.1", "ngterm.log"))
+    text = "".join(log.read_text(encoding="utf-8", errors="replace") for log in logs if log.is_file())
+    sizes = _SIZED.findall(text)
+    assert sizes, "ngterm logged no size of the quick terminal"
+    width, height = sizes[-1]
+    return float(width), float(height)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the panel's frame as Quartz's window list has it")
+@pytest.mark.covers("quick", "surface.zoom")
+def test_quick_panel_has_no_title_bar_its_content_fills_its_frame(adapter, ctl):
+    """Upstream's `QuickTerminalPanel` is `[.borderless, .nonactivatingPanel]`: no system title bar, so the panel's
+    frame is its content's size, shown, zoomed and unzoomed."""
+    if adapter.name != "rust":
+        pytest.skip("the content size is read from ngterm's log")
+    pid = ctl.instance.pid
+    assert_ok(ctl.request("quick", mode="hide"))
+    others = set(_window_frames(pid))
+
+    def filled(check, what):
+        def frame():
+            panels = {number: size for number, size in _window_frames(pid).items() if number not in others}
+            assert len(panels) == 1, f"{what}: the panel's windows are {panels}"
+            (size,) = panels.values()
+            content = _content_size(ctl)
+            assert size == content, f"{what}: the panel's frame {size} holds content of {content}"
+            assert check(size), f"{what}: the panel's frame is {size}"
+            return size
+
+        frame.__qualname__ = f"the panel's frame {what}"
+        return wait_until(frame)
+
+    assert_ok(ctl.request("quick", mode="show"))
+    try:
+        shown = filled(lambda _: True, "shown")
+        assert_ok(ctl.request("surface.zoom", "quick", mode="show"))
+        zoomed = filled(lambda size: size[0] > shown[0] and size[1] > shown[1], "zoomed")
+        assert_ok(ctl.request("surface.zoom", "quick", mode="hide"))
+        filled(lambda size: size == shown, f"unzoomed from {zoomed}")
+    finally:
+        ctl.request("surface.zoom", "quick", mode="hide")
         ctl.request("quick", mode="hide")
 
 

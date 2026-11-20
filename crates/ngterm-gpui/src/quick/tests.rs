@@ -267,14 +267,20 @@ fn the_window_host_is_undecorated_centered_and_maximized_for_the_zoom() {
         options.window_background,
         gpui_kit::WindowBackgroundAppearance::Transparent
     );
-    assert_eq!(
-        options
-            .titlebar
-            .as_ref()
-            .and_then(|bar| bar.title.as_ref())
-            .map(AsRef::as_ref),
-        Some(TITLE)
-    );
+    // macOS: no title bar options, so GPUI opens a borderless panel (upstream's `.borderless`) whose content fills
+    // its frame; elsewhere the title the window manager reads
+    if cfg!(target_os = "macos") {
+        assert!(options.titlebar.is_none(), "a system title bar on the macOS panel");
+    } else {
+        assert_eq!(
+            options
+                .titlebar
+                .as_ref()
+                .and_then(|bar| bar.title.as_ref())
+                .map(AsRef::as_ref),
+            Some(TITLE)
+        );
+    }
     assert!(!options.is_resizable && !options.is_movable);
     assert_eq!(
         options.window_bounds,

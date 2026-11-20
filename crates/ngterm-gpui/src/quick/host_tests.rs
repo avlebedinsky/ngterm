@@ -33,6 +33,8 @@ fn a_requested_layer_surface_falls_back_to_the_window_host() {
                 assert_eq!(fallback.window_bounds, ordinary.window_bounds);
                 assert_eq!(fallback.display_id, ordinary.display_id);
                 assert_eq!(fallback.app_id.as_deref(), Some("test.panel"));
+                // the macOS panel is borderless: no system title bar above its content
+                assert_eq!(fallback.titlebar.is_none(), cfg!(target_os = "macos"));
                 assert!(matches!(fallback.kind, WindowKind::PopUp));
                 assert!(!fallback.is_resizable && !fallback.is_minimizable && !fallback.is_movable);
                 assert!(fallback.focus && fallback.show);

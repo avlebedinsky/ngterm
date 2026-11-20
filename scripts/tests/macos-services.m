@@ -200,10 +200,34 @@ static void panelFrame(void) {
   assert(NSEqualRects(panel.frame, was));
   [panel orderOut:nil];
 }
+// The quick panel's mask (GPUI patch gpui-pre-macos 0002, upstream's
+// `[.borderless, .nonactivatingPanel]`): its content fills its frame, also
+// after the two frame calls fill and restore it.
+static void borderlessPanel(void) {
+  NSPanel *panel = [[NSPanel alloc]
+      initWithContentRect:NSMakeRect(200, 200, 400, 300)
+                styleMask:NSWindowStyleMaskBorderless |
+                          NSWindowStyleMaskNonactivatingPanel
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+  [panel orderFrontRegardless];
+  assert(NSEqualRects(panel.frame, NSMakeRect(200, 200, 400, 300)));
+  void *view = (__bridge void *)panel.contentView;
+  double frame[4], visible[4];
+  assert(ngterm_window_frames(view, frame, visible));
+  ngterm_window_set_frame(view, visible);
+  assert(NSEqualRects(panel.frame, panel.screen.visibleFrame));
+  assert(NSEqualSizes(panel.contentView.frame.size, panel.frame.size));
+  ngterm_window_set_frame(view, frame);
+  assert(NSEqualRects(panel.frame, NSMakeRect(200, 200, 400, 300)));
+  assert(NSEqualSizes(panel.contentView.frame.size, panel.frame.size));
+  [panel orderOut:nil];
+}
 static void checkServices(void) {
   @autoreleasepool {
     keyboard();
     panelFrame();
+    borderlessPanel();
     assert(ngterm_reduce_transparency() ==
            NSWorkspace.sharedWorkspace
                .accessibilityDisplayShouldReduceTransparency);

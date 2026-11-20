@@ -1,0 +1,41 @@
+A pop-up window without a title bar is a borderless panel. GPUI gave every window without `TitlebarOptions` the
+titled and full-size-content masks, and a window with them the titled and closable masks, so the quick terminal's
+NSPanel always had a system title bar (32 pt above its content). Upstream agterm's panel is borderless
+(`QuickTerminalPanel`, `[.borderless, .nonactivatingPanel]`). Now `WindowKind::PopUp` with `titlebar: None` gets the
+borderless mask (plus the non-activating panel bit, as before) and asks for the shadow a borderless window does not
+have by default. Its content view fills the frame; GPUIPanel already answers YES to `canBecomeKeyWindow`, so it still
+takes the keyboard. scripts/vendor-gpui.sh applies this to the verified crates.io archive.
+
+diff -ruN a/src/window.rs b/src/window.rs
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -991,6 +991,9 @@
+                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+             }
+ 
++            // A pop-up without a title bar is a borderless panel: no system title bar, so its content
++            // fills the frame.
++            let borderless = titlebar.is_none() && kind == WindowKind::PopUp;
+             let mut style_mask;
+             if let Some(titlebar) = titlebar.as_ref() {
+                 style_mask =
+@@ -1007,6 +1010,8 @@
+                 if titlebar.appears_transparent {
+                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                 }
++            } else if borderless {
++                style_mask = NSWindowStyleMask::NSBorderlessWindowMask;
+             } else {
+                 style_mask = NSWindowStyleMask::NSTitledWindowMask
+                     | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+@@ -1232,6 +1237,10 @@
+                     add_mouse_tracking_area(tracking_view);
+ 
+                     native_window.setLevel_(NSPopUpWindowLevel);
++                    if borderless {
++                        // A borderless window has no shadow until it asks for one.
++                        let _: () = msg_send![native_window, setHasShadow: YES];
++                    }
+                     let _: () = msg_send![
+                         native_window,
+                         setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow

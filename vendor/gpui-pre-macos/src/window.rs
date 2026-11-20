@@ -991,6 +991,9 @@ impl MacWindow {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
             }
 
+            // A pop-up without a title bar is a borderless panel: no system title bar, so its content
+            // fills the frame.
+            let borderless = titlebar.is_none() && kind == WindowKind::PopUp;
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {
                 style_mask =
@@ -1007,6 +1010,8 @@ impl MacWindow {
                 if titlebar.appears_transparent {
                     style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
                 }
+            } else if borderless {
+                style_mask = NSWindowStyleMask::NSBorderlessWindowMask;
             } else {
                 style_mask = NSWindowStyleMask::NSTitledWindowMask
                     | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
@@ -1232,6 +1237,10 @@ impl MacWindow {
                     add_mouse_tracking_area(tracking_view);
 
                     native_window.setLevel_(NSPopUpWindowLevel);
+                    if borderless {
+                        // A borderless window has no shadow until it asks for one.
+                        let _: () = msg_send![native_window, setHasShadow: YES];
+                    }
                     let _: () = msg_send![
                         native_window,
                         setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
